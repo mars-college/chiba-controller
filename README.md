@@ -37,7 +37,8 @@ docker compose up --build
 - Ops: `http://127.0.0.1:8792/ops/`
 - Control API: `http://127.0.0.1:8795`
 - Guide: `http://127.0.0.1:5173`
-- MinIO console: `http://127.0.0.1:9001`
+- MinIO API: `http://127.0.0.1:9100`
+- MinIO console: `http://127.0.0.1:9101`
 
 ## Production (10.10.13.9)
 

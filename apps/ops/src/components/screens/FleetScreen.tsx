@@ -336,6 +336,22 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     };
   };
 
+  const connectivityStatusColor = (row: FleetPiHealth) => {
+    const status = row.connectivity?.status;
+    if (status === "online") return "teal";
+    if (status === "degraded") return "yellow";
+    if (status === "progressing") return "blue";
+    return "red";
+  };
+
+  const connectivityStatusLabel = (row: FleetPiHealth) => {
+    const status = row.connectivity?.status || "offline";
+    if (status === "progressing") return "progressing";
+    const score = row.connectivity?.score ?? 0;
+    const total = row.connectivity?.total ?? 5;
+    return `${status} ${score}/${total}`;
+  };
+
   const openEditPanel = () => {
     if (selectedNodeIds.length === 1 && nodeWorkspaceFocus) {
       openEditNodeEditor(nodeWorkspaceFocus.id);
@@ -652,13 +668,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                 </div>
                                 <Badge
                                   variant="light"
-                                  color={
-                                    row.connectivity?.status === "online"
-                                      ? "teal"
-                                      : row.connectivity?.status === "degraded"
-                                      ? "yellow"
-                                      : "red"
-                                  }
+                                  color={connectivityStatusColor(row)}
                                 >
                                   {row.connectivity?.status || "offline"}
                                 </Badge>
@@ -1079,17 +1089,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                         </Stack>
                       </Group>
                       <Badge
-                        color={
-                          row.connectivity?.status === "online"
-                            ? "teal"
-                            : row.connectivity?.status === "degraded"
-                            ? "yellow"
-                            : "red"
-                        }
+                        color={connectivityStatusColor(row)}
                         variant="light"
                       >
-                        {row.connectivity?.status || "offline"} {row.connectivity?.score ?? 0}/
-                        {row.connectivity?.total ?? 5}
+                        {connectivityStatusLabel(row)}
                       </Badge>
                     </Group>
                     <Text size="xs" ff="monospace">
@@ -1135,8 +1138,9 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     })()}
                     <Text size="xs" c="dimmed">
                       node {row.chibaNode.version ?? "?"} • cable {row.cableServer?.version ?? "?"} •{" "}
-                      {Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}
-                      s ago
+                      {row.connectivity?.status === "progressing"
+                        ? "checking..."
+                        : `${Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}s ago`}
                     </Text>
                     <Group gap="xs" grow>
                       <Button
@@ -1254,17 +1258,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           <Stack gap={6}>
                             <Group gap={6}>
                               <Badge
-                                color={
-                                  row.connectivity?.status === "online"
-                                    ? "teal"
-                                    : row.connectivity?.status === "degraded"
-                                    ? "yellow"
-                                    : "red"
-                                }
+                                color={connectivityStatusColor(row)}
                                 variant="light"
                               >
-                                {row.connectivity?.status || "offline"} {row.connectivity?.score ?? 0}/
-                                {row.connectivity?.total ?? 5}
+                                {connectivityStatusLabel(row)}
                               </Badge>
                             </Group>
                             <Group gap={6}>
@@ -1333,8 +1330,9 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                         </Table.Td>
                         <Table.Td>
                           <Text size="xs" c="dimmed">
-                            {Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}
-                            s ago
+                            {row.connectivity?.status === "progressing"
+                              ? "checking..."
+                              : `${Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}s ago`}
                           </Text>
                         </Table.Td>
                         <Table.Td>

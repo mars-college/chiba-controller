@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@9.14.2",
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
@@ -13,9 +14,12 @@
     "dev:guide": "pnpm contracts:build && pnpm -C apps/guide dev",
     "dev:node:local": "CHIBA3_NODE_ID=commander CHIBA3_NAMESPACE=local pnpm -C packages/node-runtime local-node",
     "bootstrap:node-runtime": "bash ./scripts/pis/bootstrap-node-runtime.sh",
-    "dev:stack": "pnpm contracts:build && pnpm --parallel --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide dev",
-    "dev:stack:prod": "pnpm contracts:build && CHIBA3_NAMESPACE=prod CHIBA3_REGISTRY_ID=prod pnpm --parallel --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide dev",
-    "dev:stack:with-node": "pnpm contracts:build && pnpm --parallel --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide --filter @chiba-cable3/node-runtime dev",
+    "dev:infra:up": "docker compose up -d postgres minio minio-init",
+    "dev:infra:prepare": "pnpm dev:infra:up && pnpm db:wait && pnpm db:migrate",
+    "dev:stack:tui": "pnpm turbo run dev --ui=tui --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide",
+    "dev:stack": "pnpm dev:infra:prepare && pnpm contracts:build && pnpm dev:stack:tui",
+    "dev:stack:prod": "pnpm dev:infra:prepare && pnpm contracts:build && CHIBA3_NAMESPACE=prod CHIBA3_REGISTRY_ID=prod pnpm turbo run dev --ui=tui --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide",
+    "dev:stack:with-node": "pnpm dev:infra:prepare && pnpm contracts:build && pnpm turbo run dev --ui=tui --filter @chiba-cable3/control-api --filter @chiba-cable3/control-mcp --filter @chiba-cable3/ops --filter @chiba-cable3/guide --filter @chiba-cable3/node-runtime",
     "prod:up": "bash ./scripts/prod/start-stack.sh start",
     "prod:down": "bash ./scripts/prod/start-stack.sh stop",
     "prod:restart": "bash ./scripts/prod/start-stack.sh restart",
@@ -38,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
+    "turbo": "^2.5.8",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

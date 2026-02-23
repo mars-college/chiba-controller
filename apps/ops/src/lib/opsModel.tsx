@@ -353,7 +353,7 @@ export function toPendingFleetHealth(pi: FleetPi): FleetPiHealth {
     connectivity: {
       score: 0,
       total: 5,
-      status: "offline",
+      status: "progressing",
       lastCheckedAt: Date.now(),
     },
     errorSummary: "pending_probe",

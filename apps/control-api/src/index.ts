@@ -232,9 +232,6 @@ const DEFAULT_GUIDE_BASE_URL =
   normalizeGuideBaseUrl(process.env.CHIBA3_GUIDE_BASE_URL) ??
   normalizeGuideBaseUrl(process.env.CHIBA_GUIDE_BASE_URL) ??
   null;
-const BOOTSTRAP_API_ENABLED = /^(1|true|yes|on)$/i.test(
-  process.env.CHIBA3_ENABLE_BOOTSTRAP_API?.trim() || ""
-);
 const DEFAULT_BOOTSTRAP_NODE_CONTROL_API_URL =
   process.env.CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL?.trim() || "";
 const DEFAULT_BOOTSTRAP_GUIDE_BASE_URL =
@@ -368,6 +365,84 @@ function readRegistryId(req: RequestLike, namespace: string): string {
   const field = pickField(req, "registryId");
   const value = (typeof field === "string" ? field : "").trim();
   return value || namespace || DEFAULT_REGISTRY_ID;
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
+    return false;
+  }
+  const a = parts[0] ?? -1;
+  const b = parts[1] ?? -1;
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+function ipv4CandidatesFromInterfaces(): string[] {
+  const nets = os.networkInterfaces();
+  const entries: Array<{ ip: string; private: boolean }> = [];
+  for (const ifaceRows of Object.values(nets)) {
+    for (const row of ifaceRows ?? []) {
+      if (!row || row.family !== "IPv4" || row.internal) continue;
+      const ip = String(row.address || "").trim();
+      if (!ip) continue;
+      entries.push({ ip, private: isPrivateIpv4(ip) });
+    }
+  }
+  const privateFirst = [
+    ...entries.filter((entry) => entry.private).map((entry) => entry.ip),
+    ...entries.filter((entry) => !entry.private).map((entry) => entry.ip),
+  ];
+  return uniqueStrings(privateFirst);
+}
+
+function parseHostOnly(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "";
+  try {
+    const withScheme = raw.includes("://") ? raw : `http://${raw}`;
+    const parsed = new URL(withScheme);
+    return (parsed.hostname || "").trim();
+  } catch {
+    return raw.replace(/:\d+$/, "").trim();
+  }
+}
+
+function readRequestHost(req: {
+  headers?: Record<string, string | string[] | undefined>;
+}): string {
+  const forwarded = req.headers?.["x-forwarded-host"];
+  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const hostHeader = req.headers?.host;
+  const hostValue = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
+  const raw = String(forwardedValue || hostValue || "")
+    .split(",")[0]
+    ?.trim();
+  return parseHostOnly(raw || "");
+}
+
+function rewriteLoopbackHost(urlValue: string, replacementHost: string): string {
+  try {
+    const parsed = new URL(urlValue);
+    if (!isLoopbackHost(parsed.hostname)) return parsed.toString();
+    parsed.hostname = replacementHost;
+    return parsed.toString();
+  } catch {
+    return urlValue;
+  }
 }
 
 function targetExistsInSnapshot(args: {
@@ -1340,7 +1415,8 @@ function pushWithLimit(input: string, chunk: string, maxChars: number): string {
 function maskSensitiveBootstrapArgs(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
-    const value = args[i];
+    const value = args[i] ?? "";
+    if (!value) continue;
     if (value === "--ssh-password") {
       out.push(value);
       out.push("********");
@@ -2630,6 +2706,70 @@ async function main(): Promise<void> {
   });
 
   // Ops compatibility endpoints (cable3-native).
+  app.get("/api/ops/bootstrap-defaults", async (req, res) => {
+    const requestHost = readRequestHost(req);
+    const envPublicHost = parseHostOnly(
+      process.env.CHIBA3_BOOTSTRAP_PUBLIC_HOST?.trim() || ""
+    );
+    const ifaceHosts = ipv4CandidatesFromInterfaces();
+    const hostCandidates = uniqueStrings([
+      envPublicHost,
+      requestHost && !isLoopbackHost(requestHost) ? requestHost : "",
+      ...ifaceHosts,
+      requestHost,
+      "127.0.0.1",
+    ]);
+
+    const preferredHost = hostCandidates[0] || "127.0.0.1";
+    const controlApiPort = Number(process.env.PORT ?? "8795") || 8795;
+    const fallbackLookup = `http://${preferredHost}:${controlApiPort}`;
+
+    const lookupControlApiUrl = rewriteLoopbackHost(
+      process.env.CHIBA3_BOOTSTRAP_LOOKUP_CONTROL_API_URL?.trim() || fallbackLookup,
+      preferredHost
+    );
+    const nodeControlApiUrl = rewriteLoopbackHost(
+      DEFAULT_BOOTSTRAP_NODE_CONTROL_API_URL || lookupControlApiUrl,
+      preferredHost
+    );
+    const fallbackGuide = `http://${preferredHost}:5173`;
+    const guideBaseUrl = rewriteLoopbackHost(
+      DEFAULT_BOOTSTRAP_GUIDE_BASE_URL || DEFAULT_GUIDE_BASE_URL || fallbackGuide,
+      preferredHost
+    );
+    let guidePort = 5173;
+    try {
+      const parsed = new URL(guideBaseUrl);
+      const parsedPort =
+        parsed.port.trim().length > 0
+          ? Number(parsed.port)
+          : parsed.protocol === "https:"
+            ? 443
+            : 80;
+      if (Number.isFinite(parsedPort) && parsedPort > 0) {
+        guidePort = Math.trunc(parsedPort);
+      }
+    } catch {
+      guidePort = 5173;
+    }
+
+    res.json({
+      ok: true,
+      preferredHost,
+      candidates: hostCandidates,
+      defaults: {
+        lookupControlApiUrl,
+        nodeControlApiUrl,
+        guideBaseUrl,
+        namespace: DEFAULT_NAMESPACE,
+        registryId: DEFAULT_REGISTRY_ID,
+        guidePort,
+        sshUser: "pi",
+        sshPort: 22,
+      },
+    });
+  });
+
   app.get("/api/ops/catalog", async (_req, res) => {
     const snapshot = await getResourceSnapshot({ db });
     res.json({
@@ -3121,15 +3261,6 @@ async function main(): Promise<void> {
   });
 
   app.post("/api/ops/nodes/:nodeId/bootstrap", async (req, res) => {
-    if (!BOOTSTRAP_API_ENABLED) {
-      res.status(403).json({
-        ok: false,
-        error: "bootstrap_api_disabled",
-        detail: "Set CHIBA3_ENABLE_BOOTSTRAP_API=true to enable remote bootstrap.",
-      });
-      return;
-    }
-
     const params = paramsOf(req);
     const nodeId = String(params.nodeId ?? "").trim();
     if (!nodeId) {
@@ -3228,8 +3359,16 @@ async function main(): Promise<void> {
       cwd: REPO_ROOT,
     });
     const ok = run.code === 0 && !run.timedOut;
-    res.status(ok ? 200 : 500).json({
+    const summarySource = (run.stderr || run.stdout || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    const summary =
+      summarySource ||
+      (run.timedOut ? "bootstrap_timed_out" : `bootstrap_exit_${run.code ?? "unknown"}`);
+    res.json({
       ok,
+      ...(ok ? {} : { error: "bootstrap_failed", detail: summary }),
       nodeId,
       namespace,
       registryId,

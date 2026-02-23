@@ -6,6 +6,7 @@ import type {
   OpsApplyResponse,
   OpsApplyTargetRequest,
   OpsCatalogResponse,
+  OpsBootstrapDefaultsResponse,
   OpsNodeRecord,
   OpsNodeBootstrapRequest,
   OpsNodeBootstrapResponse,
@@ -105,6 +106,17 @@ export async function fetchOpsNodes(signal?: AbortSignal): Promise<OpsNodesRespo
     throw new Error(`nodes_fetch_failed:${res.status}:${text.slice(0, 240)}`)
   }
   return (await res.json()) as OpsNodesResponse
+}
+
+export async function fetchOpsBootstrapDefaults(
+  signal?: AbortSignal
+): Promise<OpsBootstrapDefaultsResponse> {
+  const res = await fetch('/api/ops/bootstrap-defaults', { signal })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`bootstrap_defaults_failed:${res.status}:${text.slice(0, 240)}`)
+  }
+  return (await res.json()) as OpsBootstrapDefaultsResponse
 }
 
 export async function fetchOpsNodeCache(

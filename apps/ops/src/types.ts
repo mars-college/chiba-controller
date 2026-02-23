@@ -60,7 +60,7 @@ export type FleetPiHealth = FleetPi & {
   connectivity?: {
     score: number
     total: number
-    status: 'online' | 'degraded' | 'offline'
+    status: 'online' | 'degraded' | 'offline' | 'progressing'
     lastCheckedAt: number
   }
   errorSummary?: string
@@ -86,7 +86,7 @@ export type OpsNodeConnectivity = {
   cableApiOk: boolean
   connectivityScore: number
   connectivityTotal: number
-  status: 'online' | 'degraded' | 'offline'
+  status: 'online' | 'degraded' | 'offline' | 'progressing'
   latencyMs: number | null
   errorSummary?: string
   checkedAt: number
@@ -116,6 +116,22 @@ export type OpsNodesResponse = {
   namespace: string
   count: number
   nodes: OpsNodeRecord[]
+}
+
+export type OpsBootstrapDefaultsResponse = {
+  ok: boolean
+  preferredHost: string
+  candidates: string[]
+  defaults: {
+    lookupControlApiUrl: string
+    nodeControlApiUrl: string
+    guideBaseUrl: string
+    namespace: string
+    registryId: string
+    guidePort: number
+    sshUser: string
+    sshPort: number
+  }
 }
 
 export type OpsNodeBootstrapRequest = {

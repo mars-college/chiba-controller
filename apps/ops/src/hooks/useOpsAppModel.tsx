@@ -423,10 +423,12 @@ export function useOpsAppModel() {
   const metrics = useMemo(() => {
     const total = fleetRows.length;
     const online = fleetRows.filter(
-      (r) => r.ping.ok && r.http.nodeStatus.ok
+      (r) => r.connectivity?.status === "online"
     ).length;
     const degraded = fleetRows.filter(
-      (r) => !r.http.nodeStatus.ok || !r.http.cableVersion.ok
+      (r) =>
+        r.connectivity?.status === "degraded" ||
+        r.connectivity?.status === "offline"
     ).length;
     const updating = fleetRows.filter((r) => r.needsUpdate === true).length;
     return { total, online, degraded, updating };
@@ -854,24 +856,13 @@ export function useOpsAppModel() {
       setNodeBootstrapResult(null);
       return;
     }
-    void refreshNodeStash(workspaceSingleNodeId, Boolean(nodeStash));
-    void refreshNodeRuntime(workspaceSingleNodeId, Boolean(nodeRuntimeStatus));
+    void refreshNodeStash(workspaceSingleNodeId);
+    void refreshNodeRuntime(workspaceSingleNodeId);
   }, [
-    lastTick,
-    nodeRuntimeStatus,
-    nodeStash,
     refreshNodeRuntime,
     refreshNodeStash,
     workspaceSingleNodeId,
   ]);
-
-  useEffect(() => {
-    if (!workspaceSingleNodeId) return;
-    const id = window.setInterval(() => {
-      void refreshNodeRuntime(workspaceSingleNodeId, true);
-    }, 1200);
-    return () => window.clearInterval(id);
-  }, [refreshNodeRuntime, workspaceSingleNodeId]);
 
   const openCreateNodeEditor = useCallback(() => {
     setEditingNodeId(null);

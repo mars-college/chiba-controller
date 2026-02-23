@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -24,6 +24,7 @@ import {
 } from "@tabler/icons-react";
 import type { NodeRuntimeInputAction } from "@chiba-cable3/contracts";
 import type { OpsNodeBootstrapResponse } from "../types";
+import { fetchOpsBootstrapDefaults } from "../lib/api";
 import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
 
 type NodeControlPanelProps = {
@@ -81,6 +82,17 @@ function inferPublicUrl(port: number): string {
   return `${protocol}://${host}:${port}`;
 }
 
+function inferBootstrapDefaults() {
+  return {
+    lookupControlApiUrl: inferPublicUrl(8795),
+    nodeControlApiUrl: inferPublicUrl(8795),
+    guideBaseUrl: inferPublicUrl(5173),
+    guidePort: 5173,
+    sshUser: "pi",
+    sshPort: 22,
+  };
+}
+
 export function NodeControlPanel({
   selectedNodeCount,
   nodeId,
@@ -100,11 +112,7 @@ export function NodeControlPanel({
 }: NodeControlPanelProps) {
   const [textInput, setTextInput] = useState("");
   const defaults = useMemo(
-    () => ({
-      lookupControlApiUrl: inferPublicUrl(8795),
-      nodeControlApiUrl: inferPublicUrl(8795),
-      guideBaseUrl: inferPublicUrl(5173),
-    }),
+    () => inferBootstrapDefaults(),
     []
   );
   const [lookupControlApiUrl, setLookupControlApiUrl] = useState(defaults.lookupControlApiUrl);
@@ -113,12 +121,30 @@ export function NodeControlPanel({
   const [namespace, setNamespace] = useState(defaultNamespace || defaultRegistryId || "prod");
   const [registryId, setRegistryId] = useState(defaultRegistryId || defaultNamespace || "prod");
   const [hostOverride, setHostOverride] = useState(defaultNodeHost || "");
-  const [sshUser, setSshUser] = useState("pi");
-  const [sshPortInput, setSshPortInput] = useState("22");
+  const [sshUser, setSshUser] = useState(defaults.sshUser);
+  const [sshPortInput, setSshPortInput] = useState(String(defaults.sshPort));
   const [sshPassword, setSshPassword] = useState("");
-  const [guidePortInput, setGuidePortInput] = useState("5173");
+  const [guidePortInput, setGuidePortInput] = useState(String(defaults.guidePort));
   const [endpointsOnly, setEndpointsOnly] = useState(true);
   const [dryRun, setDryRun] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchOpsBootstrapDefaults(controller.signal)
+      .then((payload) => {
+        const next = payload.defaults;
+        setLookupControlApiUrl(next.lookupControlApiUrl);
+        setNodeControlApiUrl(next.nodeControlApiUrl);
+        setGuideBaseUrl(next.guideBaseUrl);
+        setGuidePortInput(String(next.guidePort || 5173));
+        setSshUser(next.sshUser || "pi");
+        setSshPortInput(String(next.sshPort || 22));
+      })
+      .catch(() => {
+        // Keep fallback defaults if endpoint is unavailable.
+      });
+    return () => controller.abort();
+  }, []);
 
   const sendText = async () => {
     const text = textInput.trim();
