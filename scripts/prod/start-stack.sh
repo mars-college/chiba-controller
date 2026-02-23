@@ -175,6 +175,57 @@ compose_cmd() {
     "$@"
 }
 
+list_named_service_containers() {
+  compose_cmd config | awk '
+    /^services:[[:space:]]*$/ { in_services=1; next }
+    in_services && /^[^[:space:]]/ { in_services=0 }
+    in_services {
+      if ($0 ~ /^  [A-Za-z0-9_.-]+:[[:space:]]*$/) {
+        service=$0
+        sub(/^  /, "", service)
+        sub(/:[[:space:]]*$/, "", service)
+        next
+      }
+      if (service != "" && $0 ~ /^[[:space:]]+container_name:[[:space:]]*/) {
+        name=$0
+        sub(/^[[:space:]]+container_name:[[:space:]]*/, "", name)
+        gsub(/"/, "", name)
+        print service "\t" name
+      }
+    }
+  '
+}
+
+cleanup_conflicting_named_containers() {
+  local service
+  local container_name
+  local existing_id
+  local label_project
+  local label_service
+  local removed=0
+
+  while IFS=$'\t' read -r service container_name; do
+    [[ -z "${service}" || -z "${container_name}" ]] && continue
+    existing_id="$("${DOCKER_CMD[@]}" ps -a --filter "name=^/${container_name}$" --format '{{.ID}}' | head -n 1)"
+    [[ -z "${existing_id}" ]] && continue
+
+    label_project="$("${DOCKER_CMD[@]}" inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "${container_name}" 2>/dev/null || true)"
+    label_service="$("${DOCKER_CMD[@]}" inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "${container_name}" 2>/dev/null || true)"
+
+    if [[ "${label_project}" == "${PROJECT_NAME}" && "${label_service}" == "${service}" ]]; then
+      continue
+    fi
+
+    echo "Removing conflicting container '${container_name}' (found project='${label_project:-none}' service='${label_service:-none}', expected project='${PROJECT_NAME}' service='${service}')."
+    "${DOCKER_CMD[@]}" rm -f "${container_name}" >/dev/null
+    removed=1
+  done < <(list_named_service_containers)
+
+  if [[ "${removed}" -eq 1 ]]; then
+    echo "Conflicting named containers removed."
+  fi
+}
+
 if [[ "${USE_TMUX}" -eq 1 ]]; then
   if ! command -v tmux >/dev/null 2>&1; then
     echo "tmux requested but not installed." >&2
@@ -230,6 +281,7 @@ case "${ACTION}" in
     if [[ "${PULL}" -eq 1 ]]; then
       compose_cmd pull
     fi
+    cleanup_conflicting_named_containers
     up_args=(up --remove-orphans)
     if [[ "${DETACH}" -eq 1 ]]; then
       up_args+=(-d)
@@ -248,6 +300,7 @@ case "${ACTION}" in
     if [[ "${PULL}" -eq 1 ]]; then
       compose_cmd pull
     fi
+    cleanup_conflicting_named_containers
     up_args=(up --remove-orphans)
     if [[ "${DETACH}" -eq 1 ]]; then
       up_args+=(-d)
