@@ -33,7 +33,7 @@ export type MediaPlaylistTablesVm = {
   playlistRowsPage: DraftPlaylist[];
   openPlaylistEditorRoute: (playlistId?: string) => void;
   selectedPlaylistId: string | null;
-  deletePlaylistDraft: (playlistId: string) => void | Promise<void>;
+  deletePlaylistDraft: (playlistId: string) => void | Promise<void> | Promise<boolean>;
   playlistCount: number;
   playlistTablePage: number;
   setPlaylistTablePage: (page: number) => void;

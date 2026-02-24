@@ -59,6 +59,9 @@ export type ContainerEditorsVm = {
     nextStore: DraftStore,
     options?: { successTitle?: string; successMessage?: string; quietSuccess?: boolean }
   ) => Promise<boolean>;
+  deleteBlockDraft: (blockId: string) => Promise<boolean>;
+  deleteChannelDraft: (channelId: string) => Promise<boolean>;
+  deleteProfileDraft: (profileId: string) => Promise<boolean>;
   isMobile: boolean;
 
   blockLibraryView: "cards" | "table";
@@ -139,6 +142,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     builderTab,
     draftStore,
     syncDraftStoreToControlDb,
+    deleteBlockDraft,
+    deleteChannelDraft,
+    deleteProfileDraft,
     isMobile,
 
     blockLibraryView,
@@ -295,86 +301,25 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
   const deleteBlockResource = async (blockId: string) => {
     const id = blockId.trim();
     if (!id) return;
-    const nextStore: DraftStore = {
-      ...draftStore,
-      blocks: draftStore.blocks.filter((item) => item.id !== id),
-      channels: draftStore.channels.map((channel) => ({
-        ...channel,
-        blockIds: channel.blockIds.filter((rowId) => rowId !== id),
-      })),
-      profiles: draftStore.profiles.map((profile) => ({
-        ...profile,
-        defaultTargetId:
-          profile.defaultTargetKind === "block" && profile.defaultTargetId === id
-            ? ""
-            : profile.defaultTargetId,
-        nodeAssignments: profile.nodeAssignments.map((assignment) =>
-          assignment.targetKind === "block" && assignment.targetId === id
-            ? { ...assignment, targetId: "" }
-            : assignment
-        ),
-      })),
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
-    });
-    if (!synced) return;
+    const deleted = await deleteBlockDraft(id);
+    if (!deleted) return;
     if (selectedBlockId === id) setSelectedBlockId(null);
-    notifications.show({
-      color: "teal",
-      title: "Block deleted",
-      message: id,
-    });
   };
 
   const deleteChannelResource = async (channelId: string) => {
     const id = channelId.trim();
     if (!id) return;
-    const nextStore: DraftStore = {
-      ...draftStore,
-      channels: draftStore.channels.filter((item) => item.id !== id),
-      profiles: draftStore.profiles.map((profile) => ({
-        ...profile,
-        defaultTargetId:
-          profile.defaultTargetKind === "channel" && profile.defaultTargetId === id
-            ? ""
-            : profile.defaultTargetId,
-        nodeAssignments: profile.nodeAssignments.map((assignment) =>
-          assignment.targetKind === "channel" && assignment.targetId === id
-            ? { ...assignment, targetId: "" }
-            : assignment
-        ),
-      })),
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
-    });
-    if (!synced) return;
+    const deleted = await deleteChannelDraft(id);
+    if (!deleted) return;
     if (selectedChannelId === id) setSelectedChannelId(null);
-    notifications.show({
-      color: "teal",
-      title: "Channel deleted",
-      message: id,
-    });
   };
 
   const deleteProfileResource = async (profileId: string) => {
     const id = profileId.trim();
     if (!id) return;
-    const nextStore: DraftStore = {
-      ...draftStore,
-      profiles: draftStore.profiles.filter((item) => item.id !== id),
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
-    });
-    if (!synced) return;
+    const deleted = await deleteProfileDraft(id);
+    if (!deleted) return;
     if (selectedProfileId === id) setSelectedProfileId(null);
-    notifications.show({
-      color: "teal",
-      title: "Profile deleted",
-      message: id,
-    });
   };
 
   return (

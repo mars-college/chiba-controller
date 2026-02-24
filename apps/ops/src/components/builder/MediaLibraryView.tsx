@@ -63,7 +63,7 @@ export type MediaLibraryViewVm = {
   deleteMediaItem: (id: string) => Promise<void>;
   draftPlaylists: DraftPlaylist[];
   mergedMediaById: Map<string, Media>;
-  deletePlaylistDraft: (id: string) => void | Promise<void>;
+  deletePlaylistDraft: (id: string) => void | Promise<void> | Promise<boolean>;
   playlistRowsPage: DraftPlaylist[];
   selectedPlaylistId: string | null;
   playlistTablePage: number;

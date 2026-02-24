@@ -55,6 +55,52 @@ export const DeleteMediaResponseSchema = z
   .strict();
 export type DeleteMediaResponse = z.infer<typeof DeleteMediaResponseSchema>;
 
+export const DeleteBlockResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    blockId: z.string().min(1),
+    deleted: z.boolean(),
+    removedChannelBlocks: z.number().int().nonnegative(),
+    removedProfileAssignments: z.number().int().nonnegative(),
+    updatedProfiles: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeleteBlockResponse = z.infer<typeof DeleteBlockResponseSchema>;
+
+export const DeletePlaylistResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    playlistId: z.string().min(1),
+    deleted: z.boolean(),
+    removedBlockItems: z.number().int().nonnegative(),
+    removedPlaylistItems: z.number().int().nonnegative(),
+    removedProfileAssignments: z.number().int().nonnegative(),
+    updatedProfiles: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeletePlaylistResponse = z.infer<typeof DeletePlaylistResponseSchema>;
+
+export const DeleteChannelResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    channelId: z.string().min(1),
+    deleted: z.boolean(),
+    removedProfileAssignments: z.number().int().nonnegative(),
+    updatedProfiles: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeleteChannelResponse = z.infer<typeof DeleteChannelResponseSchema>;
+
+export const DeleteProfileResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    profileId: z.string().min(1),
+    deleted: z.boolean(),
+    removedNodeAssignments: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeleteProfileResponse = z.infer<typeof DeleteProfileResponseSchema>;
+
 export const IngestResponseSchema = z
   .object({
     ok: z.boolean(),
@@ -120,6 +166,10 @@ export type ControlApiClient = {
   importResources(payload: ResourceImportPayload): Promise<ImportResourcesResponse>;
   getResourceSnapshot(): Promise<ResourceSnapshotResponse>;
   deleteMedia(mediaId: string): Promise<DeleteMediaResponse>;
+  deleteBlock(blockId: string): Promise<DeleteBlockResponse>;
+  deletePlaylist(playlistId: string): Promise<DeletePlaylistResponse>;
+  deleteChannel(channelId: string): Promise<DeleteChannelResponse>;
+  deleteProfile(profileId: string): Promise<DeleteProfileResponse>;
   ingestYouTube(payload: IngestYouTubeRequest): Promise<IngestResponse>;
   ingestEdenCollection(payload: IngestEdenCollectionRequest): Promise<IngestResponse>;
   ingestUpload(formData: FormData): Promise<IngestResponse>;
@@ -204,6 +254,74 @@ export function createControlApiClient(args?: {
         }
       );
       return readJsonOrThrow(response, DeleteMediaResponseSchema);
+    },
+    async deleteBlock(blockId) {
+      const id = String(blockId ?? "").trim();
+      if (!id) {
+        throw new ControlApiError({
+          status: 400,
+          message: "block_id_required",
+          payload: { error: "block_id_required" },
+        });
+      }
+      const response = await fetchFn(
+        build(`/resources/blocks/${encodeURIComponent(id)}`),
+        {
+          method: "DELETE",
+        }
+      );
+      return readJsonOrThrow(response, DeleteBlockResponseSchema);
+    },
+    async deletePlaylist(playlistId) {
+      const id = String(playlistId ?? "").trim();
+      if (!id) {
+        throw new ControlApiError({
+          status: 400,
+          message: "playlist_id_required",
+          payload: { error: "playlist_id_required" },
+        });
+      }
+      const response = await fetchFn(
+        build(`/resources/playlists/${encodeURIComponent(id)}`),
+        {
+          method: "DELETE",
+        }
+      );
+      return readJsonOrThrow(response, DeletePlaylistResponseSchema);
+    },
+    async deleteChannel(channelId) {
+      const id = String(channelId ?? "").trim();
+      if (!id) {
+        throw new ControlApiError({
+          status: 400,
+          message: "channel_id_required",
+          payload: { error: "channel_id_required" },
+        });
+      }
+      const response = await fetchFn(
+        build(`/resources/channels/${encodeURIComponent(id)}`),
+        {
+          method: "DELETE",
+        }
+      );
+      return readJsonOrThrow(response, DeleteChannelResponseSchema);
+    },
+    async deleteProfile(profileId) {
+      const id = String(profileId ?? "").trim();
+      if (!id) {
+        throw new ControlApiError({
+          status: 400,
+          message: "profile_id_required",
+          payload: { error: "profile_id_required" },
+        });
+      }
+      const response = await fetchFn(
+        build(`/resources/profiles/${encodeURIComponent(id)}`),
+        {
+          method: "DELETE",
+        }
+      );
+      return readJsonOrThrow(response, DeleteProfileResponseSchema);
     },
     async ingestYouTube(payload) {
       const safePayload = IngestYouTubeRequestSchema.parse(payload);

@@ -1,6 +1,10 @@
 import {
+  type DeleteChannelResponse,
   createControlApiClient,
+  type DeleteBlockResponse,
   type DeleteMediaResponse,
+  type DeletePlaylistResponse,
+  type DeleteProfileResponse,
   type IngestJobResponse,
   type IngestJobsResponse,
   type IngestResponse,
@@ -35,6 +39,22 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshotResponse>
 
 export async function deleteMedia(mediaId: string): Promise<DeleteMediaResponse> {
   return client.deleteMedia(mediaId)
+}
+
+export async function deleteBlock(blockId: string): Promise<DeleteBlockResponse> {
+  return client.deleteBlock(blockId)
+}
+
+export async function deletePlaylist(playlistId: string): Promise<DeletePlaylistResponse> {
+  return client.deletePlaylist(playlistId)
+}
+
+export async function deleteChannel(channelId: string): Promise<DeleteChannelResponse> {
+  return client.deleteChannel(channelId)
+}
+
+export async function deleteProfile(profileId: string): Promise<DeleteProfileResponse> {
+  return client.deleteProfile(profileId)
 }
 
 export async function ingestYouTubeSource(payload: IngestYouTubeRequest): Promise<IngestResponse> {

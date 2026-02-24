@@ -48,7 +48,11 @@ import {
   listNodeConnectivity,
   listRegistryNodes,
   getResourceSnapshot,
+  deleteBlockResource,
+  deleteChannelResource,
   deleteMediaResource,
+  deletePlaylistResource,
+  deleteProfileResource,
   importResources,
   listDesiredScreenStates,
   schema,
@@ -423,20 +427,26 @@ function uniqueStrings(values: string[]): string[] {
 
 function ipv4CandidatesFromInterfaces(): string[] {
   const nets = os.networkInterfaces();
-  const entries: Array<{ ip: string; private: boolean }> = [];
-  for (const ifaceRows of Object.values(nets)) {
+  const entries: Array<{ ip: string; private: boolean; score: number }> = [];
+  for (const [ifaceName, ifaceRows] of Object.entries(nets)) {
     for (const row of ifaceRows ?? []) {
       if (!row || row.family !== "IPv4" || row.internal) continue;
       const ip = String(row.address || "").trim();
       if (!ip) continue;
-      entries.push({ ip, private: isPrivateIpv4(ip) });
+      entries.push({
+        ip,
+        private: isPrivateIpv4(ip),
+        score: lanAddressScore(ip, ifaceName),
+      });
     }
   }
-  const privateFirst = [
-    ...entries.filter((entry) => entry.private).map((entry) => entry.ip),
-    ...entries.filter((entry) => !entry.private).map((entry) => entry.ip),
-  ];
-  return uniqueStrings(privateFirst);
+  entries.sort(
+    (a, b) =>
+      Number(b.private) - Number(a.private) ||
+      b.score - a.score ||
+      a.ip.localeCompare(b.ip)
+  );
+  return uniqueStrings(entries.map((entry) => entry.ip));
 }
 
 function parseHostOnly(value: string): string {
@@ -1008,25 +1018,67 @@ function isPrivateLanAddress(addr: string): boolean {
   return false;
 }
 
+function isVirtualOrBridgeInterface(name: string): boolean {
+  const lower = name.trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower === "lo" ||
+    lower.startsWith("docker") ||
+    lower.startsWith("br-") ||
+    lower.startsWith("veth") ||
+    lower.startsWith("virbr") ||
+    lower.startsWith("cni") ||
+    lower.startsWith("flannel") ||
+    lower.startsWith("podman") ||
+    lower.startsWith("zt") ||
+    lower.startsWith("tailscale") ||
+    lower.startsWith("utun") ||
+    lower.startsWith("tun") ||
+    lower.startsWith("tap") ||
+    lower.startsWith("wg")
+  );
+}
+
+function lanAddressScore(addr: string, ifaceName: string): number {
+  let score = 10;
+  if (addr.startsWith("10.")) score = 90;
+  else if (addr.startsWith("192.168.")) score = 80;
+  else if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(addr)) score = 40;
+  else if (addr.startsWith("100.")) score = 30;
+  else score = 60; // public v4
+
+  const iface = ifaceName.trim().toLowerCase();
+  if (
+    iface.startsWith("en") ||
+    iface.startsWith("eth") ||
+    iface.startsWith("wlan") ||
+    iface.startsWith("wlp")
+  ) {
+    score += 8;
+  }
+  if (isVirtualOrBridgeInterface(ifaceName)) {
+    score -= 40;
+  }
+  return score;
+}
+
 function getLanAddress(): string | null {
   const nets = os.networkInterfaces();
   const candidates: Array<{ addr: string; score: number }> = [];
-  for (const entries of Object.values(nets)) {
+  for (const [ifaceName, entries] of Object.entries(nets)) {
     for (const info of entries ?? []) {
       if (!info) continue;
       if (info.family !== "IPv4" || info.internal) continue;
       const addr = info.address;
       if (addr.startsWith("169.254.")) continue;
-      let score = 1;
-      if (addr.startsWith("192.168.")) score = 4;
-      else if (addr.startsWith("10.")) score = 3;
-      else if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(addr)) score = 3;
-      else if (addr.startsWith("100.")) score = 2;
-      candidates.push({ addr, score });
+      candidates.push({
+        addr,
+        score: lanAddressScore(addr, ifaceName),
+      });
     }
   }
   if (!candidates.length) return null;
-  candidates.sort((a, b) => b.score - a.score);
+  candidates.sort((a, b) => b.score - a.score || a.addr.localeCompare(b.addr));
   return candidates[0]?.addr ?? null;
 }
 
@@ -1071,14 +1123,39 @@ function getRemoteBaseUrl(args: {
   if (configured) {
     return normalizeRemoteBase(configured, fallback);
   }
+  const hostHeaderRaw = String(
+    args.req.headers?.["x-forwarded-host"] ?? args.req.headers?.host ?? ""
+  )
+    .split(",")[0] ?? "";
+  const hostHeader = hostHeaderRaw
+    .trim();
+  const requestHost = extractHostname(hostHeader);
+  if (requestHost && !isLoopbackHost(requestHost)) {
+    const forwardedProtoRaw = String(args.req.headers?.["x-forwarded-proto"] ?? "")
+      .split(",")[0] ?? "";
+    const forwardedProto = forwardedProtoRaw
+      .trim()
+      .replace(":", "")
+      .toLowerCase();
+    const protoCandidate =
+      args.scheme?.trim().replace(":", "").toLowerCase() ||
+      forwardedProto ||
+      "";
+    const scheme =
+      protoCandidate === "http" || protoCandidate === "https"
+        ? protoCandidate
+        : requestHost.endsWith(".local") || isPrivateLanAddress(requestHost)
+          ? "http"
+          : "https";
+    return `${scheme}://${requestHost}${args.port ? `:${args.port}` : ""}`;
+  }
   const lan = getLanAddress();
   if (lan) {
     const scheme = args.scheme?.trim() || (isPrivateLanAddress(lan) ? "http" : "https");
     return `${scheme}://${lan}${args.port ? `:${args.port}` : ""}`;
   }
 
-  const hostHeaderRaw = String(args.req.headers?.host ?? "").trim();
-  const hostname = extractHostname(hostHeaderRaw);
+  const hostname = extractHostname(String(args.req.headers?.host ?? "").trim());
   const safeHost =
     !hostname || isLoopbackHost(hostname)
       ? `${os.hostname().replace(/\.local$/i, "")}.local`
@@ -2454,6 +2531,90 @@ async function main(): Promise<void> {
   };
 
   app.delete("/api/v1/resources/media/:mediaId", handleDeleteMedia);
+
+  const handleDeleteBlock = async (req: any, res: FastifyReply) => {
+    const blockId = String(req.params.blockId ?? "").trim();
+    if (!blockId) {
+      res.status(400).json({
+        ok: false,
+        error: "block_id_required",
+      });
+      return;
+    }
+    const result = await deleteBlockResource({
+      db,
+      blockId,
+    });
+    res.json({
+      ok: true,
+      ...result,
+    });
+  };
+
+  app.delete("/api/v1/resources/blocks/:blockId", handleDeleteBlock);
+
+  const handleDeletePlaylist = async (req: any, res: FastifyReply) => {
+    const playlistId = String(req.params.playlistId ?? "").trim();
+    if (!playlistId) {
+      res.status(400).json({
+        ok: false,
+        error: "playlist_id_required",
+      });
+      return;
+    }
+    const result = await deletePlaylistResource({
+      db,
+      playlistId,
+    });
+    res.json({
+      ok: true,
+      ...result,
+    });
+  };
+
+  app.delete("/api/v1/resources/playlists/:playlistId", handleDeletePlaylist);
+
+  const handleDeleteChannel = async (req: any, res: FastifyReply) => {
+    const channelId = String(req.params.channelId ?? "").trim();
+    if (!channelId) {
+      res.status(400).json({
+        ok: false,
+        error: "channel_id_required",
+      });
+      return;
+    }
+    const result = await deleteChannelResource({
+      db,
+      channelId,
+    });
+    res.json({
+      ok: true,
+      ...result,
+    });
+  };
+
+  app.delete("/api/v1/resources/channels/:channelId", handleDeleteChannel);
+
+  const handleDeleteProfile = async (req: any, res: FastifyReply) => {
+    const profileId = String(req.params.profileId ?? "").trim();
+    if (!profileId) {
+      res.status(400).json({
+        ok: false,
+        error: "profile_id_required",
+      });
+      return;
+    }
+    const result = await deleteProfileResource({
+      db,
+      profileId,
+    });
+    res.json({
+      ok: true,
+      ...result,
+    });
+  };
+
+  app.delete("/api/v1/resources/profiles/:profileId", handleDeleteProfile);
 
   app.get("/api/v1/resources/media/:mediaId/stream", async (req, res) => {
     const params = paramsOf(req);

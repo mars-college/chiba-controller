@@ -701,6 +701,427 @@ export async function deleteMediaResource(args: {
   });
 }
 
+export async function deleteBlockResource(args: {
+  db: Cable3Db;
+  blockId: string;
+}): Promise<{
+  blockId: string;
+  deleted: boolean;
+  removedChannelBlocks: number;
+  removedProfileAssignments: number;
+  updatedProfiles: number;
+}> {
+  const now = Date.now();
+  const readDefaultTarget = (
+    defaults: Record<string, unknown>
+  ): { kind: string; id: string } | null => {
+    const raw = defaults.defaultTarget;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const target = raw as Record<string, unknown>;
+    const kind = String(target.kind ?? "").trim();
+    const id = String(target.id ?? "").trim();
+    if (!kind || !id) return null;
+    return { kind, id };
+  };
+
+  return args.db.transaction(async (tx) => {
+    const [
+      blockRows,
+      channelRefs,
+      profileAssignments,
+      profileRows,
+    ] = await Promise.all([
+      tx
+        .select({ id: schema.blockResources.id })
+        .from(schema.blockResources)
+        .where(eq(schema.blockResources.id, args.blockId)),
+      tx
+        .select({
+          channelId: schema.channelBlocks.channelId,
+        })
+        .from(schema.channelBlocks)
+        .where(eq(schema.channelBlocks.blockId, args.blockId)),
+      tx
+        .select({
+          profileId: schema.profileNodeAssignments.profileId,
+        })
+        .from(schema.profileNodeAssignments)
+        .where(
+          and(
+            eq(schema.profileNodeAssignments.targetKind, "block"),
+            eq(schema.profileNodeAssignments.targetId, args.blockId)
+          )
+        ),
+      tx
+        .select({
+          id: schema.profileResources.id,
+          defaultsJson: schema.profileResources.defaultsJson,
+        })
+        .from(schema.profileResources),
+    ]);
+
+    if (blockRows.length === 0) {
+      return {
+        blockId: args.blockId,
+        deleted: false,
+        removedChannelBlocks: 0,
+        removedProfileAssignments: 0,
+        updatedProfiles: 0,
+      };
+    }
+
+    if (channelRefs.length > 0) {
+      await tx
+        .delete(schema.channelBlocks)
+        .where(eq(schema.channelBlocks.blockId, args.blockId));
+    }
+
+    if (profileAssignments.length > 0) {
+      await tx
+        .delete(schema.profileNodeAssignments)
+        .where(
+          and(
+            eq(schema.profileNodeAssignments.targetKind, "block"),
+            eq(schema.profileNodeAssignments.targetId, args.blockId)
+          )
+        );
+    }
+
+    let updatedProfiles = 0;
+    for (const row of profileRows) {
+      const defaults =
+        row.defaultsJson &&
+        typeof row.defaultsJson === "object" &&
+        !Array.isArray(row.defaultsJson)
+          ? ({ ...(row.defaultsJson as Record<string, unknown>) } as Record<
+              string,
+              unknown
+            >)
+          : {};
+      const defaultTarget = readDefaultTarget(defaults);
+      if (
+        !defaultTarget ||
+        defaultTarget.kind !== "block" ||
+        defaultTarget.id !== args.blockId
+      ) {
+        continue;
+      }
+      delete defaults.defaultTarget;
+      await tx
+        .update(schema.profileResources)
+        .set({
+          defaultsJson: defaults,
+          updatedAt: now,
+        })
+        .where(eq(schema.profileResources.id, row.id));
+      updatedProfiles += 1;
+    }
+
+    const deletedRows = await tx
+      .delete(schema.blockResources)
+      .where(eq(schema.blockResources.id, args.blockId))
+      .returning({ id: schema.blockResources.id });
+
+    return {
+      blockId: args.blockId,
+      deleted: deletedRows.length > 0,
+      removedChannelBlocks: channelRefs.length,
+      removedProfileAssignments: profileAssignments.length,
+      updatedProfiles,
+    };
+  });
+}
+
+export async function deletePlaylistResource(args: {
+  db: Cable3Db;
+  playlistId: string;
+}): Promise<{
+  playlistId: string;
+  deleted: boolean;
+  removedBlockItems: number;
+  removedPlaylistItems: number;
+  removedProfileAssignments: number;
+  updatedProfiles: number;
+}> {
+  const now = Date.now();
+  const readDefaultTarget = (
+    defaults: Record<string, unknown>
+  ): { kind: string; id: string } | null => {
+    const raw = defaults.defaultTarget;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const target = raw as Record<string, unknown>;
+    const kind = String(target.kind ?? "").trim();
+    const id = String(target.id ?? "").trim();
+    if (!kind || !id) return null;
+    return { kind, id };
+  };
+
+  return args.db.transaction(async (tx) => {
+    const [playlistRows, blockRefs, playlistRefs, profileAssignments, profileRows] =
+      await Promise.all([
+        tx
+          .select({ id: schema.playlistResources.id })
+          .from(schema.playlistResources)
+          .where(eq(schema.playlistResources.id, args.playlistId)),
+        tx
+          .select({ blockId: schema.blockItems.blockId })
+          .from(schema.blockItems)
+          .where(eq(schema.blockItems.playlistId, args.playlistId)),
+        tx
+          .select({ playlistId: schema.playlistItems.playlistId })
+          .from(schema.playlistItems)
+          .where(eq(schema.playlistItems.childPlaylistId, args.playlistId)),
+        tx
+          .select({
+            profileId: schema.profileNodeAssignments.profileId,
+          })
+          .from(schema.profileNodeAssignments)
+          .where(
+            and(
+              eq(schema.profileNodeAssignments.targetKind, "playlist"),
+              eq(schema.profileNodeAssignments.targetId, args.playlistId)
+            )
+          ),
+        tx
+          .select({
+            id: schema.profileResources.id,
+            defaultsJson: schema.profileResources.defaultsJson,
+          })
+          .from(schema.profileResources),
+      ]);
+
+    if (playlistRows.length === 0) {
+      return {
+        playlistId: args.playlistId,
+        deleted: false,
+        removedBlockItems: 0,
+        removedPlaylistItems: 0,
+        removedProfileAssignments: 0,
+        updatedProfiles: 0,
+      };
+    }
+
+    if (blockRefs.length > 0) {
+      await tx
+        .delete(schema.blockItems)
+        .where(eq(schema.blockItems.playlistId, args.playlistId));
+    }
+
+    if (playlistRefs.length > 0) {
+      await tx
+        .delete(schema.playlistItems)
+        .where(eq(schema.playlistItems.childPlaylistId, args.playlistId));
+    }
+
+    if (profileAssignments.length > 0) {
+      await tx
+        .delete(schema.profileNodeAssignments)
+        .where(
+          and(
+            eq(schema.profileNodeAssignments.targetKind, "playlist"),
+            eq(schema.profileNodeAssignments.targetId, args.playlistId)
+          )
+        );
+    }
+
+    let updatedProfiles = 0;
+    for (const row of profileRows) {
+      const defaults =
+        row.defaultsJson &&
+        typeof row.defaultsJson === "object" &&
+        !Array.isArray(row.defaultsJson)
+          ? ({ ...(row.defaultsJson as Record<string, unknown>) } as Record<
+              string,
+              unknown
+            >)
+          : {};
+      const defaultTarget = readDefaultTarget(defaults);
+      if (
+        !defaultTarget ||
+        defaultTarget.kind !== "playlist" ||
+        defaultTarget.id !== args.playlistId
+      ) {
+        continue;
+      }
+      delete defaults.defaultTarget;
+      await tx
+        .update(schema.profileResources)
+        .set({
+          defaultsJson: defaults,
+          updatedAt: now,
+        })
+        .where(eq(schema.profileResources.id, row.id));
+      updatedProfiles += 1;
+    }
+
+    const deletedRows = await tx
+      .delete(schema.playlistResources)
+      .where(eq(schema.playlistResources.id, args.playlistId))
+      .returning({ id: schema.playlistResources.id });
+
+    return {
+      playlistId: args.playlistId,
+      deleted: deletedRows.length > 0,
+      removedBlockItems: blockRefs.length,
+      removedPlaylistItems: playlistRefs.length,
+      removedProfileAssignments: profileAssignments.length,
+      updatedProfiles,
+    };
+  });
+}
+
+export async function deleteChannelResource(args: {
+  db: Cable3Db;
+  channelId: string;
+}): Promise<{
+  channelId: string;
+  deleted: boolean;
+  removedProfileAssignments: number;
+  updatedProfiles: number;
+}> {
+  const now = Date.now();
+  const readDefaultTarget = (
+    defaults: Record<string, unknown>
+  ): { kind: string; id: string } | null => {
+    const raw = defaults.defaultTarget;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const target = raw as Record<string, unknown>;
+    const kind = String(target.kind ?? "").trim();
+    const id = String(target.id ?? "").trim();
+    if (!kind || !id) return null;
+    return { kind, id };
+  };
+
+  return args.db.transaction(async (tx) => {
+    const [channelRows, profileAssignments, profileRows] = await Promise.all([
+      tx
+        .select({ id: schema.channelResources.id })
+        .from(schema.channelResources)
+        .where(eq(schema.channelResources.id, args.channelId)),
+      tx
+        .select({
+          profileId: schema.profileNodeAssignments.profileId,
+        })
+        .from(schema.profileNodeAssignments)
+        .where(
+          and(
+            eq(schema.profileNodeAssignments.targetKind, "channel"),
+            eq(schema.profileNodeAssignments.targetId, args.channelId)
+          )
+        ),
+      tx
+        .select({
+          id: schema.profileResources.id,
+          defaultsJson: schema.profileResources.defaultsJson,
+        })
+        .from(schema.profileResources),
+    ]);
+
+    if (channelRows.length === 0) {
+      return {
+        channelId: args.channelId,
+        deleted: false,
+        removedProfileAssignments: 0,
+        updatedProfiles: 0,
+      };
+    }
+
+    if (profileAssignments.length > 0) {
+      await tx
+        .delete(schema.profileNodeAssignments)
+        .where(
+          and(
+            eq(schema.profileNodeAssignments.targetKind, "channel"),
+            eq(schema.profileNodeAssignments.targetId, args.channelId)
+          )
+        );
+    }
+
+    let updatedProfiles = 0;
+    for (const row of profileRows) {
+      const defaults =
+        row.defaultsJson &&
+        typeof row.defaultsJson === "object" &&
+        !Array.isArray(row.defaultsJson)
+          ? ({ ...(row.defaultsJson as Record<string, unknown>) } as Record<
+              string,
+              unknown
+            >)
+          : {};
+      const defaultTarget = readDefaultTarget(defaults);
+      if (
+        !defaultTarget ||
+        defaultTarget.kind !== "channel" ||
+        defaultTarget.id !== args.channelId
+      ) {
+        continue;
+      }
+      delete defaults.defaultTarget;
+      await tx
+        .update(schema.profileResources)
+        .set({
+          defaultsJson: defaults,
+          updatedAt: now,
+        })
+        .where(eq(schema.profileResources.id, row.id));
+      updatedProfiles += 1;
+    }
+
+    const deletedRows = await tx
+      .delete(schema.channelResources)
+      .where(eq(schema.channelResources.id, args.channelId))
+      .returning({ id: schema.channelResources.id });
+
+    return {
+      channelId: args.channelId,
+      deleted: deletedRows.length > 0,
+      removedProfileAssignments: profileAssignments.length,
+      updatedProfiles,
+    };
+  });
+}
+
+export async function deleteProfileResource(args: {
+  db: Cable3Db;
+  profileId: string;
+}): Promise<{
+  profileId: string;
+  deleted: boolean;
+  removedNodeAssignments: number;
+}> {
+  return args.db.transaction(async (tx) => {
+    const [profileRows, assignments] = await Promise.all([
+      tx
+        .select({ id: schema.profileResources.id })
+        .from(schema.profileResources)
+        .where(eq(schema.profileResources.id, args.profileId)),
+      tx
+        .select({ nodeId: schema.profileNodeAssignments.nodeId })
+        .from(schema.profileNodeAssignments)
+        .where(eq(schema.profileNodeAssignments.profileId, args.profileId)),
+    ]);
+
+    if (profileRows.length === 0) {
+      return {
+        profileId: args.profileId,
+        deleted: false,
+        removedNodeAssignments: 0,
+      };
+    }
+
+    const deletedRows = await tx
+      .delete(schema.profileResources)
+      .where(eq(schema.profileResources.id, args.profileId))
+      .returning({ id: schema.profileResources.id });
+
+    return {
+      profileId: args.profileId,
+      deleted: deletedRows.length > 0,
+      removedNodeAssignments: assignments.length,
+    };
+  });
+}
+
 export async function getResourceSnapshot(args: {
   db: Cable3Db;
 }): Promise<ResourceSnapshot> {

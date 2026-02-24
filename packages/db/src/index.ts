@@ -13,6 +13,10 @@ export {
   importResources,
   getResourceSnapshot,
   deleteMediaResource,
+  deleteBlockResource,
+  deletePlaylistResource,
+  deleteChannelResource,
+  deleteProfileResource,
 } from "./resource-store.js";
 export {
   buildCable2ChannelImportPayload,

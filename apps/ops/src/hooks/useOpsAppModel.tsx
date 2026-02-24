@@ -40,7 +40,11 @@ import {
   startEdenIngestJob,
   startUploadIngestJob,
   startYouTubeIngestJob,
+  deleteBlock,
+  deleteChannel,
   deleteMedia,
+  deletePlaylist,
+  deleteProfile,
   type ResourcePayload,
 } from "../lib/controlApi";
 import type {
@@ -1458,18 +1462,12 @@ export function useOpsAppModel() {
 
   const openQuickSend = useCallback(
     (target: QuickSendTarget) => {
-      const defaults =
-        selectedNodeIds.length > 0
-          ? selectedNodeIds
-          : nodeWorkspaceFocusId
-          ? [nodeWorkspaceFocusId]
-          : [];
       setQuickSendTarget(target);
-      setQuickSendNodeIds(defaults);
+      setQuickSendNodeIds((prev) => prev.filter((id) => Boolean(fleetMap[id])));
       setQuickSendQuery("");
       setQuickSendOpen(true);
     },
-    [nodeWorkspaceFocusId, selectedNodeIds]
+    [fleetMap]
   );
 
   const runQuickSend = useCallback(async () => {
@@ -2544,6 +2542,43 @@ export function useOpsAppModel() {
     [refreshDraftsAfterIngest, selectedServerMediaId]
   );
 
+  const deleteBlockDraft = useCallback(
+    async (blockId: string): Promise<boolean> => {
+      const id = blockId.trim();
+      if (!id) return false;
+      try {
+        setBuilderBusy(true);
+        const result = await deleteBlock(id);
+        if (!result.deleted) {
+          throw new Error(`delete_block_failed:404:block_not_found:${id}`);
+        }
+        await refreshServerSnapshot({ silent: true });
+        notifications.show({
+          color: "teal",
+          title: "Block deleted",
+          message:
+            `removed:${result.blockId} ` +
+            `channelRefs:${result.removedChannelBlocks} ` +
+            `profileAssignments:${result.removedProfileAssignments} ` +
+            `profilesUpdated:${result.updatedProfiles}`,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await refreshServerSnapshot({ silent: true }).catch(() => {});
+        notifications.show({
+          color: "red",
+          title: "Delete block failed",
+          message,
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
+    },
+    [refreshServerSnapshot]
+  );
+
   const saveMediaMetadata = useCallback(
     async (args: {
       id: string;
@@ -2587,48 +2622,115 @@ export function useOpsAppModel() {
   );
 
   const deletePlaylistDraft = useCallback(
-    async (playlistId: string) => {
-      const ok = window.confirm(
-        `Delete playlist "${playlistId}"?`
-      );
-      if (!ok) return;
+    async (playlistId: string): Promise<boolean> => {
+      const ok = window.confirm(`Delete playlist "${playlistId}"?`);
+      if (!ok) return false;
       const id = playlistId.trim();
-      if (!id) return;
-      const nextStore: DraftStore = {
-        ...draftStore,
-        playlists: draftStore.playlists.filter((item) => item.id !== id),
-        blocks: draftStore.blocks.map((block) => ({
-          ...block,
-          items: block.items.filter(
-            (item) => !(item.kind === "playlist" && item.id === id)
-          ),
-        })),
-        profiles: draftStore.profiles.map((profile) => ({
-          ...profile,
-          defaultTargetId:
-            profile.defaultTargetKind === "playlist" &&
-            profile.defaultTargetId === id
-              ? ""
-              : profile.defaultTargetId,
-          nodeAssignments: profile.nodeAssignments.map((assignment) =>
-            assignment.targetKind === "playlist" && assignment.targetId === id
-              ? { ...assignment, targetId: "" }
-              : assignment
-          ),
-        })),
-      };
-      const synced = await syncDraftStoreToControlDb(nextStore, {
-        quietSuccess: true,
-      });
-      if (!synced) return;
-      if (selectedPlaylistId === id) setSelectedPlaylistId(null);
-      notifications.show({
-        color: "teal",
-        title: "Playlist deleted",
-        message: id,
-      });
+      if (!id) return false;
+      try {
+        setBuilderBusy(true);
+        const result = await deletePlaylist(id);
+        if (!result.deleted) {
+          throw new Error(`delete_playlist_failed:404:playlist_not_found:${id}`);
+        }
+        if (selectedPlaylistId === id) setSelectedPlaylistId(null);
+        await refreshServerSnapshot({ silent: true });
+        notifications.show({
+          color: "teal",
+          title: "Playlist deleted",
+          message:
+            `removed:${result.playlistId} ` +
+            `blockItems:${result.removedBlockItems} ` +
+            `playlistItems:${result.removedPlaylistItems} ` +
+            `profileAssignments:${result.removedProfileAssignments} ` +
+            `profilesUpdated:${result.updatedProfiles}`,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await refreshServerSnapshot({ silent: true }).catch(() => {});
+        notifications.show({
+          color: "red",
+          title: "Delete playlist failed",
+          message,
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
     },
-    [draftStore, selectedPlaylistId, syncDraftStoreToControlDb]
+    [refreshServerSnapshot, selectedPlaylistId]
+  );
+
+  const deleteChannelDraft = useCallback(
+    async (channelId: string): Promise<boolean> => {
+      const id = channelId.trim();
+      if (!id) return false;
+      try {
+        setBuilderBusy(true);
+        const result = await deleteChannel(id);
+        if (!result.deleted) {
+          throw new Error(`delete_channel_failed:404:channel_not_found:${id}`);
+        }
+        await refreshServerSnapshot({ silent: true });
+        notifications.show({
+          color: "teal",
+          title: "Channel deleted",
+          message:
+            `removed:${result.channelId} ` +
+            `profileAssignments:${result.removedProfileAssignments} ` +
+            `profilesUpdated:${result.updatedProfiles}`,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await refreshServerSnapshot({ silent: true }).catch(() => {});
+        notifications.show({
+          color: "red",
+          title: "Delete channel failed",
+          message,
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
+    },
+    [refreshServerSnapshot]
+  );
+
+  const deleteProfileDraft = useCallback(
+    async (profileId: string): Promise<boolean> => {
+      const id = profileId.trim();
+      if (!id) return false;
+      try {
+        setBuilderBusy(true);
+        const result = await deleteProfile(id);
+        if (!result.deleted) {
+          throw new Error(`delete_profile_failed:404:profile_not_found:${id}`);
+        }
+        await refreshServerSnapshot({ silent: true });
+        notifications.show({
+          color: "teal",
+          title: "Profile deleted",
+          message:
+            `removed:${result.profileId} ` +
+            `nodeAssignments:${result.removedNodeAssignments}`,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await refreshServerSnapshot({ silent: true }).catch(() => {});
+        notifications.show({
+          color: "red",
+          title: "Delete profile failed",
+          message,
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
+    },
+    [refreshServerSnapshot]
   );
 
   const mediaFilterData = useMemo(
@@ -3463,6 +3565,9 @@ export function useOpsAppModel() {
     builderTab,
     draftStore,
     syncDraftStoreToControlDb,
+    deleteBlockDraft,
+    deleteChannelDraft,
+    deleteProfileDraft,
     isMobile: Boolean(isMobile),
     blockLibraryView,
     setBlockLibraryView,

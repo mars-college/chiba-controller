@@ -310,6 +310,45 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     setFleetView("workspace");
   };
 
+  const mediaSourceLabel = (media: Media): string => {
+    const raw = media.sourceValue.trim();
+    if (!raw) return "Media source";
+    if (media.sourceType === "url") {
+      try {
+        const parsed = new URL(raw);
+        const host = parsed.hostname.replace(/^www\./i, "").trim();
+        const leaf = decodeURIComponent(
+          parsed.pathname
+            .split("/")
+            .filter(Boolean)
+            .pop() || ""
+        ).trim();
+        if (host && leaf) return `${host}/${leaf}`;
+        if (host) return host;
+      } catch {
+        // no-op
+      }
+    }
+    const leaf = raw
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .pop()
+      ?.trim();
+    return leaf || raw;
+  };
+
+  const mediaDisplayLabel = (media: Media): string => {
+    const title = media.title?.trim();
+    if (title) return title;
+    return mediaSourceLabel(media);
+  };
+
+  const mediaDisplaySubtitle = (media: Media): string => {
+    const artist = media.artist?.trim();
+    if (artist) return artist;
+    return media.sourceType === "url" ? "Web media" : "Media";
+  };
+
   const resolveRuntimeCard = (kioskUrl: string | null | undefined) => {
     const target = parseKioskTarget(kioskUrl);
     if (target.kind === "media" && target.id) {
@@ -317,15 +356,15 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
       if (!media) {
         return {
           kind: "media",
-          label: target.id,
-          subtitle: target.label,
+          label: "Missing media item",
+          subtitle: "Not found in media library",
           thumbnailUrl: null as string | null,
         };
       }
       return {
         kind: "media",
-        label: media.title || media.id,
-        subtitle: media.artist || media.id,
+        label: mediaDisplayLabel(media),
+        subtitle: mediaDisplaySubtitle(media),
         thumbnailUrl: media.thumbnailUrl || null,
       };
     }
@@ -334,8 +373,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
       if (!playlist) {
         return {
           kind: "playlist",
-          label: target.id,
-          subtitle: target.label,
+          label: "Missing playlist",
+          subtitle: "Not found in playlist library",
           thumbnailUrl: null as string | null,
         };
       }
