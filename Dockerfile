@@ -3,7 +3,6 @@ FROM node:22-bookworm
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ffmpeg \
-    yt-dlp \
     unzip \
     zip \
     awscli \
@@ -12,7 +11,12 @@ RUN apt-get update \
     rsync \
     sshpass \
     python3 \
+    python3-pip \
   && rm -rf /var/lib/apt/lists/*
+
+# Debian bookworm's yt-dlp package is frequently too old for YouTube.
+# Install from PyPI at build time so ingest stays current.
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade yt-dlp
 
 RUN corepack enable
 
