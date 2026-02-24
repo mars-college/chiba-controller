@@ -1773,9 +1773,10 @@ async function main(): Promise<void> {
             phase: "ready",
             desiredRevision: runtimeState.desiredRevision,
           });
+          const launchProfile = firstWebItem?.web?.launchProfile;
           await runConfiguredWebAutomation({
             chromiumUrl,
-            launchProfile: firstWebItem?.web?.launchProfile,
+            ...(launchProfile ? { launchProfile } : {}),
             homeAssistantAutomationEnabled,
             homeAssistantUser,
             homeAssistantPass,
