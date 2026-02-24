@@ -90,9 +90,6 @@ export default function App() {
     returnToGuide,
     openQuickSend,
     runQuickSend,
-    exportDrafts,
-    pushDraftsToControlDb,
-    loadDraftsFromControlDb,
     refreshDraftsAfterIngest,
     upsertIngestJob,
     stopPollingJob,
@@ -118,7 +115,6 @@ export default function App() {
     deleteMediaItem,
     deletePlaylistDraft,
     mediaFilterData,
-    profileTargetOptions,
     pickerMedia,
     canQueueIngest,
     selectedIngestLabel,
@@ -144,9 +140,9 @@ export default function App() {
     openPlaylistEditorRoute,
     closePlaylistEditorRoute,
     commitPlaylistDrop,
-    openProfileEditor,
-    openBlockEditor,
-    openChannelEditor,
+    openBlockEditorRoute,
+    openChannelEditorRoute,
+    openProfileEditorRoute,
     fleetScreenVm,
     ingestSectionVm,
     mediaLibraryVm,
@@ -183,7 +179,6 @@ export default function App() {
     applyResult,
     setApplyResult,
     draftStore,
-    setDraftStore,
     serverSnapshot,
     setServerSnapshot,
     builderBusy,
@@ -226,12 +221,6 @@ export default function App() {
     setMediaFeedLimit,
     selectedPlaylistId,
     setSelectedPlaylistId,
-    selectedProfileId,
-    setSelectedProfileId,
-    selectedBlockId,
-    setSelectedBlockId,
-    selectedChannelId,
-    setSelectedChannelId,
     nodeWorkspaceFocusId,
     setNodeWorkspaceFocusId,
     nodeStash,
@@ -300,12 +289,6 @@ export default function App() {
     setOptRotate,
     playlistDraft,
     setPlaylistDraft,
-    blockDraft,
-    setBlockDraft,
-    channelDraft,
-    setChannelDraft,
-    profileDraft,
-    setProfileDraft,
     updateOpsUrl,
     parseTargetFromKioskUrl,
     statusBadge,
@@ -396,13 +379,22 @@ export default function App() {
                         ? "Add Media"
                         : builderTab === "playlistEditor"
                         ? "Playlist Editor"
+                        : builderTab === "blockEditor"
+                        ? "Block Editor"
+                        : builderTab === "channelEditor"
+                        ? "Channel Editor"
+                        : builderTab === "profileEditor"
+                        ? "Profile Editor"
                         : builderTab === "mediaDetail"
                         ? "Media Detail"
                         : "Media Library"}
                     </Title>
                     {builderTab !== "ingest" &&
                     builderTab !== "mediaDetail" &&
-                    builderTab !== "playlistEditor" ? (
+                    builderTab !== "playlistEditor" &&
+                    builderTab !== "blockEditor" &&
+                    builderTab !== "channelEditor" &&
+                    builderTab !== "profileEditor" ? (
                       <Button
                         size="xs"
                         variant="light"
@@ -416,33 +408,14 @@ export default function App() {
                             return;
                           }
                           if (currentLibraryPane === "blocks") {
-                            setBuilderTab("block");
-                            setSelectedBlockId(null);
-                            setBlockDraft({
-                              id: "",
-                              title: "",
-                              playlistIds: [],
-                            });
+                            openBlockEditorRoute();
                             return;
                           }
                           if (currentLibraryPane === "channels") {
-                            setBuilderTab("channel");
-                            setSelectedChannelId(null);
-                            setChannelDraft({
-                              id: "",
-                              title: "",
-                              blockIds: [],
-                            });
+                            openChannelEditorRoute();
                             return;
                           }
-                          setBuilderTab("profile");
-                          setSelectedProfileId(null);
-                          setProfileDraft({
-                            id: "",
-                            title: "",
-                            defaultTargetKind: "channel",
-                            defaultTargetId: "",
-                          });
+                          openProfileEditorRoute();
                         }}
                       >
                         {currentLibraryPane === "media"
@@ -459,7 +432,10 @@ export default function App() {
                   </Group>
                   {builderTab !== "ingest" &&
                   builderTab !== "mediaDetail" &&
-                  builderTab !== "playlistEditor" ? (
+                  builderTab !== "playlistEditor" &&
+                  builderTab !== "blockEditor" &&
+                  builderTab !== "channelEditor" &&
+                  builderTab !== "profileEditor" ? (
                     <SegmentedControl
                       value={currentLibraryPane}
                       onChange={(value) => {
@@ -546,11 +522,29 @@ export default function App() {
       <ResourcePickerModal
         opened={targetPickerOpen}
         onClose={() => setTargetPickerOpen(false)}
-        title={`Select ${applyKind}`}
+        title="Pick Target"
         items={applyResourcePickerItems}
         selectedIds={applyId ? [applyId] : []}
         multi={false}
         applyLabel="Use selected target"
+        kind={applyKind}
+        kindOptions={[
+          { value: "profile", label: "Profile" },
+          { value: "channel", label: "Channel" },
+          { value: "block", label: "Block" },
+          { value: "playlist", label: "Playlist" },
+          { value: "media", label: "Media" },
+        ]}
+        onKindChange={(kind) => {
+          const next = kind as
+            | "profile"
+            | "channel"
+            | "block"
+            | "playlist"
+            | "media";
+          setApplyKind(next);
+          setApplyId("");
+        }}
         onApply={(ids) => setApplyId(ids[0] || "")}
       />
 

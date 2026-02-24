@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type {
   LaunchOptions,
+  MediaResource,
   NodeRuntimeReportV1,
   ProfileResource,
 } from "@chiba-cable3/contracts";
@@ -121,6 +122,7 @@ export const mediaResources = pgTable("media_resources", {
   sourceValue: text("source_value").notNull(),
   thumbnailUrl: text("thumbnail_url"),
   thumbnailObjectKey: text("thumbnail_object_key"),
+  webConfigJson: jsonb("web_config_json").$type<MediaResource["web"] | null>(),
   cache: boolean("cache").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),

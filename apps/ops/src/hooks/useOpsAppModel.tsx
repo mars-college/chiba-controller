@@ -19,6 +19,7 @@ import {
   createOpsNode,
   deleteOpsNode,
   downloadOpsNodesExport,
+  fetchDesiredScreenAssignments,
   fetchOpsNodeCache,
   fetchOpsNodeRuntimeStatus,
   fetchOpsNodes,
@@ -26,6 +27,7 @@ import {
   openFleetStream,
   openGuide,
   sendOpsNodeInput,
+  setOpsNodeDisplayMode,
   updateOpsNode,
 } from "../lib/api";
 import {
@@ -46,6 +48,8 @@ import type {
   FleetPiHealth,
   OpsNodeRecord,
   OpsNodeBootstrapResponse,
+  OpsNodeDisplayModeResponse,
+  OpsApplyResult,
   OpsApplyResponse,
   OpsApplyTarget,
   OpsProfile,
@@ -69,6 +73,7 @@ import {
   formatBytes,
   formatDurationSec,
   fromResourcePayload,
+  blockItemsFromUnknownBlock,
   inferUploadPreviewKind,
   isLikelyVideoSource,
   isVideoMedia,
@@ -100,8 +105,13 @@ import {
   type OptionMode,
   type OptionRotate,
   type QuickSendTarget,
+  type TargetKind,
   type UploadPreviewItem,
 } from "../lib/opsModel";
+import {
+  buildWebLaunchConfigFromEntries,
+  type WebLaunchArgEntry,
+} from "../lib/webLaunchArgs";
 
 export function useOpsAppModel() {
   const isMobile = useMediaQuery("(max-width: 48em)");
@@ -118,6 +128,12 @@ export function useOpsAppModel() {
   const setMediaLibrarySection = useOpsUiStore((s) => s.setMediaLibrarySection);
   const playlistLibraryView = useOpsUiStore((s) => s.playlistLibraryView);
   const setPlaylistLibraryView = useOpsUiStore((s) => s.setPlaylistLibraryView);
+  const blockLibraryView = useOpsUiStore((s) => s.blockLibraryView);
+  const setBlockLibraryView = useOpsUiStore((s) => s.setBlockLibraryView);
+  const channelLibraryView = useOpsUiStore((s) => s.channelLibraryView);
+  const setChannelLibraryView = useOpsUiStore((s) => s.setChannelLibraryView);
+  const profileLibraryView = useOpsUiStore((s) => s.profileLibraryView);
+  const setProfileLibraryView = useOpsUiStore((s) => s.setProfileLibraryView);
   const mediaPickerOpen = useOpsUiStore((s) => s.mediaPickerOpen);
   const setMediaPickerOpen = useOpsUiStore((s) => s.setMediaPickerOpen);
   const targetPickerOpen = useOpsUiStore((s) => s.targetPickerOpen);
@@ -211,6 +227,10 @@ export function useOpsAppModel() {
   const [nodeBootstrapError, setNodeBootstrapError] = useState<string | null>(null);
   const [nodeBootstrapResult, setNodeBootstrapResult] =
     useState<OpsNodeBootstrapResponse | null>(null);
+  const [nodeDisplayModeBusy, setNodeDisplayModeBusy] = useState(false);
+  const [nodeDisplayModeError, setNodeDisplayModeError] = useState<string | null>(null);
+  const [nodeDisplayModeResult, setNodeDisplayModeResult] =
+    useState<OpsNodeDisplayModeResponse | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [ingestSource, setIngestSource] = useState<IngestSource>("youtube");
   const [ingestStep, setIngestStep] = useState<1 | 2 | 3>(1);
@@ -222,6 +242,12 @@ export function useOpsAppModel() {
   const [webArtist, setWebArtist] = useState("");
   const [webDescription, setWebDescription] = useState("");
   const [webCache, setWebCache] = useState(true);
+  const [webLaunchProfile, setWebLaunchProfile] = useState<
+    "none" | "home_assistant_login"
+  >("none");
+  const [webLaunchArgsEntries, setWebLaunchArgsEntries] = useState<
+    WebLaunchArgEntry[]
+  >([]);
   const [edenInput, setEdenInput] = useState("");
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadArtist, setUploadArtist] = useState("");
@@ -241,6 +267,7 @@ export function useOpsAppModel() {
   const [optQr, setOptQr] = useState<OptionBool>("inherit");
   const [optPlaylist, setOptPlaylist] = useState<OptionBool>("inherit");
   const [optNosplash, setOptNosplash] = useState<OptionBool>("inherit");
+  const [optRemoteInput, setOptRemoteInput] = useState<OptionBool>("inherit");
   const [optHud, setOptHud] = useState<OptionHud>("inherit");
   const [optHudSec, setOptHudSec] = useState<number | "">("");
   const [optTheme, setOptTheme] = useState("");
@@ -437,21 +464,23 @@ export function useOpsAppModel() {
   const profileOptions = useMemo<CatalogOption[]>(() => {
     const byId = new Map<string, CatalogOption>();
     for (const row of serverSnapshot?.profiles ?? []) {
+      const label = (row.title || "").trim() || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.id].filter(Boolean).join(" • ") || row.id,
+        label,
       });
     }
     for (const row of draftStore.profiles) {
+      const label = row.title.trim() || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.id].filter(Boolean).join(" • ") || row.id,
+        label,
       });
     }
     for (const row of profiles) {
       byId.set(row.id, {
         value: row.id,
-        label: `${row.id} • ${row.file}`,
+        label: row.id,
       });
     }
     return Array.from(byId.values()).sort((a, b) =>
@@ -462,17 +491,17 @@ export function useOpsAppModel() {
   const channelOptions = useMemo<CatalogOption[]>(() => {
     const byId = new Map<string, CatalogOption>();
     for (const row of serverSnapshot?.channels ?? []) {
+      const label = [row.number || "", row.name || ""].filter(Boolean).join(" • ") || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.number || "", row.name || "", row.id]
-          .filter(Boolean)
-          .join(" • "),
+        label,
       });
     }
     for (const row of draftStore.channels) {
+      const label = row.title.trim() || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     return Array.from(byId.values()).sort((a, b) =>
@@ -483,15 +512,17 @@ export function useOpsAppModel() {
   const blockOptions = useMemo<CatalogOption[]>(() => {
     const byId = new Map<string, CatalogOption>();
     for (const row of serverSnapshot?.blocks ?? []) {
+      const label = (row.title || "").trim() || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     for (const row of draftStore.blocks) {
+      const label = row.title.trim() || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     return Array.from(byId.values()).sort((a, b) =>
@@ -502,15 +533,19 @@ export function useOpsAppModel() {
   const playlistOptions = useMemo<CatalogOption[]>(() => {
     const byId = new Map<string, CatalogOption>();
     for (const row of serverSnapshot?.playlists ?? []) {
+      const label = [row.title || "", row.artist || ""].filter(Boolean).join(" • ") || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.artist, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     for (const row of draftStore.playlists) {
+      const label = [row.title.trim(), row.artist.trim()]
+        .filter(Boolean)
+        .join(" • ") || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.artist, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     return Array.from(byId.values()).sort((a, b) =>
@@ -521,15 +556,19 @@ export function useOpsAppModel() {
   const mediaOptions = useMemo<CatalogOption[]>(() => {
     const byId = new Map<string, CatalogOption>();
     for (const row of serverSnapshot?.media ?? []) {
+      const label = [row.title || "", row.artist || ""].filter(Boolean).join(" • ") || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.artist, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     for (const row of draftStore.media) {
+      const label = [row.title.trim(), row.artist.trim()]
+        .filter(Boolean)
+        .join(" • ") || row.id;
       byId.set(row.id, {
         value: row.id,
-        label: [row.title, row.artist, row.id].filter(Boolean).join(" • "),
+        label,
       });
     }
     return Array.from(byId.values()).sort((a, b) =>
@@ -800,6 +839,78 @@ export function useOpsAppModel() {
     [activeRegistryId, workspaceSingleNodeId]
   );
 
+  const setNodeDisplayMode = useCallback(
+    async (payload: {
+      mode: "native" | "2160p30" | "1440p60" | "1080p60" | "900p60" | "720p60";
+      restartDisplayManager?: boolean;
+      namespace?: string;
+      registryId?: string;
+      host?: string;
+      sshUser?: string;
+      sshPort?: number;
+      sshPassword?: string;
+      output?: string;
+      dryRun?: boolean;
+    }) => {
+      const nodeId = workspaceSingleNodeId.trim();
+      if (!nodeId) {
+        notifications.show({
+          color: "red",
+          title: "No node selected",
+          message: "Select one node before applying display mode.",
+        });
+        return;
+      }
+      setNodeDisplayModeBusy(true);
+      setNodeDisplayModeError(null);
+      try {
+        const result = await setOpsNodeDisplayMode(nodeId, {
+          mode: payload.mode,
+          restartDisplayManager: payload.restartDisplayManager === true,
+          namespace: payload.namespace?.trim() || undefined,
+          registryId: payload.registryId?.trim() || activeRegistryId || undefined,
+          host: payload.host?.trim() || undefined,
+          sshUser: payload.sshUser?.trim() || undefined,
+          sshPort:
+            typeof payload.sshPort === "number" && Number.isFinite(payload.sshPort)
+              ? payload.sshPort
+              : undefined,
+          sshPassword: payload.sshPassword?.trim() || undefined,
+          output: payload.output?.trim() || undefined,
+          dryRun: payload.dryRun === true,
+        });
+        setNodeDisplayModeResult(result);
+        const code =
+          typeof result.code === "number" ? String(result.code) : "n/a";
+        const suffix = result.dryRun ? "dry run" : `exit ${code}`;
+        notifications.show({
+          color: result.ok ? "teal" : "red",
+          title: result.ok
+            ? "Display mode applied"
+            : "Display mode apply failed",
+          message: `${nodeId} • ${result.mode} • ${suffix}`,
+        });
+        if (!result.ok) {
+          const message = (result.stderr || result.stdout || "display_mode_failed")
+            .split("\n")
+            .filter(Boolean)[0];
+          setNodeDisplayModeError(message || "display_mode_failed");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setNodeDisplayModeError(message);
+        notifications.show({
+          color: "red",
+          title: "Display mode apply failed",
+          message,
+        });
+      } finally {
+        setNodeDisplayModeBusy(false);
+      }
+    },
+    [activeRegistryId, workspaceSingleNodeId]
+  );
+
   const clearNodeStash = useCallback(async () => {
     const nodeId = workspaceSingleNodeId.trim();
     if (!nodeId) return;
@@ -854,6 +965,9 @@ export function useOpsAppModel() {
       setNodeBootstrapBusy(false);
       setNodeBootstrapError(null);
       setNodeBootstrapResult(null);
+      setNodeDisplayModeBusy(false);
+      setNodeDisplayModeError(null);
+      setNodeDisplayModeResult(null);
       return;
     }
     void refreshNodeStash(workspaceSingleNodeId);
@@ -1010,6 +1124,7 @@ export function useOpsAppModel() {
       qr?: OptionBool;
       playlist?: OptionBool;
       nosplash?: OptionBool;
+      remoteInput?: OptionBool;
       hud?: OptionHud;
       hudSec?: number | "";
       theme?: string;
@@ -1024,6 +1139,7 @@ export function useOpsAppModel() {
         showQr: toOptionBool(args.qr ?? "inherit"),
         playlist: toOptionBool(args.playlist ?? "inherit"),
         nosplash: toOptionBool(args.nosplash ?? "inherit"),
+        remoteInput: toOptionBool(args.remoteInput ?? "inherit"),
         hudMode: args.hud === "inherit" || !args.hud ? undefined : args.hud,
         hudShowSec:
           typeof args.hudSec === "number" && Number.isFinite(args.hudSec)
@@ -1052,6 +1168,7 @@ export function useOpsAppModel() {
         sourceValue: media.sourceValue,
         thumbnailUrl: media.thumbnailUrl,
         thumbnailObjectKey: media.thumbnailObjectKey,
+        web: media.web,
         cache: media.cache,
       });
     }
@@ -1059,14 +1176,6 @@ export function useOpsAppModel() {
   }, [draftStore.media, serverSnapshot?.media]);
 
   const runApply = useCallback(async () => {
-    if (!applyId.trim()) {
-      notifications.show({
-        color: "red",
-        title: "Target required",
-        message: "Choose a profile/channel/block/playlist/media target first.",
-      });
-      return;
-    }
     if (selectedNodeIds.length === 0) {
       notifications.show({
         color: "red",
@@ -1076,15 +1185,81 @@ export function useOpsAppModel() {
       return;
     }
 
+    const targetId = applyId.trim();
+    const hasLaunchOverrides =
+      optMode !== "inherit" ||
+      optLock !== "inherit" ||
+      optQr !== "inherit" ||
+      optPlaylist !== "inherit" ||
+      optNosplash !== "inherit" ||
+      optRemoteInput !== "inherit" ||
+      optHud !== "inherit" ||
+      (typeof optHudSec === "number" && Number.isFinite(optHudSec)) ||
+      optTheme.trim().length > 0 ||
+      optRotate !== "inherit";
+
+    if (!targetId && !hasLaunchOverrides) {
+      notifications.show({
+        color: "red",
+        title: "No changes to apply",
+        message: "Choose a target or change launch settings first.",
+      });
+      return;
+    }
+
+    const toApplyErrorResult = (nodeId: string, error: string): OpsApplyResult => {
+      const node = fleetMap[nodeId];
+      return {
+        id: nodeId,
+        host: node?.host || node?.ip || nodeId,
+        ip: node?.ip ?? null,
+        nodeName: node?.nodeName || nodeId,
+        guidePort: 5173,
+        url: "",
+        ok: false,
+        status: null,
+        ms: null,
+        error,
+      };
+    };
+
     try {
-      const targetId = applyId.trim();
       const mediaLookup = buildMediaLookup();
-      if (applyKind === "media") {
-        const media = mediaLookup.get(targetId);
-        if (media) {
-          await importResources({
-            media: [
-              {
+      if (targetId) {
+        if (applyKind === "media") {
+          const media = mediaLookup.get(targetId);
+          if (media) {
+            await importResources({
+              media: [
+                {
+                  id: media.id,
+                  title: media.title,
+                  artist: media.artist,
+                  description: media.description,
+                  sourceType: media.sourceType,
+                  sourceValue: media.sourceValue,
+                  thumbnailUrl: media.thumbnailUrl,
+                  thumbnailObjectKey: media.thumbnailObjectKey,
+                  web: media.web,
+                  cache: media.cache,
+                },
+              ],
+              playlists: [],
+              blocks: [],
+              channels: [],
+              profiles: [],
+            });
+          }
+        }
+        if (applyKind === "playlist") {
+          const playlist = draftStore.playlists.find(
+            (row) => row.id === targetId
+          );
+          if (playlist) {
+            const mediaRows = playlist.mediaIds
+              .map((mediaId) => mediaLookup.get(mediaId))
+              .filter((row): row is Media => Boolean(row))
+              .map((media) => ({
                 id: media.id,
                 title: media.title,
                 artist: media.artist,
@@ -1093,76 +1268,133 @@ export function useOpsAppModel() {
                 sourceValue: media.sourceValue,
                 thumbnailUrl: media.thumbnailUrl,
                 thumbnailObjectKey: media.thumbnailObjectKey,
+                web: media.web,
                 cache: media.cache,
-              },
-            ],
-            playlists: [],
-            blocks: [],
-            channels: [],
-            profiles: [],
-          });
+              }));
+            await importResources({
+              media: mediaRows,
+              playlists: [
+                {
+                  id: playlist.id,
+                  title: playlist.title || undefined,
+                  artist: playlist.artist || undefined,
+                  description: playlist.description || undefined,
+                  items: playlist.mediaIds.map((mediaId, index) => ({
+                    index,
+                    mediaId,
+                  })),
+                },
+              ],
+              blocks: [],
+              channels: [],
+              profiles: [],
+            });
+          }
         }
+        const result = await applyTargetToNodes({
+          target: applyKind,
+          id: targetId,
+          nodeIds: selectedNodeIds,
+          mode: optMode,
+          lock: optLock,
+          qr: optQr,
+          playlist: optPlaylist,
+          nosplash: optNosplash,
+          remoteInput: optRemoteInput,
+          hud: optHud,
+          hudSec: optHudSec,
+          theme: optTheme,
+          rotate: optRotate,
+        });
+        setApplyResult(result);
+        notifications.show({
+          color: result.ok ? "teal" : "orange",
+          title: "Apply completed",
+          message: summarizeApplyResult(result),
+        });
+        await refreshServerSnapshot();
+        refreshFleet();
+        return;
       }
-      if (applyKind === "playlist") {
-        const playlist = draftStore.playlists.find(
-          (row) => row.id === targetId
+
+      const assignments = await fetchDesiredScreenAssignments({
+        namespace: activeRegistryId,
+      });
+      const assignmentByNodeId = new Map(
+        assignments.items.map((item) => [item.screenId, item])
+      );
+      const nodesWithAssignment = selectedNodeIds
+        .map((nodeId) => ({
+          nodeId,
+          assignment: assignmentByNodeId.get(nodeId) || null,
+        }))
+        .filter(
+          (row): row is { nodeId: string; assignment: (typeof assignments.items)[number] } =>
+            Boolean(row.assignment?.target?.id && row.assignment?.target?.kind)
         );
-        if (playlist) {
-          const mediaRows = playlist.mediaIds
-            .map((mediaId) => mediaLookup.get(mediaId))
-            .filter((row): row is Media => Boolean(row))
-            .map((media) => ({
-              id: media.id,
-              title: media.title,
-              artist: media.artist,
-              description: media.description,
-              sourceType: media.sourceType,
-              sourceValue: media.sourceValue,
-              thumbnailUrl: media.thumbnailUrl,
-              thumbnailObjectKey: media.thumbnailObjectKey,
-              cache: media.cache,
-            }));
-          await importResources({
-            media: mediaRows,
-            playlists: [
-              {
-                id: playlist.id,
-                title: playlist.title || undefined,
-                artist: playlist.artist || undefined,
-                description: playlist.description || undefined,
-                items: playlist.mediaIds.map((mediaId, index) => ({
-                  index,
-                  mediaId,
-                })),
-              },
-            ],
-            blocks: [],
-            channels: [],
-            profiles: [],
-          });
-        }
+
+      if (nodesWithAssignment.length === 0) {
+        notifications.show({
+          color: "red",
+          title: "No existing targets found",
+          message:
+            "None of the selected nodes have desired state in this namespace. Pick a target first.",
+        });
+        return;
       }
-      const result = await applyTargetToNodes({
+
+      const perNodeResults = await Promise.all(
+        nodesWithAssignment.map(async ({ nodeId, assignment }) => {
+          try {
+            const response = await applyTargetToNodes({
+              target: assignment.target.kind,
+              id: assignment.target.id,
+              nodeIds: [nodeId],
+              mode: optMode,
+              lock: optLock,
+              qr: optQr,
+              playlist: optPlaylist,
+              nosplash: optNosplash,
+              remoteInput: optRemoteInput,
+              hud: optHud,
+              hudSec: optHudSec,
+              theme: optTheme,
+              rotate: optRotate,
+            });
+            return response.results;
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            return [toApplyErrorResult(nodeId, message)];
+          }
+        })
+      );
+
+      const missingNodeIds = selectedNodeIds.filter(
+        (nodeId) => !assignmentByNodeId.has(nodeId)
+      );
+      const missingResults = missingNodeIds.map((nodeId) =>
+        toApplyErrorResult(nodeId, "missing_current_target")
+      );
+      const mergedResults = [...perNodeResults.flat(), ...missingResults];
+      const mergedResult: OpsApplyResponse = {
+        ok: mergedResults.every((row) => row.ok),
+        results: mergedResults,
         target: applyKind,
-        id: applyId,
-        nodeIds: selectedNodeIds,
-        mode: optMode,
-        lock: optLock,
-        qr: optQr,
-        playlist: optPlaylist,
-        nosplash: optNosplash,
-        hud: optHud,
-        hudSec: optHudSec,
-        theme: optTheme,
-        rotate: optRotate,
-      });
-      setApplyResult(result);
+        ...(targetId ? { id: targetId } : {}),
+        ...(missingNodeIds.length > 0
+          ? {
+              warning: `missing_current_target:${missingNodeIds.join(",")}`,
+            }
+          : {}),
+      };
+
+      setApplyResult(mergedResult);
       notifications.show({
-        color: result.ok ? "teal" : "orange",
+        color: mergedResult.ok ? "teal" : "orange",
         title: "Apply completed",
-        message: summarizeApplyResult(result),
+        message: summarizeApplyResult(mergedResult),
       });
-      await refreshServerSnapshot();
       refreshFleet();
     } catch (error) {
       notifications.show({
@@ -1174,11 +1406,14 @@ export function useOpsAppModel() {
   }, [
     applyId,
     applyKind,
+    activeRegistryId,
+    fleetMap,
     optHud,
     optHudSec,
     optLock,
     optMode,
     optNosplash,
+    optRemoteInput,
     optPlaylist,
     optQr,
     optRotate,
@@ -1186,6 +1421,7 @@ export function useOpsAppModel() {
     applyTargetToNodes,
     buildMediaLookup,
     draftStore.playlists,
+    fetchDesiredScreenAssignments,
     refreshServerSnapshot,
     refreshFleet,
     selectedNodeIds,
@@ -1263,6 +1499,7 @@ export function useOpsAppModel() {
                 sourceValue: media.sourceValue,
                 thumbnailUrl: media.thumbnailUrl,
                 thumbnailObjectKey: media.thumbnailObjectKey,
+                web: media.web,
                 cache: media.cache,
               },
             ],
@@ -1290,6 +1527,7 @@ export function useOpsAppModel() {
               sourceValue: media.sourceValue,
               thumbnailUrl: media.thumbnailUrl,
               thumbnailObjectKey: media.thumbnailObjectKey,
+              web: media.web,
               cache: media.cache,
             }));
           await importResources({
@@ -1346,61 +1584,40 @@ export function useOpsAppModel() {
     refreshServerSnapshot,
   ]);
 
-  const exportDrafts = useCallback(() => {
-    const blob = new Blob([JSON.stringify(draftStore, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `chiba-controller-drafts-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [draftStore]);
-
-  const pushDraftsToControlDb = useCallback(async () => {
-    try {
-      setBuilderBusy(true);
-      const payload = toResourcePayload(draftStore);
-      const result = await importResources(payload);
-      notifications.show({
-        color: "teal",
-        title: "Drafts synced to control DB",
-        message: `media:${result.counts.media} playlists:${result.counts.playlists} blocks:${result.counts.blocks} channels:${result.counts.channels} profiles:${result.counts.profiles}`,
-      });
-      await refreshServerSnapshot();
-    } catch (error) {
-      notifications.show({
-        color: "red",
-        title: "Sync to control DB failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBuilderBusy(false);
-    }
-  }, [draftStore, refreshServerSnapshot]);
-
-  const loadDraftsFromControlDb = useCallback(async () => {
-    try {
-      setBuilderBusy(true);
-      const result = await fetchResourceSnapshot();
-      setDraftStore(fromResourcePayload(result.snapshot));
-      setServerSnapshot(result.snapshot);
-      notifications.show({
-        color: "teal",
-        title: "Drafts loaded from control DB",
-        message: "Builder is now showing persisted catalog resources.",
-      });
-    } catch (error) {
-      notifications.show({
-        color: "red",
-        title: "Load from control DB failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBuilderBusy(false);
-    }
-  }, []);
+  const syncDraftStoreToControlDb = useCallback(
+    async (
+      nextStore: DraftStore,
+      options?: { successTitle?: string; successMessage?: string; quietSuccess?: boolean }
+    ): Promise<boolean> => {
+      try {
+        setBuilderBusy(true);
+        const payload = toResourcePayload(nextStore);
+        const result = await importResources(payload);
+        setDraftStore(nextStore);
+        await refreshServerSnapshot({ silent: true });
+        if (!options?.quietSuccess) {
+          notifications.show({
+            color: "teal",
+            title: options?.successTitle || "Drafts synced to control DB",
+            message:
+              options?.successMessage ||
+              `media:${result.counts.media} playlists:${result.counts.playlists} blocks:${result.counts.blocks} channels:${result.counts.channels} profiles:${result.counts.profiles}`,
+          });
+        }
+        return true;
+      } catch (error) {
+        notifications.show({
+          color: "red",
+          title: "Sync to control DB failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
+    },
+    [refreshServerSnapshot]
+  );
 
   const refreshDraftsAfterIngest = useCallback(async () => {
     const result = await fetchResourceSnapshot();
@@ -1615,6 +1832,13 @@ export function useOpsAppModel() {
     upsertIngestJob,
   ]);
 
+  const parsedWebLaunchConfig = useMemo(() => {
+    return buildWebLaunchConfigFromEntries({
+      entries: webLaunchArgsEntries,
+      launchProfile: webLaunchProfile,
+    });
+  }, [webLaunchArgsEntries, webLaunchProfile]);
+
   const runWebIngest = useCallback(async () => {
     const url = webUrl.trim();
     if (!url) {
@@ -1643,6 +1867,14 @@ export function useOpsAppModel() {
       });
       return;
     }
+    if (parsedWebLaunchConfig.error) {
+      notifications.show({
+        color: "red",
+        title: "Invalid web launch args",
+        message: parsedWebLaunchConfig.error,
+      });
+      return;
+    }
     try {
       setIngestBusy(true);
       const idSeed =
@@ -1659,6 +1891,7 @@ export function useOpsAppModel() {
             description: webDescription.trim() || undefined,
             sourceType: "url",
             sourceValue: url,
+            web: parsedWebLaunchConfig.config,
             cache: webCache,
           },
         ],
@@ -1678,6 +1911,8 @@ export function useOpsAppModel() {
       setWebArtist("");
       setWebDescription("");
       setWebCache(true);
+      setWebLaunchProfile("none");
+      setWebLaunchArgsEntries([]);
       routeToMediaLibraryAfterQueue();
     } catch (error) {
       notifications.show({
@@ -1691,9 +1926,11 @@ export function useOpsAppModel() {
   }, [
     refreshServerSnapshot,
     routeToMediaLibraryAfterQueue,
+    parsedWebLaunchConfig,
     webArtist,
     webCache,
     webDescription,
+    webLaunchArgsEntries,
     webTitle,
     webUrl,
   ]);
@@ -1767,6 +2004,7 @@ export function useOpsAppModel() {
         sourceValue: media.sourceValue,
         thumbnailUrl: media.thumbnailUrl,
         thumbnailObjectKey: media.thumbnailObjectKey,
+        web: media.web,
         cache: media.cache,
       });
     }
@@ -1825,51 +2063,195 @@ export function useOpsAppModel() {
     return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
   }, [draftStore.playlists, serverSnapshot?.playlists]);
 
-  const applyResourcePickerItems = useMemo<ResourcePickerItem[]>(() => {
-    if (applyKind === "media") {
-      return mergedMedia.map((row) => ({
+  const mergedPlaylistsById = useMemo(() => {
+    const byId = new Map<string, (typeof mergedPlaylists)[number]>();
+    for (const row of mergedPlaylists) byId.set(row.id, row);
+    return byId;
+  }, [mergedPlaylists]);
+
+  const mergedBlocks = useMemo<
+    Array<{
+      id: string;
+      title?: string;
+      items: Array<{ kind: "media" | "playlist"; id: string }>;
+    }>
+  >(() => {
+    const byId = new Map<
+      string,
+      {
+        id: string;
+        title?: string;
+        items: Array<{ kind: "media" | "playlist"; id: string }>;
+      }
+    >();
+    for (const row of serverSnapshot?.blocks ?? []) {
+      byId.set(row.id, {
         id: row.id,
-        title: row.title || row.id,
-        subtitle: row.artist || "unknown artist",
-        description: row.id,
+        title: row.title,
+        items: blockItemsFromUnknownBlock(row),
+      });
+    }
+    for (const row of draftStore.blocks) {
+      byId.set(row.id, {
+        id: row.id,
+        title: row.title,
+        items: row.items
+          .map((item) => ({ kind: item.kind, id: item.id.trim() }))
+          .filter((item) => item.id.length > 0),
+      });
+    }
+    return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }, [draftStore.blocks, serverSnapshot?.blocks]);
+
+  const targetPickerItemsByKind = useMemo<
+    Record<TargetKind, ResourcePickerItem[]>
+  >(() => {
+    const toMediaTile = (mediaId: string) => {
+      const media = mergedMediaById.get(mediaId);
+      if (!media) return { label: mediaId };
+      return {
+        src: media.thumbnailUrl || mediaPreviewSource(media) || undefined,
+        label: media.title || mediaId,
+      };
+    };
+
+    const playlistPreviewById = new Map<
+      string,
+      { tiles: Array<{ src?: string; label: string }>; total: number }
+    >();
+    for (const playlist of mergedPlaylists) {
+      const mediaIds = playlist.mediaIds.filter(Boolean);
+      playlistPreviewById.set(playlist.id, {
+        tiles: mediaIds.slice(0, 4).map((id) => toMediaTile(id)),
+        total: mediaIds.length,
+      });
+    }
+
+    const blockPreviewById = new Map<
+      string,
+      { tiles: Array<{ src?: string; label: string }>; total: number }
+    >();
+    for (const block of mergedBlocks) {
+      const mediaIds: string[] = [];
+      const fallbackTiles: Array<{ src?: string; label: string }> = [];
+      for (const item of block.items) {
+        if (item.kind === "media") {
+          mediaIds.push(item.id);
+          fallbackTiles.push(toMediaTile(item.id));
+          continue;
+        }
+        const playlist = mergedPlaylistsById.get(item.id);
+        if (playlist) {
+          mediaIds.push(...playlist.mediaIds);
+          if (playlist.mediaIds.length === 0) {
+            fallbackTiles.push({
+              label: playlist.title || "Playlist",
+            });
+          }
+        } else {
+          fallbackTiles.push({
+            label: item.id,
+          });
+        }
+        if (mediaIds.length >= 16) break;
+      }
+      const resolvedTiles = mediaIds.slice(0, 4).map((id) => toMediaTile(id));
+      const tiles =
+        resolvedTiles.length > 0
+          ? resolvedTiles
+          : fallbackTiles.slice(0, 4);
+      blockPreviewById.set(block.id, {
+        tiles,
+        total: mediaIds.length > 0 ? mediaIds.length : block.items.length,
+      });
+    }
+
+    return {
+      media: mergedMedia.map((row) => ({
+        id: row.id,
+        title: row.title || "Untitled media",
+        subtitle: row.artist || undefined,
+        description: row.description || undefined,
         thumbnailUrl: row.thumbnailUrl,
         previewUrl: mediaPreviewSource(row) || undefined,
-        badge: isVideoMedia(row) ? "video" : "media",
-        searchText: [
-          row.id,
-          row.title,
-          row.artist,
-          row.description,
-          row.sourceValue,
-        ]
+        badge:
+          row.sourceType === "url"
+            ? "web"
+            : isVideoMedia(row)
+              ? "video"
+              : "media",
+        searchText: [row.id, row.title, row.artist, row.description, row.sourceValue]
           .filter(Boolean)
           .join(" "),
-      }));
-    }
-    if (applyKind === "playlist") {
-      return mergedPlaylists.map((row) => {
-        const firstThumb = row.mediaIds
-          .map((id) => mergedMediaById.get(id))
-          .find((item) => Boolean(item?.thumbnailUrl));
+      })),
+      playlist: mergedPlaylists.map((row) => {
+        const preview = playlistPreviewById.get(row.id);
         return {
           id: row.id,
-          title: row.title || row.id,
+          title: row.title || "Untitled playlist",
           subtitle:
             row.artist ||
-            `${row.mediaIds.length} item${
-              row.mediaIds.length === 1 ? "" : "s"
-            }`,
-          description: row.id,
-          thumbnailUrl: firstThumb?.thumbnailUrl,
+            `${row.mediaIds.length} item${row.mediaIds.length === 1 ? "" : "s"}`,
+          description: row.description || undefined,
+          previewTiles: preview?.tiles || [],
+          previewTilesTotalCount: preview?.total || row.mediaIds.length,
           badge: "playlist",
           searchText: [row.id, row.title, row.artist, row.description]
             .filter(Boolean)
             .join(" "),
         };
-      });
+      }),
+      block: mergedBlocks.map((row) => {
+        const preview = blockPreviewById.get(row.id);
+        return {
+          id: row.id,
+          title: row.title || "Untitled block",
+          subtitle: `${row.items.length} item${row.items.length === 1 ? "" : "s"}`,
+          previewTiles: preview?.tiles || [],
+          previewTilesTotalCount: preview?.total || 0,
+          badge: "block",
+          searchText: [row.id, row.title].filter(Boolean).join(" "),
+        };
+      }),
+      channel: channelOptions.map((row) => ({
+        id: row.value,
+        title: row.label || "Untitled channel",
+        badge: "channel",
+        searchText: row.value,
+      })),
+    };
+  }, [
+    channelOptions,
+    mergedBlocks,
+    mergedMedia,
+    mergedMediaById,
+    mergedPlaylists,
+    mergedPlaylistsById,
+  ]);
+
+  const applyResourcePickerItems = useMemo<ResourcePickerItem[]>(() => {
+    if (
+      applyKind === "media" ||
+      applyKind === "playlist" ||
+      applyKind === "block" ||
+      applyKind === "channel"
+    ) {
+      return targetPickerItemsByKind[applyKind] || [];
+    }
+    if (applyKind === "profile") {
+      return profileOptions.map((row) => ({
+        id: row.value,
+        title: row.label,
+        badge: "profile",
+        searchText: `${row.value} ${row.label}`,
+      }));
     }
     return [];
-  }, [applyKind, mergedMedia, mergedMediaById, mergedPlaylists]);
+  }, [
+    applyKind,
+    profileOptions,
+    targetPickerItemsByKind,
+  ]);
 
   const applyTargetPreviewCard = useMemo(() => {
     const targetId = applyId.trim();
@@ -1974,11 +2356,23 @@ export function useOpsAppModel() {
       const serverBlock = serverSnapshot?.blocks.find(
         (row) => row.id === targetId
       );
-      const playlistIds = draftBlock
-        ? draftBlock.playlistIds
+      const blockItems = draftBlock
+        ? draftBlock.items
         : serverBlock?.items
-            .map((item) => item.playlistId || "")
-            .filter((id) => id.length > 0) ?? [];
+            .map((item) => {
+              if (item.mediaId?.trim()) {
+                return { kind: "media" as const, id: item.mediaId.trim() };
+              }
+              if (item.playlistId?.trim()) {
+                return { kind: "playlist" as const, id: item.playlistId.trim() };
+              }
+              return null;
+            })
+            .filter((item) => Boolean(item)) ?? [];
+      const mediaCount = blockItems.filter((item) => item?.kind === "media").length;
+      const playlistCount = blockItems.filter(
+        (item) => item?.kind === "playlist"
+      ).length;
       return (
         <Paper withBorder p="sm">
           <Stack gap={6}>
@@ -1986,8 +2380,11 @@ export function useOpsAppModel() {
               <Text fw={700}>
                 {draftBlock?.title || serverBlock?.title || targetId}
               </Text>
-              <Badge variant="light">{playlistIds.length} playlists</Badge>
+              <Badge variant="light">{blockItems.length} items</Badge>
             </Group>
+            <Text size="xs" c="dimmed">
+              media:{mediaCount} playlist:{playlistCount}
+            </Text>
             <Text size="xs" c="dimmed" ff="monospace">
               {targetId}
             </Text>
@@ -2025,7 +2422,12 @@ export function useOpsAppModel() {
     const serverProfile = serverSnapshot?.profiles.find(
       (row) => row.id === targetId
     );
-    const managedNodes = serverProfile?.nodes.length ?? 0;
+    const managedNodes =
+      draftProfile?.nodeAssignments.filter(
+        (row) => row.targetId.trim().length > 0
+      ).length ??
+      serverProfile?.nodes.length ??
+      0;
     return (
       <Paper withBorder p="sm">
         <Stack gap={6}>
@@ -2148,6 +2550,7 @@ export function useOpsAppModel() {
       title?: string;
       artist?: string;
       description?: string;
+      web?: Media["web"];
     }) => {
       const existing = serverMedia.find((row) => row.id === args.id);
       if (!existing) {
@@ -2162,6 +2565,7 @@ export function useOpsAppModel() {
               title: args.title?.trim() || undefined,
               artist: args.artist?.trim() || undefined,
               description: args.description?.trim() || undefined,
+              web: args.web,
             },
           ],
           playlists: [],
@@ -2183,18 +2587,48 @@ export function useOpsAppModel() {
   );
 
   const deletePlaylistDraft = useCallback(
-    (playlistId: string) => {
+    async (playlistId: string) => {
       const ok = window.confirm(
-        `Delete playlist "${playlistId}"? This removes it from local draft state.`
+        `Delete playlist "${playlistId}"?`
       );
       if (!ok) return;
-      setDraftStore((store) => ({
-        ...store,
-        playlists: store.playlists.filter((item) => item.id !== playlistId),
-      }));
-      if (selectedPlaylistId === playlistId) setSelectedPlaylistId(null);
+      const id = playlistId.trim();
+      if (!id) return;
+      const nextStore: DraftStore = {
+        ...draftStore,
+        playlists: draftStore.playlists.filter((item) => item.id !== id),
+        blocks: draftStore.blocks.map((block) => ({
+          ...block,
+          items: block.items.filter(
+            (item) => !(item.kind === "playlist" && item.id === id)
+          ),
+        })),
+        profiles: draftStore.profiles.map((profile) => ({
+          ...profile,
+          defaultTargetId:
+            profile.defaultTargetKind === "playlist" &&
+            profile.defaultTargetId === id
+              ? ""
+              : profile.defaultTargetId,
+          nodeAssignments: profile.nodeAssignments.map((assignment) =>
+            assignment.targetKind === "playlist" && assignment.targetId === id
+              ? { ...assignment, targetId: "" }
+              : assignment
+          ),
+        })),
+      };
+      const synced = await syncDraftStoreToControlDb(nextStore, {
+        quietSuccess: true,
+      });
+      if (!synced) return;
+      if (selectedPlaylistId === id) setSelectedPlaylistId(null);
+      notifications.show({
+        color: "teal",
+        title: "Playlist deleted",
+        message: id,
+      });
     },
-    [selectedPlaylistId]
+    [draftStore, selectedPlaylistId, syncDraftStoreToControlDb]
   );
 
   const mediaFilterData = useMemo(
@@ -2206,36 +2640,34 @@ export function useOpsAppModel() {
     [serverMedia.length, serverMediaKinds.path, serverMediaKinds.url]
   );
 
-  const profileTargetOptions = useMemo(() => {
-    const add = new Set<string>();
-    if (profileDraft.defaultTargetKind === "media") {
-      for (const row of mergedMedia) add.add(row.id);
-    }
-    if (profileDraft.defaultTargetKind === "playlist") {
-      for (const row of draftStore.playlists) add.add(row.id);
-      for (const row of serverSnapshot?.playlists ?? []) add.add(row.id);
-    }
-    if (profileDraft.defaultTargetKind === "block") {
-      for (const row of draftStore.blocks) add.add(row.id);
-      for (const row of serverSnapshot?.blocks ?? []) add.add(row.id);
-    }
-    if (profileDraft.defaultTargetKind === "channel") {
-      for (const row of draftStore.channels) add.add(row.id);
-      for (const row of serverSnapshot?.channels ?? []) add.add(row.id);
-    }
-    return Array.from(add)
-      .sort((a, b) => a.localeCompare(b))
-      .map((id) => ({ value: id, label: id }));
-  }, [
-    draftStore.blocks,
-    draftStore.channels,
-    draftStore.playlists,
-    mergedMedia,
-    profileDraft.defaultTargetKind,
-    serverSnapshot?.blocks,
-    serverSnapshot?.channels,
-    serverSnapshot?.playlists,
-  ]);
+  const registryNodes = useMemo(
+    () => {
+      const byId = new Map<
+        string,
+        { nodeId: string; label: string; registered: boolean }
+      >();
+      for (const row of Object.values(opsNodeMap)) {
+        byId.set(row.nodeId, {
+          nodeId: row.nodeId,
+          label: [row.nodeName, row.host, row.nodeId].filter(Boolean).join(" • "),
+          registered: true,
+        });
+      }
+      for (const row of profileDraft.nodeAssignments) {
+        const nodeId = row.nodeId.trim();
+        if (!nodeId || byId.has(nodeId)) continue;
+        byId.set(nodeId, {
+          nodeId,
+          label: `${nodeId} • unregistered`,
+          registered: false,
+        });
+      }
+      return Array.from(byId.values()).sort((a, b) =>
+        a.nodeId.localeCompare(b.nodeId)
+      );
+    },
+    [opsNodeMap, profileDraft.nodeAssignments]
+  );
 
   const pickerMedia = useMemo<Media[]>(() => mergedMedia, [mergedMedia]);
 
@@ -2263,9 +2695,18 @@ export function useOpsAppModel() {
   const canQueueIngest = useMemo(() => {
     if (ingestSource === "youtube") return youtubeUrl.trim().length > 0;
     if (ingestSource === "eden") return edenInput.trim().length > 0;
-    if (ingestSource === "web") return webUrl.trim().length > 0;
+    if (ingestSource === "web") {
+      return webUrl.trim().length > 0 && !parsedWebLaunchConfig.error;
+    }
     return uploadFiles.length > 0;
-  }, [edenInput, ingestSource, uploadFiles.length, webUrl, youtubeUrl]);
+  }, [
+    edenInput,
+    ingestSource,
+    parsedWebLaunchConfig.error,
+    uploadFiles.length,
+    webUrl,
+    youtubeUrl,
+  ]);
 
   const selectedIngestLabel = useMemo(() => {
     if (ingestSource === "youtube") return "YouTube (yt-dlp)";
@@ -2290,9 +2731,11 @@ export function useOpsAppModel() {
   const currentLibraryPane = useMemo<
     "media" | "playlists" | "blocks" | "channels" | "profiles"
   >(() => {
-    if (builderTab === "block") return "blocks";
-    if (builderTab === "channel") return "channels";
-    if (builderTab === "profile") return "profiles";
+    if (builderTab === "block" || builderTab === "blockEditor") return "blocks";
+    if (builderTab === "channel" || builderTab === "channelEditor")
+      return "channels";
+    if (builderTab === "profile" || builderTab === "profileEditor")
+      return "profiles";
     return mediaLibrarySection;
   }, [builderTab, mediaLibrarySection]);
 
@@ -2584,43 +3027,146 @@ export function useOpsAppModel() {
     };
   }, [builderTab, loadPlaylistDraftById]);
 
-  const openProfileEditor = useCallback(
-    (profileId: string) => {
-      const row = draftStore.profiles.find((item) => item.id === profileId);
-      if (!row) return;
-      setSelectedProfileId(profileId);
-      setProfileDraft({ ...row });
+  const loadProfileDraftById = useCallback(
+    (profileId: string): boolean => {
+      const id = profileId.trim();
+      if (!id) return false;
+      const row = draftStore.profiles.find((item) => item.id === id);
+      if (!row) return false;
+      setSelectedProfileId(id);
+      setProfileDraft({
+        id: row.id,
+        title: row.title,
+        defaultTargetKind: row.defaultTargetKind,
+        defaultTargetId: row.defaultTargetId,
+        nodeAssignments: row.nodeAssignments.map((node) => ({ ...node })),
+      });
+      return true;
     },
     [draftStore.profiles]
   );
 
-  const openBlockEditor = useCallback(
-    (blockId: string) => {
-      const row = draftStore.blocks.find((item) => item.id === blockId);
-      if (!row) return;
-      setSelectedBlockId(blockId);
+  const loadBlockDraftById = useCallback(
+    (blockId: string): boolean => {
+      const id = blockId.trim();
+      if (!id) return false;
+      const row = draftStore.blocks.find((item) => item.id === id);
+      if (!row) return false;
+      setSelectedBlockId(id);
       setBlockDraft({
         id: row.id,
         title: row.title,
-        playlistIds: [...row.playlistIds],
+        mode: row.mode,
+        items: row.items.map((item) => ({ ...item })),
       });
+      return true;
     },
     [draftStore.blocks]
   );
 
-  const openChannelEditor = useCallback(
-    (channelId: string) => {
-      const row = draftStore.channels.find((item) => item.id === channelId);
-      if (!row) return;
-      setSelectedChannelId(channelId);
+  const loadChannelDraftById = useCallback(
+    (channelId: string): boolean => {
+      const id = channelId.trim();
+      if (!id) return false;
+      const row = draftStore.channels.find((item) => item.id === id);
+      if (!row) return false;
+      setSelectedChannelId(id);
       setChannelDraft({
         id: row.id,
         title: row.title,
         blockIds: [...row.blockIds],
       });
+      return true;
     },
     [draftStore.channels]
   );
+
+  const openBlockEditorRoute = useCallback(
+    (blockId?: string) => {
+      const nextId = blockId?.trim() || "";
+      setMainTab("builder");
+      setBuilderTab("blockEditor");
+      setMediaLibrarySection("blocks");
+      if (nextId) {
+        const loaded = loadBlockDraftById(nextId);
+        if (!loaded) {
+          setSelectedBlockId(null);
+          setBlockDraft({
+            ...EMPTY_BLOCK_DRAFT,
+            id: nextId,
+          });
+        }
+      } else {
+        setSelectedBlockId(null);
+        setBlockDraft(EMPTY_BLOCK_DRAFT);
+      }
+      if (isMobile) setControlOpen(false);
+    },
+    [isMobile, loadBlockDraftById]
+  );
+
+  const closeBlockEditorRoute = useCallback(() => {
+    setBuilderTab("block");
+    setMediaLibrarySection("blocks");
+  }, []);
+
+  const openChannelEditorRoute = useCallback(
+    (channelId?: string) => {
+      const nextId = channelId?.trim() || "";
+      setMainTab("builder");
+      setBuilderTab("channelEditor");
+      setMediaLibrarySection("channels");
+      if (nextId) {
+        const loaded = loadChannelDraftById(nextId);
+        if (!loaded) {
+          setSelectedChannelId(null);
+          setChannelDraft({
+            ...EMPTY_CHANNEL_DRAFT,
+            id: nextId,
+          });
+        }
+      } else {
+        setSelectedChannelId(null);
+        setChannelDraft(EMPTY_CHANNEL_DRAFT);
+      }
+      if (isMobile) setControlOpen(false);
+    },
+    [isMobile, loadChannelDraftById]
+  );
+
+  const closeChannelEditorRoute = useCallback(() => {
+    setBuilderTab("channel");
+    setMediaLibrarySection("channels");
+  }, []);
+
+  const openProfileEditorRoute = useCallback(
+    (profileId?: string) => {
+      const nextId = profileId?.trim() || "";
+      setMainTab("builder");
+      setBuilderTab("profileEditor");
+      setMediaLibrarySection("profiles");
+      if (nextId) {
+        const loaded = loadProfileDraftById(nextId);
+        if (!loaded) {
+          setSelectedProfileId(null);
+          setProfileDraft({
+            ...EMPTY_PROFILE_DRAFT,
+            id: nextId,
+          });
+        }
+      } else {
+        setSelectedProfileId(null);
+        setProfileDraft(EMPTY_PROFILE_DRAFT);
+      }
+      if (isMobile) setControlOpen(false);
+    },
+    [isMobile, loadProfileDraftById]
+  );
+
+  const closeProfileEditorRoute = useCallback(() => {
+    setBuilderTab("profile");
+    setMediaLibrarySection("profiles");
+  }, []);
 
   useEffect(() => {
     if (builderTab !== "playlist") return;
@@ -2649,8 +3195,8 @@ export function useOpsAppModel() {
     )
       return;
     const first = draftStore.profiles[0];
-    if (first) openProfileEditor(first.id);
-  }, [builderTab, draftStore.profiles, openProfileEditor, selectedProfileId]);
+    if (first) loadProfileDraftById(first.id);
+  }, [builderTab, draftStore.profiles, loadProfileDraftById, selectedProfileId]);
 
   useEffect(() => {
     if (builderTab !== "block") return;
@@ -2660,8 +3206,8 @@ export function useOpsAppModel() {
     )
       return;
     const first = draftStore.blocks[0];
-    if (first) openBlockEditor(first.id);
-  }, [builderTab, draftStore.blocks, openBlockEditor, selectedBlockId]);
+    if (first) loadBlockDraftById(first.id);
+  }, [builderTab, draftStore.blocks, loadBlockDraftById, selectedBlockId]);
 
   useEffect(() => {
     if (builderTab !== "channel") return;
@@ -2671,8 +3217,8 @@ export function useOpsAppModel() {
     )
       return;
     const first = draftStore.channels[0];
-    if (first) openChannelEditor(first.id);
-  }, [builderTab, draftStore.channels, openChannelEditor, selectedChannelId]);
+    if (first) loadChannelDraftById(first.id);
+  }, [builderTab, draftStore.channels, loadChannelDraftById, selectedChannelId]);
 
   const fleetScreenVm = {
     isMobile: Boolean(isMobile),
@@ -2705,6 +3251,10 @@ export function useOpsAppModel() {
     nodeBootstrapBusy,
     nodeBootstrapError,
     nodeBootstrapResult,
+    setNodeDisplayMode,
+    nodeDisplayModeBusy,
+    nodeDisplayModeError,
+    nodeDisplayModeResult,
     nodeStashFilterQuery,
     setNodeStashFilterQuery,
     nodeStashSort,
@@ -2735,6 +3285,8 @@ export function useOpsAppModel() {
     setOptPlaylist,
     optNosplash,
     setOptNosplash,
+    optRemoteInput,
+    setOptRemoteInput,
     optHud,
     setOptHud,
     optHudSec,
@@ -2791,6 +3343,12 @@ export function useOpsAppModel() {
     setWebDescription,
     webCache,
     setWebCache,
+    webLaunchProfile,
+    setWebLaunchProfile,
+    webLaunchArgsEntries,
+    setWebLaunchArgsEntries,
+    webLaunchConfig: parsedWebLaunchConfig.config,
+    webLaunchArgsError: parsedWebLaunchConfig.error,
     edenInput,
     setEdenInput,
     getUploadRootProps,
@@ -2850,12 +3408,14 @@ export function useOpsAppModel() {
 
   const playlistEditorVm = {
     isMobile: Boolean(isMobile),
+    draftStore,
     playlistDraft,
     setPlaylistDraft,
     closePlaylistEditorRoute,
     setMediaPickerOpen,
-    setDraftStore,
+    syncDraftStoreToControlDb,
     setSelectedPlaylistId,
+    existingPlaylistIds: draftStore.playlists.map((row) => row.id),
     mergedMedia,
     playlistDragIndex,
     setPlaylistDragIndex,
@@ -2892,7 +3452,7 @@ export function useOpsAppModel() {
     playlistRowsPage,
     openPlaylistEditorRoute,
     selectedPlaylistId,
-    setDraftStore,
+    deletePlaylistDraft,
     playlistCount: draftStore.playlists.length,
     playlistTablePage,
     setPlaylistTablePage,
@@ -2901,37 +3461,51 @@ export function useOpsAppModel() {
 
   const containerEditorsVm = {
     builderTab,
-    setSelectedBlockId,
-    setBlockDraft,
     draftStore,
+    syncDraftStoreToControlDb,
+    isMobile: Boolean(isMobile),
+    blockLibraryView,
+    setBlockLibraryView,
     blockRowsPage,
-    openBlockEditor,
     selectedBlockId,
-    setDraftStore,
+    setSelectedBlockId,
     blockTablePage,
     setBlockTablePage,
     blockTablePageCount,
-    isMobile: Boolean(isMobile),
     blockDraft,
-    setSelectedChannelId,
-    setChannelDraft,
+    setBlockDraft,
+    openBlockEditorRoute,
+    closeBlockEditorRoute,
+    channelLibraryView,
+    setChannelLibraryView,
     channelRowsPage,
-    openChannelEditor,
     selectedChannelId,
+    setSelectedChannelId,
     channelTablePage,
     setChannelTablePage,
     channelTablePageCount,
     channelDraft,
-    setSelectedProfileId,
-    setProfileDraft,
+    setChannelDraft,
+    openChannelEditorRoute,
+    closeChannelEditorRoute,
+    profileLibraryView,
+    setProfileLibraryView,
     profileRowsPage,
-    openProfileEditor,
     selectedProfileId,
+    setSelectedProfileId,
     profileTablePage,
     setProfileTablePage,
     profileTablePageCount,
     profileDraft,
-    profileTargetOptions,
+    setProfileDraft,
+    openProfileEditorRoute,
+    closeProfileEditorRoute,
+    mediaOptions,
+    playlistOptions,
+    blockOptions,
+    channelOptions,
+    targetPickerItemsByKind,
+    registryNodes,
   };
 
   return {
@@ -2949,6 +3523,12 @@ export function useOpsAppModel() {
     setMediaLibrarySection,
     playlistLibraryView,
     setPlaylistLibraryView,
+    blockLibraryView,
+    setBlockLibraryView,
+    channelLibraryView,
+    setChannelLibraryView,
+    profileLibraryView,
+    setProfileLibraryView,
     mediaPickerOpen,
     setMediaPickerOpen,
     targetPickerOpen,
@@ -2999,9 +3579,7 @@ export function useOpsAppModel() {
     returnToGuide,
     openQuickSend,
     runQuickSend,
-    exportDrafts,
-    pushDraftsToControlDb,
-    loadDraftsFromControlDb,
+    syncDraftStoreToControlDb,
     refreshDraftsAfterIngest,
     upsertIngestJob,
     stopPollingJob,
@@ -3028,7 +3606,7 @@ export function useOpsAppModel() {
     saveMediaMetadata,
     deletePlaylistDraft,
     mediaFilterData,
-    profileTargetOptions,
+    registryNodes,
     pickerMedia,
     canQueueIngest,
     selectedIngestLabel,
@@ -3054,9 +3632,12 @@ export function useOpsAppModel() {
     openPlaylistEditorRoute,
     closePlaylistEditorRoute,
     commitPlaylistDrop,
-    openProfileEditor,
-    openBlockEditor,
-    openChannelEditor,
+    openBlockEditorRoute,
+    closeBlockEditorRoute,
+    openChannelEditorRoute,
+    closeChannelEditorRoute,
+    openProfileEditorRoute,
+    closeProfileEditorRoute,
     fleetScreenVm,
     ingestSectionVm,
     mediaLibraryVm,
@@ -3094,7 +3675,6 @@ export function useOpsAppModel() {
     applyResult,
     setApplyResult,
     draftStore,
-    setDraftStore,
     serverSnapshot,
     setServerSnapshot,
     builderBusy,
@@ -3203,6 +3783,8 @@ export function useOpsAppModel() {
     setOptPlaylist,
     optNosplash,
     setOptNosplash,
+    optRemoteInput,
+    setOptRemoteInput,
     optHud,
     setOptHud,
     optHudSec,

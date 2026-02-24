@@ -418,8 +418,12 @@ echo "Runtime endpoints: controlApi=${NODE_CONTROL_API_URL} guideBase=${GUIDE_BA
 echo "HA automation: enabled=${HOME_ASSISTANT_AUTOMATION} url=${HOME_ASSISTANT_URL:-auto} startDelayMs=${HOME_ASSISTANT_START_DELAY_MS} stepDelayMs=${HOME_ASSISTANT_STEP_DELAY_MS}"
 
 if [[ "$ENDPOINTS_ONLY" -eq 1 ]]; then
-  ssh_cmd "$SSH_TARGET" bash -s -- \
+ssh_cmd "$SSH_TARGET" bash -s -- \
     "$NODE_CONTROL_API_URL" \
+    "$NODE_ID" \
+    "$NAMESPACE" \
+    "$NODE_PORT" \
+    "$SERVER_PORT" \
     "$GUIDE_PORT" \
     "$GUIDE_BASE_URL" \
     "$SWITCH_OVERLAP_MS" \
@@ -432,19 +436,27 @@ if [[ "$ENDPOINTS_ONLY" -eq 1 ]]; then
 set -euo pipefail
 
 NODE_CONTROL_API_URL="$1"
-GUIDE_PORT="$2"
-GUIDE_BASE_URL="$3"
-SWITCH_OVERLAP_MS="${4:-}"
-HOME_ASSISTANT_AUTOMATION="${5:-true}"
-HOME_ASSISTANT_USER="${6:-}"
-HOME_ASSISTANT_PASS="${7:-}"
-HOME_ASSISTANT_URL="${8:-}"
-HOME_ASSISTANT_START_DELAY_MS="${9:-1800}"
-HOME_ASSISTANT_STEP_DELAY_MS="${10:-180}"
+NODE_ID="$2"
+NAMESPACE="$3"
+NODE_PORT="$4"
+SERVER_PORT="$5"
+GUIDE_PORT="$6"
+GUIDE_BASE_URL="$7"
+SWITCH_OVERLAP_MS="${8:-}"
+HOME_ASSISTANT_AUTOMATION="${9:-true}"
+HOME_ASSISTANT_USER="${10:-}"
+HOME_ASSISTANT_PASS="${11:-}"
+HOME_ASSISTANT_URL="${12:-}"
+HOME_ASSISTANT_START_DELAY_MS="${13:-1800}"
+HOME_ASSISTANT_STEP_DELAY_MS="${14:-180}"
 
 tmp_env="$(mktemp)"
 {
   printf 'CHIBA3_CONTROL_API_URL=%q\n' "${NODE_CONTROL_API_URL}"
+  printf 'CHIBA3_NODE_ID=%q\n' "${NODE_ID}"
+  printf 'CHIBA3_NAMESPACE=%q\n' "${NAMESPACE}"
+  printf 'CHIBA3_NODE_PORT=%q\n' "${NODE_PORT}"
+  printf 'CHIBA3_SERVER_PORT=%q\n' "${SERVER_PORT}"
   printf 'CHIBA3_GUIDE_PORT=%q\n' "${GUIDE_PORT}"
   printf 'CHIBA3_GUIDE_BASE_URL=%q\n' "${GUIDE_BASE_URL}"
   printf 'CHIBA3_SWITCH_OVERLAP_MS=%q\n' "${SWITCH_OVERLAP_MS}"
@@ -462,6 +474,15 @@ sudo tee /etc/systemd/system/cable3-node-runtime.service.d/10-endpoints.conf >/d
 [Service]
 EnvironmentFile=-/etc/default/cable3-node-runtime
 EOF
+
+# Keep endpoint-only bootstraps resilient on nodes that have fallen back to
+# multi-user target or have an inactive display manager.
+sudo systemctl set-default graphical.target >/dev/null 2>&1 || true
+if systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx 'lightdm.service'; then
+  sudo systemctl enable --now lightdm >/dev/null 2>&1 || true
+elif systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx 'display-manager.service'; then
+  sudo systemctl enable --now display-manager >/dev/null 2>&1 || true
+fi
 
 sudo systemctl daemon-reload
 sudo systemctl restart cable3-node-runtime

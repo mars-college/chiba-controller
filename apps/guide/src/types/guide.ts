@@ -86,6 +86,7 @@ export type KioskState = {
   qr?: boolean;
   playlist?: boolean;
   nosplash?: boolean;
+  remoteInput?: boolean;
   hudMode?: "always" | "start" | "never";
   hudShowSec?: number;
   theme?: string;

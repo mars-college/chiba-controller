@@ -33,6 +33,7 @@ import {
   tableRangeLabel,
   type DraftPlaylist,
 } from "../../lib/opsModel";
+import { PreviewTileCluster } from "../PreviewTileCluster";
 import { SectionLoader } from "../SectionLoader";
 
 export type MediaLibraryViewVm = {
@@ -62,7 +63,7 @@ export type MediaLibraryViewVm = {
   deleteMediaItem: (id: string) => Promise<void>;
   draftPlaylists: DraftPlaylist[];
   mergedMediaById: Map<string, Media>;
-  deletePlaylistDraft: (id: string) => void;
+  deletePlaylistDraft: (id: string) => void | Promise<void>;
   playlistRowsPage: DraftPlaylist[];
   selectedPlaylistId: string | null;
   playlistTablePage: number;
@@ -348,6 +349,15 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                                 </Text>
                                               </Stack>
                                               <Stack gap={6} align="flex-end">
+                                                {row.sourceType === "url" ? (
+                                                  <Badge
+                                                    size="sm"
+                                                    variant="light"
+                                                    color="indigo"
+                                                  >
+                                                    web
+                                                  </Badge>
+                                                ) : null}
                                                 {isVideo ? (
                                                   <Badge
                                                     size="sm"
@@ -435,59 +445,23 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                         }
                                       >
                                         <Stack gap="xs">
-                                          {(() => {
-                                            const tileCount = Math.min(
-                                              Math.max(row.mediaIds.length, 1),
-                                              4
-                                            );
-                                            const tileIds = Array.from(
-                                              { length: 4 },
-                                              (_, i) => row.mediaIds[i] || ""
-                                            );
-                                            return (
-                                              <div
-                                                className={`ops-playlist-cover ops-playlist-cover-${tileCount}`}
-                                              >
-                                                {tileIds.map((mediaId, tileIndex) => {
-                                                  const media = mediaId
-                                                    ? mergedMediaById.get(mediaId)
-                                                    : undefined;
-                                                  const fallbackText = (
-                                                    media?.title ||
-                                                    mediaId ||
-                                                    `${tileIndex + 1}`
-                                                  )
-                                                    .slice(0, 1)
-                                                    .toUpperCase();
-                                                  return (
-                                                    <div
-                                                      key={`${row.id}-tile-${tileIndex}`}
-                                                      className="ops-playlist-cover-tile"
-                                                    >
-                                                      {media?.thumbnailUrl ? (
-                                                        <img
-                                                          className="ops-playlist-cover-img"
-                                                          src={media.thumbnailUrl}
-                                                          alt={
-                                                            media.title || media.id
-                                                          }
-                                                        />
-                                                      ) : (
-                                                        <div className="ops-playlist-cover-fallback">
-                                                          {fallbackText}
-                                                        </div>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                })}
-                                                {row.mediaIds.length > 4 ? (
-                                                  <div className="ops-playlist-cover-more">
-                                                    +{row.mediaIds.length - 4}
-                                                  </div>
-                                                ) : null}
-                                              </div>
-                                            );
-                                          })()}
+                                          <PreviewTileCluster
+                                            tiles={row.mediaIds
+                                              .slice(0, 4)
+                                              .map((mediaId) => {
+                                                const media = mergedMediaById.get(mediaId);
+                                                return {
+                                                  src: media
+                                                    ? mediaPreviewSource(media) ||
+                                                      media.thumbnailUrl ||
+                                                      undefined
+                                                    : undefined,
+                                                  label: media?.title || mediaId,
+                                                };
+                                              })}
+                                            totalCount={row.mediaIds.length}
+                                            height={176}
+                                          />
                                           <Group
                                             justify="space-between"
                                             align="flex-start"
@@ -496,9 +470,6 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                             <Stack gap={2}>
                                               <Text fw={700} lineClamp={1}>
                                                 {row.title || row.id}
-                                              </Text>
-                                              <Text size="xs" c="dimmed">
-                                                {row.id}
                                               </Text>
                                             </Stack>
                                             <Group gap={6}>
@@ -536,7 +507,7 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                                 size="sm"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
-                                                  deletePlaylistDraft(row.id);
+                                                  void deletePlaylistDraft(row.id);
                                                 }}
                                                 title="Delete playlist"
                                               >
@@ -576,7 +547,6 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                       >
                                         <Table.Thead>
                                           <Table.Tr>
-                                            <Table.Th>ID</Table.Th>
                                             <Table.Th>Title</Table.Th>
                                             <Table.Th>Artist</Table.Th>
                                             <Table.Th>Description</Table.Th>
@@ -601,9 +571,6 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                                   : { cursor: "pointer" }
                                               }
                                             >
-                                              <Table.Td>
-                                                <Text fw={600}>{row.id}</Text>
-                                              </Table.Td>
                                               <Table.Td>
                                                 {row.title || "untitled"}
                                               </Table.Td>
@@ -653,7 +620,7 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                                     variant="light"
                                                     onClick={(event) => {
                                                       event.stopPropagation();
-                                                      deletePlaylistDraft(row.id);
+                                                      void deletePlaylistDraft(row.id);
                                                     }}
                                                     title="Delete playlist"
                                                   >

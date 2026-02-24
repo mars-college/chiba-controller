@@ -120,6 +120,17 @@ body {
   transform: translateY(-1px);
 }
 
+.ops-resource-card {
+  cursor: pointer;
+  border-color: rgba(133, 166, 214, 0.25);
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.ops-resource-card:hover {
+  border-color: rgba(95, 169, 255, 0.72);
+  transform: translateY(-1px);
+}
+
 .ops-playlist-cover {
   position: relative;
   display: grid;

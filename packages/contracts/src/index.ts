@@ -41,6 +41,7 @@ export const LaunchOptionsSchema = z
     lock: z.boolean().optional(),
     qr: z.boolean().optional(),
     nosplash: z.boolean().optional(),
+    remoteInput: z.boolean().optional(),
     hudMode: HudModeSchema.optional(),
     hudSec: z.number().positive().optional(),
     theme: z.string().min(1).optional(),
@@ -149,6 +150,46 @@ export const MediaResourceSchema = z
     thumbnailUrl: z.string().optional(),
     thumbnailObjectKey: z.string().optional(),
     cache: z.boolean().default(true),
+    web: z
+      .object({
+        args: z
+          .record(
+            z.string().min(1),
+            z.union([
+              z.string(),
+              z.number(),
+              z.boolean(),
+              z
+                .object({
+                  mode: z.literal("int_range"),
+                  min: z.number().int(),
+                  max: z.number().int(),
+                  step: z.number().int().positive().optional(),
+                  pad: z.number().int().min(0).max(12).optional(),
+                  base: z.enum(["dec", "hex"]).optional(),
+                  perScreen: z.boolean().default(true),
+                })
+                .strict()
+                .refine(
+                  (value) => value.max >= value.min,
+                  "web.args range requires max >= min"
+                ),
+              z
+                .object({
+                  mode: z.literal("choice"),
+                  values: z
+                    .array(z.union([z.string(), z.number(), z.boolean()]))
+                    .min(1),
+                  perScreen: z.boolean().default(true),
+                })
+                .strict(),
+            ])
+          )
+          .default({}),
+        launchProfile: z.enum(["home_assistant_login"]).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type MediaResource = z.infer<typeof MediaResourceSchema>;

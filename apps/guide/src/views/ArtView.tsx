@@ -18,9 +18,11 @@ export function ArtView() {
     masterMuted,
     showVolumeHud,
   } = useArtViewStore();
+  const targetChannelId = (channelId ?? "").trim();
   const artChannel =
-    channels.find((channel) => channel.id === (channelId ?? "jensen-art")) ??
-    channels[0];
+    (targetChannelId
+      ? channels.find((channel) => channel.id === targetChannelId)
+      : undefined) ?? channels[0];
   const artItems = artChannel?.schedule.filter((slot) => slot.url) ?? [];
   const artItem: ProgramSlot | undefined =
     artItems[artIndex % Math.max(1, artItems.length)];

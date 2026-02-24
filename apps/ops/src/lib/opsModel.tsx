@@ -23,6 +23,7 @@ export type DraftMedia = {
   sourceValue: string;
   thumbnailUrl?: string;
   thumbnailObjectKey?: string;
+  web?: Media["web"];
   cache: boolean;
 };
 
@@ -34,10 +35,18 @@ export type DraftPlaylist = {
   mediaIds: string[];
 };
 
+export type TargetKind = "media" | "playlist" | "block" | "channel";
+
+export type DraftBlockItem = {
+  kind: "media" | "playlist";
+  id: string;
+};
+
 export type DraftBlock = {
   id: string;
   title: string;
-  playlistIds: string[];
+  mode: "loop" | "once" | "clocked";
+  items: DraftBlockItem[];
 };
 
 export type DraftChannel = {
@@ -46,11 +55,18 @@ export type DraftChannel = {
   blockIds: string[];
 };
 
+export type DraftProfileNodeAssignment = {
+  nodeId: string;
+  targetKind: TargetKind;
+  targetId: string;
+};
+
 export type DraftProfile = {
   id: string;
   title: string;
-  defaultTargetKind: "media" | "playlist" | "block" | "channel";
+  defaultTargetKind: TargetKind;
   defaultTargetId: string;
+  nodeAssignments: DraftProfileNodeAssignment[];
 };
 
 export type DraftStore = {
@@ -102,7 +118,8 @@ export const EMPTY_PLAYLIST_DRAFT: DraftPlaylist = {
 export const EMPTY_BLOCK_DRAFT: DraftBlock = {
   id: "",
   title: "",
-  playlistIds: [],
+  mode: "loop",
+  items: [],
 };
 
 export const EMPTY_CHANNEL_DRAFT: DraftChannel = {
@@ -116,9 +133,9 @@ export const EMPTY_PROFILE_DRAFT: DraftProfile = {
   title: "",
   defaultTargetKind: "channel",
   defaultTargetId: "",
+  nodeAssignments: [],
 };
 
-export const DRAFT_STORAGE_KEY = "chiba-controller-drafts-v1";
 export const TABLE_PAGE_SIZE = {
   fleet: 25,
   media: 24,
@@ -147,6 +164,108 @@ export function tableRangeLabel(
 
 export function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeBlockItem(value: unknown): DraftBlockItem | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as {
+    kind?: unknown;
+    id?: unknown;
+    mediaId?: unknown;
+    playlistId?: unknown;
+    targetKind?: unknown;
+    targetId?: unknown;
+  };
+  const kindFromKind =
+    row.kind === "media"
+      ? "media"
+      : row.kind === "playlist"
+        ? "playlist"
+        : null;
+  const idFromKind = readString(row.id);
+  if (kindFromKind && idFromKind) return { kind: kindFromKind, id: idFromKind };
+
+  const mediaId = readString(row.mediaId);
+  if (mediaId) return { kind: "media", id: mediaId };
+
+  const playlistId = readString(row.playlistId);
+  if (playlistId) return { kind: "playlist", id: playlistId };
+
+  const targetKind =
+    row.targetKind === "media"
+      ? "media"
+      : row.targetKind === "playlist"
+        ? "playlist"
+        : null;
+  const targetId = readString(row.targetId);
+  if (targetKind && targetId) return { kind: targetKind, id: targetId };
+
+  return null;
+}
+
+export function normalizeBlockItems(value: unknown): DraftBlockItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeBlockItem(item))
+    .filter((item): item is DraftBlockItem => Boolean(item));
+}
+
+export function blockItemsFromUnknownBlock(value: unknown): DraftBlockItem[] {
+  if (!value || typeof value !== "object") return [];
+  const row = value as { items?: unknown; playlistIds?: unknown; mediaIds?: unknown };
+  const normalizedItems = normalizeBlockItems(row.items);
+  if (normalizedItems.length > 0) return normalizedItems;
+  const legacyPlaylistItems = Array.isArray(row.playlistIds)
+    ? row.playlistIds
+        .map((item) => readString(item))
+        .filter(Boolean)
+        .map((id) => ({ kind: "playlist" as const, id }))
+    : [];
+  const legacyMediaItems = Array.isArray(row.mediaIds)
+    ? row.mediaIds
+        .map((item) => readString(item))
+        .filter(Boolean)
+        .map((id) => ({ kind: "media" as const, id }))
+    : [];
+  return [...legacyPlaylistItems, ...legacyMediaItems];
+}
+
+function randomIdSuffix(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function slugifyIdPart(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "item";
+}
+
+export function generateAutoResourceId(
+  kind: "playlist" | "block" | "channel" | "profile",
+  title: string,
+  existingIds: Iterable<string>
+): string {
+  const prefix =
+    kind === "playlist"
+      ? "pl"
+      : kind === "block"
+        ? "bl"
+        : kind === "channel"
+          ? "ch"
+          : "pr";
+  const taken = new Set(Array.from(existingIds).map((value) => value.trim()).filter(Boolean));
+  const base = `${prefix}-${slugifyIdPart(title)}`;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = `${base}-${randomIdSuffix()}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
 }
 
 export function toOptionBool(value: OptionBool): boolean | undefined {
@@ -346,6 +465,9 @@ export function toPendingFleetHealth(pi: FleetPi): FleetPiHealth {
       version: null,
       ipReported: pi.ip ?? null,
       kioskUrl: null,
+      displayMode: null,
+      displayOutput: null,
+      displayBackend: null,
     },
     cableServer: null,
     needsUpdate: null,
@@ -430,23 +552,6 @@ export function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function loadDraftStore(): DraftStore {
-  try {
-    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
-    if (!raw) return EMPTY_DRAFTS;
-    const parsed = JSON.parse(raw) as Partial<DraftStore>;
-    return {
-      media: Array.isArray(parsed.media) ? parsed.media : [],
-      playlists: Array.isArray(parsed.playlists) ? parsed.playlists : [],
-      blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
-      channels: Array.isArray(parsed.channels) ? parsed.channels : [],
-      profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
-    };
-  } catch {
-    return EMPTY_DRAFTS;
-  }
-}
-
 export function toResourcePayload(store: DraftStore): ResourcePayload {
   return {
     media: store.media.map((m) => ({
@@ -457,6 +562,7 @@ export function toResourcePayload(store: DraftStore): ResourcePayload {
       sourceValue: m.sourceValue.trim(),
       thumbnailUrl: m.thumbnailUrl,
       thumbnailObjectKey: m.thumbnailObjectKey,
+      web: m.web,
       cache: m.cache,
     })),
     playlists: store.playlists.map((p) => ({
@@ -472,11 +578,16 @@ export function toResourcePayload(store: DraftStore): ResourcePayload {
     blocks: store.blocks.map((b) => ({
       id: b.id.trim(),
       title: b.title.trim() || undefined,
-      mode: "loop",
-      items: b.playlistIds.map((playlistId, index) => ({
-        index,
-        playlistId: playlistId.trim(),
-      })),
+      mode: b.mode,
+      items: b.items
+        .map((item) => ({ ...item, id: item.id.trim() }))
+        .filter((item) => item.id.length > 0)
+        .map((item, index) => ({
+          index,
+          ...(item.kind === "media"
+            ? { mediaId: item.id }
+            : { playlistId: item.id }),
+        })),
     })),
     channels: store.channels.map((c) => ({
       id: c.id.trim(),
@@ -494,7 +605,16 @@ export function toResourcePayload(store: DraftStore): ResourcePayload {
               id: p.defaultTargetId.trim(),
             }
           : undefined,
-      nodes: [],
+      nodes: p.nodeAssignments
+        .map((node) => ({
+          nodeId: node.nodeId.trim(),
+          target: {
+            kind: node.targetKind,
+            id: node.targetId.trim(),
+          },
+          launch: {},
+        }))
+        .filter((row) => row.nodeId.length > 0 && row.target.id.length > 0),
     })),
   };
 }
@@ -509,6 +629,7 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
       sourceValue: m.sourceValue,
       thumbnailUrl: m.thumbnailUrl,
       thumbnailObjectKey: m.thumbnailObjectKey,
+      web: m.web,
       cache: m.cache,
     })),
     playlists: payload.playlists.map((p) => ({
@@ -523,9 +644,11 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
     blocks: payload.blocks.map((b) => ({
       id: b.id,
       title: b.title || "",
-      playlistIds: b.items
-        .map((item) => item.playlistId || "")
-        .filter((id) => id.length > 0),
+      mode:
+        b.mode === "once" || b.mode === "clocked" || b.mode === "loop"
+          ? b.mode
+          : "loop",
+      items: blockItemsFromUnknownBlock(b as unknown),
     })),
     channels: payload.channels.map((c) => ({
       id: c.id,
@@ -543,6 +666,19 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
           ? p.defaultTarget.kind
           : "channel",
       defaultTargetId: p.defaultTarget?.id || "",
+      nodeAssignments: p.nodes
+        .map((node) => ({
+          nodeId: node.nodeId,
+          targetKind:
+            node.target.kind === "media" ||
+            node.target.kind === "playlist" ||
+            node.target.kind === "block" ||
+            node.target.kind === "channel"
+              ? node.target.kind
+              : "channel",
+          targetId: node.target.id,
+        }))
+        .filter((node) => node.nodeId.trim().length > 0 && node.targetId.trim().length > 0),
     })),
   };
 }

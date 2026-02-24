@@ -28,6 +28,12 @@ export const PARAM_ROTATE_KEYS = ["rotate", "rotation", "display_rotate"] as con
 export const PARAM_PLAYLIST = "playlist";
 export const PARAM_LOCK_KEYS = ["lock", "locked"] as const;
 export const PARAM_QR_KEYS = ["qr", "showQr", "showQR"] as const;
+export const PARAM_REMOTE_INPUT_KEYS = [
+  "remoteInput",
+  "remote_input",
+  "remoteKeyboardMouse",
+  "keyboardMouse",
+] as const;
 
 // Player info card (HUD)
 // - `hud=always|start|never`

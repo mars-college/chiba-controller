@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   Accordion,
+  Badge,
   Button,
   Group,
   NumberInput,
@@ -16,15 +17,10 @@ import { IconAdjustments } from "@tabler/icons-react";
 import type { OpsApplyResponse, OpsApplyTarget } from "../types";
 import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
 
-type CatalogOption = { value: string; label: string };
-
 type AssignTargetPanelProps = {
   selectedNodeCount: number;
   applyKind: OpsApplyTarget;
-  setApplyKind: (value: OpsApplyTarget) => void;
   applyId: string;
-  setApplyId: (value: string) => void;
-  currentApplyOptions: CatalogOption[];
   onOpenTargetPicker: () => void;
   applyTargetPreviewCard: ReactNode;
   optMode: "inherit" | "guide" | "gallery";
@@ -37,6 +33,8 @@ type AssignTargetPanelProps = {
   setOptPlaylist: (value: "inherit" | "on" | "off") => void;
   optNosplash: "inherit" | "on" | "off";
   setOptNosplash: (value: "inherit" | "on" | "off") => void;
+  optRemoteInput: "inherit" | "on" | "off";
+  setOptRemoteInput: (value: "inherit" | "on" | "off") => void;
   optHud: "inherit" | "always" | "start" | "never";
   setOptHud: (value: "inherit" | "always" | "start" | "never") => void;
   optHudSec: number | "";
@@ -55,10 +53,7 @@ type AssignTargetPanelProps = {
 export function AssignTargetPanel({
   selectedNodeCount,
   applyKind,
-  setApplyKind,
   applyId,
-  setApplyId,
-  currentApplyOptions,
   onOpenTargetPicker,
   applyTargetPreviewCard,
   optMode,
@@ -71,6 +66,8 @@ export function AssignTargetPanel({
   setOptPlaylist,
   optNosplash,
   setOptNosplash,
+  optRemoteInput,
+  setOptRemoteInput,
   optHud,
   setOptHud,
   optHudSec,
@@ -85,6 +82,20 @@ export function AssignTargetPanel({
   onClose,
   breadcrumbs,
 }: AssignTargetPanelProps) {
+  const hasLaunchOverrides =
+    optMode !== "inherit" ||
+    optLock !== "inherit" ||
+    optQr !== "inherit" ||
+    optPlaylist !== "inherit" ||
+    optNosplash !== "inherit" ||
+    optRemoteInput !== "inherit" ||
+    optHud !== "inherit" ||
+    (typeof optHudSec === "number" && Number.isFinite(optHudSec)) ||
+    optTheme.trim().length > 0 ||
+    optRotate !== "inherit";
+  const canApply =
+    selectedNodeCount > 0 && (applyId.trim().length > 0 || hasLaunchOverrides);
+
   return (
     <Paper withBorder p="md" radius="md">
       <Stack gap="md">
@@ -103,50 +114,24 @@ export function AssignTargetPanel({
             <Accordion.Control>Target</Accordion.Control>
             <Accordion.Panel>
               <Stack gap="sm">
-                <Select
-                  label="Target type"
-                  data={[
-                    { value: "profile", label: "profile" },
-                    { value: "channel", label: "channel" },
-                    { value: "block", label: "block" },
-                    { value: "playlist", label: "playlist" },
-                    { value: "media", label: "media" },
-                  ]}
-                  value={applyKind}
-                  onChange={(value) => {
-                    const next = (value as OpsApplyTarget) || "profile";
-                    setApplyKind(next);
-                    setApplyId("");
-                  }}
-                />
-                {applyKind === "media" || applyKind === "playlist" ? (
-                  <Stack gap={6}>
-                    <Group gap="xs" align="end" wrap="nowrap">
-                      <TextInput
-                        label="Target resource"
-                        placeholder={`Select ${applyKind}`}
-                        value={applyId}
-                        readOnly
-                        style={{ flex: 1 }}
-                      />
-                      <Button variant="light" onClick={onOpenTargetPicker}>
-                        Browse
-                      </Button>
-                    </Group>
-                    <Text size="xs" c="dimmed">
-                      Use searchable card picker for media and playlists.
+                <Group justify="space-between" align="center" wrap="wrap">
+                  <Group gap={8}>
+                    <Badge variant="light">{applyKind}</Badge>
+                    <Text size="sm" c="dimmed">
+                      {applyId.trim()
+                        ? applyId.trim()
+                        : "No target selected"}
                     </Text>
-                  </Stack>
-                ) : (
-                  <Select
-                    label="Target resource"
-                    placeholder="Search target id"
-                    searchable
-                    data={currentApplyOptions}
-                    value={applyId}
-                    onChange={(value) => setApplyId(value || "")}
-                  />
-                )}
+                  </Group>
+                  <Button variant="light" onClick={onOpenTargetPicker}>
+                    Pick Target
+                  </Button>
+                </Group>
+                <Text size="xs" c="dimmed">
+                  Picker flow: choose target type, then choose a target card.
+                  Leave target empty to keep each node's current target and apply
+                  settings only.
+                </Text>
                 {applyTargetPreviewCard}
               </Stack>
             </Accordion.Panel>
@@ -222,6 +207,19 @@ export function AssignTargetPanel({
                     setOptNosplash((v as "inherit" | "on" | "off") || "inherit")
                   }
                 />
+                <Select
+                  label="Remote web input"
+                  description="Enable phone keyboard/trackpad passthrough for web media."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={optRemoteInput}
+                  onChange={(v) =>
+                    setOptRemoteInput((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
               </SimpleGrid>
             </Accordion.Panel>
           </Accordion.Item>
@@ -261,6 +259,7 @@ export function AssignTargetPanel({
                   label="Theme"
                   value={optTheme}
                   onChange={(e) => setOptTheme(e.currentTarget.value)}
+                  placeholder="inherit from current target"
                 />
               </SimpleGrid>
             </Accordion.Panel>
@@ -298,7 +297,7 @@ export function AssignTargetPanel({
             <Button
               leftSection={<IconAdjustments size={16} />}
               onClick={() => void runApply()}
-              disabled={!applyId.trim() || selectedNodeCount === 0}
+              disabled={!canApply}
             >
               Apply to selected
             </Button>

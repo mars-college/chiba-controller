@@ -7,6 +7,7 @@ import {
   Group,
   Image,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -20,6 +21,13 @@ import { DetailBreadcrumbs } from "../DetailBreadcrumbs";
 import type { Media } from "../../lib/controlApi";
 import type { BuilderMode } from "../../store/uiStore";
 import type { QuickSendTarget } from "../../lib/opsModel";
+import { WebLaunchArgsEditor } from "./WebLaunchArgsEditor";
+import {
+  buildWebLaunchConfigFromEntries,
+  webLaunchArgEntriesFromWebConfig,
+  webLaunchConfigSignature,
+  type WebLaunchArgEntry,
+} from "../../lib/webLaunchArgs";
 
 export type MediaDetailViewVm = {
   isMobile: boolean;
@@ -39,6 +47,7 @@ export type MediaDetailViewVm = {
     title?: string;
     artist?: string;
     description?: string;
+    web?: Media["web"];
   }) => Promise<void>;
 };
 
@@ -60,21 +69,58 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
   const [titleDraft, setTitleDraft] = useState("");
   const [artistDraft, setArtistDraft] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [webLaunchProfileDraft, setWebLaunchProfileDraft] = useState<
+    "none" | "home_assistant_login"
+  >("none");
+  const [webLaunchArgsEntriesDraft, setWebLaunchArgsEntriesDraft] = useState<
+    WebLaunchArgEntry[]
+  >([]);
+  const [webInitialSignature, setWebInitialSignature] = useState("");
 
   useEffect(() => {
     setTitleDraft(selectedMediaDetail?.title || "");
     setArtistDraft(selectedMediaDetail?.artist || "");
     setDescriptionDraft(selectedMediaDetail?.description || "");
+    const web = selectedMediaDetail?.web;
+    setWebLaunchProfileDraft(
+      web?.launchProfile === "home_assistant_login"
+        ? "home_assistant_login"
+        : "none"
+    );
+    setWebLaunchArgsEntriesDraft(webLaunchArgEntriesFromWebConfig(web));
+    setWebInitialSignature(webLaunchConfigSignature(web));
   }, [selectedMediaDetail]);
+
+  const parsedWebDraft = useMemo(
+    () =>
+      buildWebLaunchConfigFromEntries({
+        entries: webLaunchArgsEntriesDraft,
+        launchProfile: webLaunchProfileDraft,
+      }),
+    [webLaunchArgsEntriesDraft, webLaunchProfileDraft]
+  );
+  const webDraftSignature = useMemo(
+    () => webLaunchConfigSignature(parsedWebDraft.config),
+    [parsedWebDraft.config]
+  );
 
   const hasUnsavedChanges = useMemo(() => {
     if (!selectedMediaDetail) return false;
     return (
       titleDraft.trim() !== (selectedMediaDetail.title || "") ||
       artistDraft.trim() !== (selectedMediaDetail.artist || "") ||
-      descriptionDraft.trim() !== (selectedMediaDetail.description || "")
+      descriptionDraft.trim() !== (selectedMediaDetail.description || "") ||
+      (selectedMediaDetail.sourceType === "url" &&
+        webDraftSignature !== webInitialSignature)
     );
-  }, [artistDraft, descriptionDraft, selectedMediaDetail, titleDraft]);
+  }, [
+    artistDraft,
+    descriptionDraft,
+    selectedMediaDetail,
+    titleDraft,
+    webDraftSignature,
+    webInitialSignature,
+  ]);
 
   return (
     <Stack gap="md">
@@ -113,13 +159,26 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
             <Button
               variant="light"
               loading={mediaSaveBusy}
-              disabled={!hasUnsavedChanges}
+              disabled={!hasUnsavedChanges || Boolean(parsedWebDraft.error)}
               onClick={() => {
+                let parsedWeb: Media["web"] | undefined = selectedMediaDetail.web;
+                if (selectedMediaDetail.sourceType === "url") {
+                  if (parsedWebDraft.error) {
+                    notifications.show({
+                      color: "red",
+                      title: "Invalid web config",
+                      message: parsedWebDraft.error,
+                    });
+                    return;
+                  }
+                  parsedWeb = parsedWebDraft.config;
+                }
                 void saveMediaMetadata({
                   id: selectedMediaDetail.id,
                   title: titleDraft,
                   artist: artistDraft,
                   description: descriptionDraft,
+                  web: parsedWeb,
                 }).catch((error) => {
                   notifications.show({
                     color: "red",
@@ -196,6 +255,42 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
               onChange={(e) => setDescriptionDraft(e.currentTarget.value)}
             />
             <Accordion multiple defaultValue={[]}>
+              {selectedMediaDetail.sourceType === "url" ? (
+                <Accordion.Item value="web-config">
+                  <Accordion.Control>Web Launch Config</Accordion.Control>
+                  <Accordion.Panel>
+                    <Stack gap="sm">
+                      <Text size="sm" c="dimmed">
+                        URL media can define launch args and optional custom launch
+                        logic.
+                      </Text>
+                      <Select
+                        label="Custom launch logic"
+                        value={webLaunchProfileDraft}
+                        data={[
+                          { value: "none", label: "None" },
+                          {
+                            value: "home_assistant_login",
+                            label: "Home Assistant login",
+                          },
+                        ]}
+                        onChange={(value) =>
+                          setWebLaunchProfileDraft(
+                            value === "home_assistant_login"
+                              ? "home_assistant_login"
+                              : "none"
+                          )
+                        }
+                      />
+                      <WebLaunchArgsEditor
+                        entries={webLaunchArgsEntriesDraft}
+                        onChange={setWebLaunchArgsEntriesDraft}
+                        error={parsedWebDraft.error}
+                      />
+                    </Stack>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              ) : null}
               <Accordion.Item value="source">
                 <Accordion.Control>Advanced Source</Accordion.Control>
                 <Accordion.Panel>

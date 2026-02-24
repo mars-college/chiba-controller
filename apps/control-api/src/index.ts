@@ -94,6 +94,10 @@ type ResolvedPlaybackItem = {
   mediaId: string;
   sourceType: "path" | "url";
   sourceValue: string;
+  web?: {
+    launchProfile?: "home_assistant_login";
+    launchArgs?: Record<string, string>;
+  };
   cache: boolean;
   durationSec?: number;
   title?: string;
@@ -237,6 +241,7 @@ const DEFAULT_BOOTSTRAP_NODE_CONTROL_API_URL =
 const DEFAULT_BOOTSTRAP_GUIDE_BASE_URL =
   process.env.CHIBA3_BOOTSTRAP_GUIDE_BASE_URL?.trim() || "";
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 20 * 60 * 1000;
+const DEFAULT_DISPLAY_MODE_TIMEOUT_MS = 5 * 60 * 1000;
 const BOOTSTRAP_OUTPUT_MAX_CHARS = 120_000;
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -264,6 +269,7 @@ const OpsApplyTargetRequestSchema = z
     showQr: z.boolean().optional(),
     qr: z.boolean().optional(),
     nosplash: z.boolean().optional(),
+    remoteInput: z.boolean().optional(),
     hudMode: z.enum(["always", "start", "never"]).optional(),
     hudShowSec: z.number().positive().optional(),
     theme: z.string().min(1).optional(),
@@ -302,6 +308,30 @@ const OpsNodeBootstrapRequestSchema = z
     sshPort: z.number().int().positive().max(65535).optional(),
     sshPassword: z.string().min(1).optional(),
     guidePort: z.number().int().positive().max(65535).optional(),
+  })
+  .passthrough();
+
+const OpsDisplayModePresetSchema = z.enum([
+  "native",
+  "2160p30",
+  "1440p60",
+  "1080p60",
+  "900p60",
+  "720p60",
+]);
+
+const OpsNodeDisplayModeRequestSchema = z
+  .object({
+    dryRun: z.boolean().optional(),
+    mode: OpsDisplayModePresetSchema.optional(),
+    restartDisplayManager: z.boolean().optional(),
+    namespace: z.string().min(1).optional(),
+    registryId: z.string().min(1).optional(),
+    host: z.string().min(1).optional(),
+    sshUser: z.string().min(1).optional(),
+    sshPort: z.number().int().positive().max(65535).optional(),
+    sshPassword: z.string().min(1).optional(),
+    output: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -570,6 +600,9 @@ function buildKioskUrl(args: {
   if (typeof args.launch.qr === "boolean") {
     params.set("qr", args.launch.qr ? "1" : "0");
   }
+  if (typeof args.launch.remoteInput === "boolean") {
+    params.set("remoteInput", args.launch.remoteInput ? "1" : "0");
+  }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
     params.set("displayRotate", String(args.launch.displayRotate));
@@ -686,6 +719,107 @@ function normalizeGuideProgramUrl(args: {
   }
 
   return parsed.toString();
+}
+
+function hashToUint32(seed: string): number {
+  const hex = createHash("sha1").update(seed).digest("hex").slice(0, 8);
+  return Number.parseInt(hex, 16) >>> 0;
+}
+
+function resolveWebLaunchArgs(args: {
+  screenId: string;
+  media: MediaResource;
+}): Record<string, string> {
+  const raw = args.media.web?.args;
+  if (!raw) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) continue;
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      out[normalizedKey] = String(value);
+      continue;
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value.mode === "int_range"
+    ) {
+      const min = Math.trunc(value.min);
+      const max = Math.trunc(value.max);
+      const low = Math.min(min, max);
+      const high = Math.max(min, max);
+      const step =
+        typeof value.step === "number" && Number.isFinite(value.step) && value.step > 0
+          ? Math.max(1, Math.trunc(value.step))
+          : 1;
+      const steps = Math.max(1, Math.floor((high - low) / step) + 1);
+      const seed =
+        value.perScreen === false
+          ? `${args.media.id}:${normalizedKey}`
+          : `${args.screenId}:${args.media.id}:${normalizedKey}`;
+      const offset = hashToUint32(seed) % steps;
+      const resolved = low + offset * step;
+      const base = value.base === "hex" ? 16 : 10;
+      let text = resolved.toString(base);
+      if (typeof value.pad === "number" && Number.isFinite(value.pad) && value.pad > 0) {
+        text = text.padStart(Math.trunc(value.pad), "0");
+      }
+      out[normalizedKey] = text;
+      continue;
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value.mode === "choice"
+    ) {
+      const choices = Array.isArray(value.values)
+        ? value.values.filter(
+            (row): row is string | number | boolean =>
+              typeof row === "string" ||
+              typeof row === "number" ||
+              typeof row === "boolean"
+          )
+        : [];
+      if (choices.length === 0) continue;
+      const seed =
+        value.perScreen === false
+          ? `${args.media.id}:${normalizedKey}`
+          : `${args.screenId}:${args.media.id}:${normalizedKey}`;
+      const choice = choices[hashToUint32(seed) % choices.length];
+      out[normalizedKey] = String(choice);
+    }
+  }
+  return out;
+}
+
+function applyLaunchArgsToUrl(sourceValue: string, launchArgs: Record<string, string>): string {
+  const entries = Object.entries(launchArgs).filter(
+    ([key, value]) => key.trim().length > 0 && value.trim().length > 0
+  );
+  if (entries.length === 0) return sourceValue;
+  try {
+    const parsed = new URL(sourceValue);
+    for (const [key, value] of entries) parsed.searchParams.set(key, value);
+    return parsed.toString();
+  } catch {
+    const params = new URLSearchParams();
+    for (const [key, value] of entries) params.set(key, value);
+    const query = params.toString();
+    if (!query) return sourceValue;
+    const hashIndex = sourceValue.indexOf("#");
+    const base =
+      hashIndex >= 0 ? sourceValue.slice(0, hashIndex) : sourceValue;
+    const hash = hashIndex >= 0 ? sourceValue.slice(hashIndex) : "";
+    const join = base.includes("?") ? "&" : "?";
+    return `${base}${join}${query}${hash}`;
+  }
 }
 
 function escapeHtml(value: string): string {
@@ -964,6 +1098,7 @@ function extractScreenIdFromQuery(value: unknown): string {
 function resolveTargetMedia(args: {
   snapshot: ResourceSnapshot;
   target: DesiredTarget;
+  screenId: string;
   streamBaseUrl: string;
   guideBaseUrl?: string | null;
 }): { items: ResolvedPlaybackItem[]; warnings: string[] } {
@@ -998,11 +1133,27 @@ function resolveTargetMedia(args: {
         guideBaseUrl: args.guideBaseUrl ?? null,
       });
     }
+    let web: ResolvedPlaybackItem["web"] | undefined;
+    if (renderer === "web") {
+      const launchArgs = resolveWebLaunchArgs({
+        screenId: args.screenId,
+        media,
+      });
+      sourceValue = applyLaunchArgsToUrl(sourceValue, launchArgs);
+      const launchProfile = media.web?.launchProfile;
+      if (launchProfile || Object.keys(launchArgs).length > 0) {
+        web = {
+          ...(launchProfile ? { launchProfile } : {}),
+          ...(Object.keys(launchArgs).length > 0 ? { launchArgs } : {}),
+        };
+      }
+    }
     const item: ResolvedPlaybackItem = {
       itemId: `${media.id}:${items.length}`,
       mediaId: media.id,
       sourceType,
       sourceValue,
+      ...(web ? { web } : {}),
       cache: media.cache,
       renderer,
     };
@@ -1178,6 +1329,7 @@ function buildLegacyCatalog(args: {
       ...(row.artist ? { artist: row.artist } : {}),
       ...(row.description ? { description: row.description } : {}),
       source,
+      ...(row.web ? { web: row.web } : {}),
       ...(thumbnailUrl ? { thumbnailUrl } : {}),
     };
   });
@@ -1259,6 +1411,7 @@ function buildGuideIndex(args: {
     const resolved = resolveTargetMedia({
       snapshot: args.snapshot,
       target: { kind: "channel", id: channel.id },
+      screenId: `guide-index:${channel.id}`,
       streamBaseUrl: args.streamBaseUrl,
       guideBaseUrl: args.guideBaseUrl ?? null,
     });
@@ -1412,12 +1565,13 @@ function pushWithLimit(input: string, chunk: string, maxChars: number): string {
   return next.slice(0, maxChars);
 }
 
-function maskSensitiveBootstrapArgs(args: string[]): string[] {
+function maskSensitiveScriptArgs(args: string[]): string[] {
   const out: string[] = [];
+  const sensitiveFlags = new Set(["--ssh-password"]);
   for (let i = 0; i < args.length; i += 1) {
     const value = args[i] ?? "";
     if (!value) continue;
-    if (value === "--ssh-password") {
+    if (sensitiveFlags.has(value)) {
       out.push(value);
       out.push("********");
       i += 1;
@@ -1688,6 +1842,12 @@ async function probeFleetNode(args: {
     nodeStatusJson.node !== null
       ? (nodeStatusJson.node as Record<string, unknown>)
       : null;
+  const nodeDisplay =
+    nodeInfo &&
+    typeof nodeInfo.display === "object" &&
+    nodeInfo.display !== null
+      ? (nodeInfo.display as Record<string, unknown>)
+      : null;
 
   const versionJson =
     cableVersion.data && typeof cableVersion.data === "object"
@@ -1812,6 +1972,22 @@ async function probeFleetNode(args: {
             : null,
       kioskUrl:
         typeof nodeInfo?.kioskUrl === "string" ? nodeInfo.kioskUrl : fallbackKioskUrl,
+      displayMode:
+        typeof nodeDisplay?.mode === "string"
+          ? nodeDisplay.mode
+          : typeof nodeInfo?.displayMode === "string"
+            ? nodeInfo.displayMode
+            : null,
+      displayOutput:
+        typeof nodeDisplay?.output === "string"
+          ? nodeDisplay.output
+          : typeof nodeInfo?.displayOutput === "string"
+            ? nodeInfo.displayOutput
+            : null,
+      displayBackend:
+        typeof nodeDisplay?.backend === "string"
+          ? nodeDisplay.backend
+          : null,
     },
     cableServer: versionJson
       ? {
@@ -2125,6 +2301,7 @@ async function main(): Promise<void> {
     const resolved = resolveTargetMedia({
       snapshot,
       target,
+      screenId,
       streamBaseUrl,
       guideBaseUrl,
     });
@@ -2807,6 +2984,7 @@ async function main(): Promise<void> {
         sourceValue: row.sourceValue,
         thumbnailUrl: row.thumbnailUrl,
         thumbnailObjectKey: row.thumbnailObjectKey,
+        web: row.web,
         cache: row.cache,
       })),
     });
@@ -3339,7 +3517,7 @@ async function main(): Promise<void> {
       scriptArgs.push("--guide-port", String(parsedBody.data.guidePort));
     }
 
-    const maskedCommand = ["bash", scriptPath, ...maskSensitiveBootstrapArgs(scriptArgs)];
+    const maskedCommand = ["bash", scriptPath, ...maskSensitiveScriptArgs(scriptArgs)];
     if (parsedBody.data.dryRun === true) {
       res.json({
         ok: true,
@@ -3372,6 +3550,115 @@ async function main(): Promise<void> {
       nodeId,
       namespace,
       registryId,
+      command: maskedCommand,
+      code: run.code,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      durationMs: run.durationMs,
+      stdout: run.stdout,
+      stderr: run.stderr,
+    });
+  });
+
+  app.post("/api/ops/nodes/:nodeId/display-mode", async (req, res) => {
+    const params = paramsOf(req);
+    const nodeId = String(params.nodeId ?? "").trim();
+    if (!nodeId) {
+      res.status(400).json({ ok: false, error: "node_id_required" });
+      return;
+    }
+
+    const parsedBody = OpsNodeDisplayModeRequestSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({
+        ok: false,
+        error: "invalid_display_mode_request",
+        issues: parsedBody.error.issues,
+      });
+      return;
+    }
+
+    const namespace = parsedBody.data.namespace?.trim() || readNamespace(req);
+    const registryId =
+      parsedBody.data.registryId?.trim() || readRegistryId(req, namespace);
+    const mode = parsedBody.data.mode ?? "1080p60";
+
+    const scriptPath = path.resolve(REPO_ROOT, "scripts/pis/set-display-mode.sh");
+    if (!fs.existsSync(scriptPath)) {
+      res.status(500).json({
+        ok: false,
+        error: "display_mode_script_missing",
+        detail: scriptPath,
+      });
+      return;
+    }
+
+    let hostResolved = parsedBody.data.host?.trim() || "";
+    if (!hostResolved) {
+      const registryNodes = await listRegistryNodes({ db, registryId });
+      const match = registryNodes.find((row) => row.nodeId === nodeId);
+      hostResolved = String(match?.ip || match?.host || "").trim();
+    }
+    if (!hostResolved) {
+      hostResolved = nodeId;
+    }
+
+    const scriptArgs: string[] = [nodeId, "--mode", mode, "--host", hostResolved];
+    if (parsedBody.data.sshUser?.trim()) {
+      scriptArgs.push("--ssh-user", parsedBody.data.sshUser.trim());
+    }
+    if (typeof parsedBody.data.sshPort === "number") {
+      scriptArgs.push("--ssh-port", String(parsedBody.data.sshPort));
+    }
+    if (parsedBody.data.sshPassword?.trim()) {
+      scriptArgs.push("--ssh-password", parsedBody.data.sshPassword.trim());
+    }
+    if (parsedBody.data.output?.trim()) {
+      scriptArgs.push("--output", parsedBody.data.output.trim());
+    }
+    if (parsedBody.data.restartDisplayManager === true) {
+      scriptArgs.push("--restart-display-manager");
+    }
+
+    const maskedCommand = ["bash", scriptPath, ...maskSensitiveScriptArgs(scriptArgs)];
+    if (parsedBody.data.dryRun === true) {
+      res.json({
+        ok: true,
+        dryRun: true,
+        nodeId,
+        namespace,
+        registryId,
+        host: hostResolved,
+        mode,
+        command: maskedCommand,
+      });
+      return;
+    }
+
+    const run = await runScript({
+      command: "bash",
+      argv: [scriptPath, ...scriptArgs],
+      timeoutMs: DEFAULT_DISPLAY_MODE_TIMEOUT_MS,
+      cwd: REPO_ROOT,
+    });
+    const ok = run.code === 0 && !run.timedOut;
+    const summarySource = (run.stderr || run.stdout || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    const summary =
+      summarySource ||
+      (run.timedOut
+        ? "display_mode_timed_out"
+        : `display_mode_exit_${run.code ?? "unknown"}`);
+    res.json({
+      ok,
+      ...(ok ? {} : { error: "display_mode_failed", detail: summary }),
+      nodeId,
+      namespace,
+      registryId,
+      host: hostResolved,
+      mode,
       command: maskedCommand,
       code: run.code,
       signal: run.signal,
@@ -3560,6 +3847,7 @@ async function main(): Promise<void> {
       lock: parsed.data.lock,
       qr: parsed.data.showQr ?? parsed.data.qr,
       nosplash: parsed.data.nosplash,
+      remoteInput: parsed.data.remoteInput,
       hudMode: parsed.data.hudMode,
       hudSec: parsed.data.hudShowSec,
       theme: parsed.data.theme,

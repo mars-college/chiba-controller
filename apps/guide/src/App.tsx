@@ -49,6 +49,7 @@ import {
   PARAM_MUTE_KEYS,
   PARAM_NO_SPLASH,
   PARAM_QR_KEYS,
+  PARAM_REMOTE_INPUT_KEYS,
   PARAM_REMOTE_APP_KEYS,
   PARAM_REMOTE_HOST,
   PARAM_REMOTE_HTTPS,
@@ -487,12 +488,14 @@ function App() {
   const targetIdParam = getFirstParam(params, PARAM_TARGET_ID_KEYS);
   const lockParam = getFirstParam(params, PARAM_LOCK_KEYS);
   const qrParam = getFirstParam(params, PARAM_QR_KEYS);
+  const remoteInputParam = getFirstParam(params, PARAM_REMOTE_INPUT_KEYS);
   const hudModeParam = params.get(PARAM_HUD_MODE);
   const hudSecParam = getFirstParam(params, PARAM_HUD_SEC_KEYS);
   const galleryParamParsed = parseBooleanParam(galleryParam);
   const playlistParamParsed = parseBooleanParam(params.get(PARAM_PLAYLIST));
   const lockParamParsed = parseBooleanParam(lockParam);
   const qrParamParsed = parseBooleanParam(qrParam);
+  const remoteInputParamParsed = parseBooleanParam(remoteInputParam);
   const galleryEnabled = galleryParamParsed === true;
   const playlistEnabled = playlistParamParsed === true;
 
@@ -582,6 +585,12 @@ function App() {
       : typeof kioskState?.qr === "boolean"
         ? kioskState.qr
         : null;
+  const remoteInputEnabled =
+    remoteInputParamParsed !== null
+      ? remoteInputParamParsed
+      : typeof kioskState?.remoteInput === "boolean"
+        ? kioskState.remoteInput
+        : false;
   // Default to hiding the Remote QR in gallery/kiosk installs unless explicitly enabled.
   const qrAllowed = qrForced === null ? (galleryEnabledEffective ? false : true) : qrForced;
   const qrLockedOff = qrAllowed === false;
@@ -797,9 +806,26 @@ function App() {
     return [syntheticTargetChannel, ...base.filter((channel) => channel.id !== syntheticTargetChannel.id)];
   }, [indexData.channels, syntheticTargetChannel]);
   const channels = useMemo(
-    () => allChannels.filter((channel) => !isHiddenChannel(channel)),
-    [allChannels]
+    () =>
+      allChannels.filter((channel) => {
+        if (
+          runtimeTarget?.kind === "media" &&
+          syntheticTargetChannelId &&
+          channel.id === syntheticTargetChannelId
+        ) {
+          return false;
+        }
+        return !isHiddenChannel(channel);
+      }),
+    [allChannels, runtimeTarget?.kind, syntheticTargetChannelId]
   );
+  const activeArtItems = useMemo(() => {
+    const targetId = (channelId ?? "").trim();
+    const artChannel =
+      (targetId ? channels.find((channel) => channel.id === targetId) : undefined) ??
+      channels[0];
+    return artChannel?.schedule.filter((slot) => Boolean(slot.url)) ?? [];
+  }, [channelId, channels]);
   const pinnedChannel = useMemo(() => {
     const raw = (pinnedChannelKey ?? "").trim();
     if (!raw) return null;
@@ -1059,6 +1085,7 @@ function App() {
   const moveSelection = useCallback(
     (dir: "up" | "down" | "left" | "right") => {
       if (channelLocked && viewMode === "guide") return;
+      if (!channels.length) return;
       pauseUntilRef.current = Date.now() + USER_PAUSE_MS;
       if (dir === "up") {
         setSelectedRow(
@@ -1169,10 +1196,17 @@ function App() {
     [decorateProgramUrl, selectedProgram?.url]
   );
   const activeAppId = useMemo(() => getAppIdFromUrl(playerUrl), [playerUrl]);
-  const activeProgramRemoteControls = useMemo(
-    () => (playerOpen ? selectedProgram?.remoteControls ?? [] : []),
-    [playerOpen, selectedProgram]
-  );
+  const activeProgramRemoteControls = useMemo<RemoteRegistration[]>(() => {
+    if (!playerOpen) return [];
+    const baseControls = selectedProgram?.remoteControls ?? [];
+    if (!remoteInputEnabled) return baseControls;
+    const programKind = selectedProgramUrl
+      ? getMediaKind(selectedProgramUrl)
+      : null;
+    if (programKind !== "iframe") return baseControls;
+    if (baseControls.includes("keyboard_mouse")) return baseControls;
+    return [...baseControls, "keyboard_mouse"];
+  }, [playerOpen, remoteInputEnabled, selectedProgram, selectedProgramUrl]);
   const effectiveRemoteControls =
     viewMode === "remote" ? remoteRegistrations : activeProgramRemoteControls;
   const effectiveRemoteAppId =
@@ -1761,9 +1795,7 @@ function App() {
         return;
       }
       const data = (await res.json()) as GuideIndex;
-      if (data.channels?.length) {
-        setIndexData(ensureSystemChannels(data));
-      }
+      setIndexData(ensureSystemChannels(data));
     } catch (error) {
       log.warn("index-fetch-failed", error);
     }
@@ -2636,10 +2668,8 @@ function App() {
       }
       if (msg.type === "nav") {
         if (viewMode === "art") {
-          const artItems =
-            channels
-              .find((channel) => channel.id === (channelId ?? "jensen-art"))
-              ?.schedule.filter((slot) => slot.url) ?? [];
+          const artItems = activeArtItems;
+          if (!artItems.length) return;
           if (msg.dir === "left" || msg.dir === "up") {
             setArtIndex((prev) => (prev - 1 + artItems.length) % artItems.length);
           } else if (msg.dir === "right" || msg.dir === "down") {
@@ -3167,29 +3197,24 @@ function App() {
   useEffect(() => {
     if (viewMode !== "art") return;
     if (artPaused) return;
-    const artItems =
-      channels
-        .find((channel) => channel.id === (channelId ?? "jensen-art"))
-        ?.schedule.filter((slot) => slot.url) ?? [];
+    const artItems = activeArtItems;
+    if (!artItems.length) return;
     const item = artItems[artIndex];
     const duration = (item?.durationSec ?? ART_IMAGE_DURATION_DEFAULT_SEC) * 1000;
     const timer = window.setTimeout(() => {
       setArtIndex((prev) => (prev + 1) % Math.max(1, artItems.length));
     }, duration);
     return () => window.clearTimeout(timer);
-  }, [artIndex, artPaused, viewMode, channels, channelId]);
+  }, [activeArtItems, artIndex, artPaused, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "art") return;
     const raw = Number(params.get(PARAM_ART_INDEX) ?? "");
     if (!Number.isFinite(raw)) return;
-    const artItems =
-      channels
-        .find((channel) => channel.id === (channelId ?? "jensen-art"))
-        ?.schedule.filter((slot) => slot.url) ?? [];
+    const artItems = activeArtItems;
     const safeIndex = Math.max(0, raw % Math.max(1, artItems.length));
     setArtIndex(safeIndex);
-  }, [viewMode, channelId, channels, params]);
+  }, [viewMode, activeArtItems, params]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -3277,17 +3302,13 @@ function App() {
           setArtPaused((prev) => !prev);
         }
         if (key === "ArrowLeft" || key === "ArrowUp") {
-          const artItems =
-            channels
-              .find((channel) => channel.id === (channelId ?? "jensen-art"))
-              ?.schedule.filter((slot) => slot.url) ?? [];
+          const artItems = activeArtItems;
+          if (!artItems.length) return;
           setArtIndex((prev) => (prev - 1 + artItems.length) % artItems.length);
         }
         if (key === "ArrowRight" || key === "ArrowDown") {
-          const artItems =
-            channels
-              .find((channel) => channel.id === (channelId ?? "jensen-art"))
-              ?.schedule.filter((slot) => slot.url) ?? [];
+          const artItems = activeArtItems;
+          if (!artItems.length) return;
           setArtIndex((prev) => (prev + 1) % artItems.length);
         }
         return;
@@ -3318,7 +3339,7 @@ function App() {
     moveSelection,
     viewMode,
     channels,
-    channelId,
+    activeArtItems,
     handleSelect,
     playerOpen,
     handleChannelChange,

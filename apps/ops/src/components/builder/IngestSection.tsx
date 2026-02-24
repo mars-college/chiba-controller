@@ -10,6 +10,7 @@ import {
   Loader,
   Paper,
   Progress,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -23,12 +24,14 @@ import {
   IconUpload,
   IconWorldWww,
 } from "@tabler/icons-react";
-import type { MediaIngestJob } from "../../lib/controlApi";
+import type { Media, MediaIngestJob } from "../../lib/controlApi";
 import {
   formatBytes,
   type IngestSource,
   type UploadPreviewItem,
 } from "../../lib/opsModel";
+import { WebLaunchArgsEditor } from "./WebLaunchArgsEditor";
+import type { WebLaunchArgEntry } from "../../lib/webLaunchArgs";
 
 export type IngestSectionVm = {
   ingestStep: 1 | 2 | 3;
@@ -54,6 +57,12 @@ export type IngestSectionVm = {
   setWebDescription: (value: string) => void;
   webCache: boolean;
   setWebCache: (value: boolean) => void;
+  webLaunchProfile: "none" | "home_assistant_login";
+  setWebLaunchProfile: (value: "none" | "home_assistant_login") => void;
+  webLaunchArgsEntries: WebLaunchArgEntry[];
+  setWebLaunchArgsEntries: (value: WebLaunchArgEntry[]) => void;
+  webLaunchConfig: Media["web"] | undefined;
+  webLaunchArgsError: string | null;
   edenInput: string;
   setEdenInput: (value: string) => void;
   getUploadRootProps: () => any;
@@ -100,6 +109,12 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     setWebDescription,
     webCache,
     setWebCache,
+    webLaunchProfile,
+    setWebLaunchProfile,
+    webLaunchArgsEntries,
+    setWebLaunchArgsEntries,
+    webLaunchConfig,
+    webLaunchArgsError,
     edenInput,
     setEdenInput,
     getUploadRootProps,
@@ -348,6 +363,31 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                         ? "Cache enabled on nodes"
                                         : "Cache disabled on nodes"}
                                     </Button>
+                                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                                      <Select
+                                        label="Custom launch logic"
+                                        value={webLaunchProfile}
+                                        data={[
+                                          { value: "none", label: "None" },
+                                          {
+                                            value: "home_assistant_login",
+                                            label: "Home Assistant login",
+                                          },
+                                        ]}
+                                        onChange={(value) =>
+                                          setWebLaunchProfile(
+                                            value === "home_assistant_login"
+                                              ? "home_assistant_login"
+                                            : "none"
+                                          )
+                                        }
+                                      />
+                                    </SimpleGrid>
+                                    <WebLaunchArgsEditor
+                                      entries={webLaunchArgsEntries}
+                                      onChange={setWebLaunchArgsEntries}
+                                      error={webLaunchArgsError}
+                                    />
                                   </Stack>
                                 ) : null}
                                 {ingestSource === "eden" ? (
@@ -667,6 +707,7 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                             artist: webArtist.trim() || undefined,
                                             description:
                                               webDescription.trim() || undefined,
+                                            web: webLaunchConfig,
                                             cache: webCache,
                                           },
                                           null,

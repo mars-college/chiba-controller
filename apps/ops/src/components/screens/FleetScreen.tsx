@@ -39,7 +39,11 @@ import { NodeControlPanel } from "../NodeControlPanel";
 import { NodeEditorPanel, type NodeDraft } from "../NodeEditorPanel";
 import { SectionLoader } from "../SectionLoader";
 import { type Media } from "../../lib/controlApi";
-import { type FleetPiHealth, type OpsNodeBootstrapResponse } from "../../types";
+import {
+  type FleetPiHealth,
+  type OpsNodeBootstrapResponse,
+  type OpsNodeDisplayModeResponse,
+} from "../../types";
 import type { NodeRuntimeInputAction } from "@chiba-cable3/contracts";
 import {
   TABLE_PAGE_SIZE,
@@ -96,6 +100,21 @@ export type FleetScreenVm = {
   nodeBootstrapBusy: boolean;
   nodeBootstrapError: string | null;
   nodeBootstrapResult: OpsNodeBootstrapResponse | null;
+  setNodeDisplayMode: (payload: {
+    mode: "native" | "2160p30" | "1440p60" | "1080p60" | "900p60" | "720p60";
+    restartDisplayManager?: boolean;
+    namespace?: string;
+    registryId?: string;
+    host?: string;
+    sshUser?: string;
+    sshPort?: number;
+    sshPassword?: string;
+    output?: string;
+    dryRun?: boolean;
+  }) => Promise<void>;
+  nodeDisplayModeBusy: boolean;
+  nodeDisplayModeError: string | null;
+  nodeDisplayModeResult: OpsNodeDisplayModeResponse | null;
   nodeStashFilterQuery: string;
   setNodeStashFilterQuery: (query: string) => void;
   nodeStashSort: "name" | "size_desc" | "size_asc" | "updated_desc" | "updated_asc";
@@ -112,10 +131,7 @@ export type FleetScreenVm = {
   saveNodeDraft: () => Promise<void>;
   assignTargetOpen: boolean;
   applyKind: "media" | "playlist" | "block" | "channel" | "profile";
-  setApplyKind: (value: "media" | "playlist" | "block" | "channel" | "profile") => void;
   applyId: string;
-  setApplyId: (value: string) => void;
-  currentApplyOptions: Array<{ value: string; label: string }>;
   setTargetPickerOpen: (open: boolean) => void;
   applyTargetPreviewCard: ReactNode;
   optMode: "inherit" | "guide" | "gallery";
@@ -128,6 +144,8 @@ export type FleetScreenVm = {
   setOptPlaylist: (value: "inherit" | "on" | "off") => void;
   optNosplash: "inherit" | "on" | "off";
   setOptNosplash: (value: "inherit" | "on" | "off") => void;
+  optRemoteInput: "inherit" | "on" | "off";
+  setOptRemoteInput: (value: "inherit" | "on" | "off") => void;
   optHud: "inherit" | "always" | "start" | "never";
   setOptHud: (value: "inherit" | "always" | "start" | "never") => void;
   optHudSec: number | "";
@@ -205,6 +223,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     nodeBootstrapBusy,
     nodeBootstrapError,
     nodeBootstrapResult,
+    setNodeDisplayMode,
+    nodeDisplayModeBusy,
+    nodeDisplayModeError,
+    nodeDisplayModeResult,
     nodeStashFilterQuery,
     setNodeStashFilterQuery,
     nodeStashSort,
@@ -219,10 +241,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     saveNodeDraft,
     assignTargetOpen,
     applyKind,
-    setApplyKind,
     applyId,
-    setApplyId,
-    currentApplyOptions,
     setTargetPickerOpen,
     applyTargetPreviewCard,
     optMode,
@@ -235,6 +254,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     setOptPlaylist,
     optNosplash,
     setOptNosplash,
+    optRemoteInput,
+    setOptRemoteInput,
     optHud,
     setOptHud,
     optHudSec,
@@ -352,6 +373,12 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     return `${status} ${score}/${total}`;
   };
 
+  const displayResolutionLabel = (row: FleetPiHealth) => {
+    const mode = (row.chibaNode.displayMode || "").trim();
+    if (mode) return mode;
+    return "res ?";
+  };
+
   const openEditPanel = () => {
     if (selectedNodeIds.length === 1 && nodeWorkspaceFocus) {
       openEditNodeEditor(nodeWorkspaceFocus.id);
@@ -387,6 +414,17 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     setWorkspacePanel("overview");
   };
 
+  const workspaceScopeLabel =
+    selectedNodeIds.length === 1
+      ? nodeWorkspaceFocus?.id || selectedNodeIds[0] || "1 node"
+      : `${selectedNodeIds.length} nodes`;
+  const runtimePlaybackFileName = (
+    nodeRuntimeStatus?.status.playback?.path || ""
+  )
+    .split("/")
+    .filter(Boolean)
+    .pop();
+
   return (
     <Tabs.Panel value="fleet" pt="md">
       {fleetView === "workspace" ? (
@@ -404,7 +442,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                       },
                     },
                     {
-                      label: "Node Workspace",
+                      label: workspaceScopeLabel,
                       onClick: closeWorkspacePanels,
                     },
                     ...(workspacePanel === "assign"
@@ -456,7 +494,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     onClose={closeWorkspacePanels}
                     breadcrumbs={[
                       {
-                        label: "Node Workspace",
+                        label: workspaceScopeLabel,
                         onClick: closeWorkspacePanels,
                       },
                       { label: editingNodeId ? "Edit Node" : "Add Node" },
@@ -715,10 +753,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                   <AssignTargetPanel
                     selectedNodeCount={selectedNodeIds.length}
                     applyKind={applyKind}
-                    setApplyKind={setApplyKind}
                     applyId={applyId}
-                    setApplyId={setApplyId}
-                    currentApplyOptions={currentApplyOptions}
                     onOpenTargetPicker={() => setTargetPickerOpen(true)}
                     applyTargetPreviewCard={applyTargetPreviewCard}
                     optMode={optMode}
@@ -731,6 +766,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     setOptPlaylist={setOptPlaylist}
                     optNosplash={optNosplash}
                     setOptNosplash={setOptNosplash}
+                    optRemoteInput={optRemoteInput}
+                    setOptRemoteInput={setOptRemoteInput}
                     optHud={optHud}
                     setOptHud={setOptHud}
                     optHudSec={optHudSec}
@@ -759,6 +796,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     bootstrapBusy={nodeBootstrapBusy}
                     bootstrapError={nodeBootstrapError}
                     bootstrapResult={nodeBootstrapResult}
+                    onSetDisplayMode={setNodeDisplayMode}
+                    displayModeBusy={nodeDisplayModeBusy}
+                    displayModeError={nodeDisplayModeError}
+                    displayModeResult={nodeDisplayModeResult}
                     defaultRegistryId={activeRegistryId}
                     defaultNamespace={activeRegistryId}
                     defaultNodeHost={
@@ -852,9 +893,33 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                   {filteredNodeStashItems.map((file) => (
                                     <Table.Tr key={`stash-${file.fileName}`}>
                                       <Table.Td>
-                                        <Text size="xs" ff="monospace">
-                                          {file.fileName}
-                                        </Text>
+                                        <Stack gap={4}>
+                                          <Text size="xs" ff="monospace">
+                                            {file.fileName}
+                                          </Text>
+                                          {runtimePlaybackFileName === file.fileName &&
+                                          workspacePlaybackMedia ? (
+                                            <Group gap={8} wrap="nowrap">
+                                              {workspacePlaybackMedia.thumbnailUrl ? (
+                                                <Image
+                                                  src={workspacePlaybackMedia.thumbnailUrl}
+                                                  alt={
+                                                    workspacePlaybackMedia.title ||
+                                                    workspacePlaybackMedia.id
+                                                  }
+                                                  h={28}
+                                                  w={48}
+                                                  fit="cover"
+                                                  radius="sm"
+                                                />
+                                              ) : null}
+                                              <Text size="xs" c="dimmed" lineClamp={1}>
+                                                {workspacePlaybackMedia.title ||
+                                                  workspacePlaybackMedia.id}
+                                              </Text>
+                                            </Group>
+                                          ) : null}
+                                        </Stack>
                                       </Table.Td>
                                       <Table.Td>{formatBytes(file.sizeBytes)}</Table.Td>
                                       <Table.Td>
@@ -1123,6 +1188,13 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                               <Badge size="xs" variant="light">
                                 {runtime.kind}
                               </Badge>
+                              <Badge
+                                size="xs"
+                                variant="light"
+                                color={row.chibaNode.displayMode ? "cyan" : "gray"}
+                              >
+                                {displayResolutionLabel(row)}
+                              </Badge>
                             </Group>
                             <Text size="xs" fw={600} lineClamp={1}>
                               {runtime.label}
@@ -1325,6 +1397,12 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             <Text size="xs">cable: {row.cableServer?.version ?? "?"}</Text>
                             <Text size="xs" c="dimmed">
                               sha: {row.cableServer?.gitSha ?? "—"}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              display: {displayResolutionLabel(row)}
+                              {row.chibaNode.displayOutput
+                                ? ` (${row.chibaNode.displayOutput})`
+                                : ""}
                             </Text>
                           </Stack>
                         </Table.Td>

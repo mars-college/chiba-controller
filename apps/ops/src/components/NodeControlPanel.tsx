@@ -6,6 +6,7 @@ import {
   Divider,
   Group,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -23,7 +24,11 @@ import {
   IconSend,
 } from "@tabler/icons-react";
 import type { NodeRuntimeInputAction } from "@chiba-cable3/contracts";
-import type { OpsNodeBootstrapResponse } from "../types";
+import type {
+  OpsNodeBootstrapResponse,
+  OpsNodeDisplayModePreset,
+  OpsNodeDisplayModeResponse,
+} from "../types";
 import { fetchOpsBootstrapDefaults } from "../lib/api";
 import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
 
@@ -51,6 +56,21 @@ type NodeControlPanelProps = {
   bootstrapBusy: boolean;
   bootstrapError: string | null;
   bootstrapResult: OpsNodeBootstrapResponse | null;
+  onSetDisplayMode: (payload: {
+    mode: OpsNodeDisplayModePreset;
+    restartDisplayManager?: boolean;
+    namespace?: string;
+    registryId?: string;
+    host?: string;
+    sshUser?: string;
+    sshPort?: number;
+    sshPassword?: string;
+    output?: string;
+    dryRun?: boolean;
+  }) => Promise<void>;
+  displayModeBusy: boolean;
+  displayModeError: string | null;
+  displayModeResult: OpsNodeDisplayModeResponse | null;
   defaultRegistryId: string;
   defaultNamespace: string;
   defaultNodeHost: string;
@@ -73,6 +93,19 @@ const KEY_ACTIONS: KeyAction[] = [
   { label: "Escape", keyValue: "Escape" },
   { label: "Space", keyValue: "Space" },
   { label: "Backspace", keyValue: "Backspace" },
+];
+
+const DISPLAY_MODE_OPTIONS: Array<{
+  value: OpsNodeDisplayModePreset;
+  label: string;
+  detail: string;
+}> = [
+  { value: "native", label: "Native", detail: "Use monitor preferred mode" },
+  { value: "2160p30", label: "2160p30", detail: "3840x2160 @ 30Hz" },
+  { value: "1440p60", label: "1440p60", detail: "2560x1440 @ 60Hz" },
+  { value: "1080p60", label: "1080p60", detail: "1920x1080 @ 60Hz" },
+  { value: "900p60", label: "900p60", detail: "1600x900 @ 60Hz" },
+  { value: "720p60", label: "720p60", detail: "1280x720 @ 60Hz" },
 ];
 
 function inferPublicUrl(port: number): string {
@@ -104,6 +137,10 @@ export function NodeControlPanel({
   bootstrapBusy,
   bootstrapError,
   bootstrapResult,
+  onSetDisplayMode,
+  displayModeBusy,
+  displayModeError,
+  displayModeResult,
   defaultRegistryId,
   defaultNamespace,
   defaultNodeHost,
@@ -127,6 +164,11 @@ export function NodeControlPanel({
   const [guidePortInput, setGuidePortInput] = useState(String(defaults.guidePort));
   const [endpointsOnly, setEndpointsOnly] = useState(true);
   const [dryRun, setDryRun] = useState(false);
+  const [displayModePreset, setDisplayModePreset] =
+    useState<OpsNodeDisplayModePreset>("1080p60");
+  const [displayOutput, setDisplayOutput] = useState("");
+  const [displayRestartDm, setDisplayRestartDm] = useState(false);
+  const [displayDryRun, setDisplayDryRun] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -169,6 +211,22 @@ export function NodeControlPanel({
       guidePort: Number.isFinite(guidePort) && guidePort > 0 ? guidePort : undefined,
       endpointsOnly,
       dryRun,
+    });
+  };
+
+  const runDisplayMode = async () => {
+    const sshPort = Number(sshPortInput);
+    await onSetDisplayMode({
+      mode: displayModePreset,
+      restartDisplayManager: displayRestartDm,
+      namespace,
+      registryId,
+      host: hostOverride,
+      sshUser,
+      sshPort: Number.isFinite(sshPort) && sshPort > 0 ? sshPort : undefined,
+      sshPassword,
+      output: displayOutput,
+      dryRun: displayDryRun,
     });
   };
 
@@ -408,6 +466,116 @@ export function NodeControlPanel({
                 autosize
                 readOnly
                 value={bootstrapResult.stderr}
+              />
+            ) : null}
+          </Stack>
+        </Paper>
+
+        <Divider label="Display Mode" labelPosition="center" />
+
+        <Paper withBorder p="sm" radius="sm">
+          <Stack gap="sm">
+            <Text fw={600}>Display Mode (System)</Text>
+            <Text size="sm" c="dimmed">
+              Applies a system-level display preset for this node, persists it
+              for boot, and attempts an immediate apply on the active desktop.
+            </Text>
+            <SimpleGrid cols={{ base: 2, sm: 3 }}>
+              {DISPLAY_MODE_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  variant={
+                    displayModePreset === option.value ? "filled" : "light"
+                  }
+                  onClick={() => setDisplayModePreset(option.value)}
+                  disabled={displayModeBusy}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </SimpleGrid>
+            <Select
+              label="Selected preset"
+              data={DISPLAY_MODE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: `${option.label} - ${option.detail}`,
+              }))}
+              value={displayModePreset}
+              onChange={(value) =>
+                setDisplayModePreset(
+                  (value as OpsNodeDisplayModePreset | null) || "1080p60"
+                )
+              }
+            />
+            <TextInput
+              label="Display Output Override (optional)"
+              placeholder="HDMI-1"
+              value={displayOutput}
+              onChange={(event) => setDisplayOutput(event.currentTarget.value)}
+            />
+            <Checkbox
+              label="Restart display manager"
+              checked={displayRestartDm}
+              onChange={(event) =>
+                setDisplayRestartDm(event.currentTarget.checked)
+              }
+            />
+            <Checkbox
+              label="Dry run"
+              checked={displayDryRun}
+              onChange={(event) => setDisplayDryRun(event.currentTarget.checked)}
+            />
+            <Group justify="space-between" wrap="wrap">
+              <Button
+                loading={displayModeBusy}
+                onClick={() => void runDisplayMode()}
+              >
+                Apply Display Mode
+              </Button>
+              {displayModeResult ? (
+                <Badge variant="light" color={displayModeResult.ok ? "teal" : "red"}>
+                  {displayModeResult.dryRun
+                    ? "dry run"
+                    : `exit ${
+                        typeof displayModeResult.code === "number"
+                          ? displayModeResult.code
+                          : "n/a"
+                      }`}
+                </Badge>
+              ) : null}
+            </Group>
+            {displayModeError ? (
+              <Text size="sm" c="red">
+                {displayModeError}
+              </Text>
+            ) : null}
+            {displayModeResult?.command?.length ? (
+              <Textarea
+                label="Executed command"
+                minRows={2}
+                autosize
+                readOnly
+                value={displayModeResult.command.join(" ")}
+              />
+            ) : null}
+            {displayModeResult?.stdout ? (
+              <Textarea
+                label="Display mode stdout"
+                minRows={4}
+                maxRows={12}
+                autosize
+                readOnly
+                value={displayModeResult.stdout}
+              />
+            ) : null}
+            {displayModeResult?.stderr ? (
+              <Textarea
+                label="Display mode stderr"
+                minRows={4}
+                maxRows={12}
+                autosize
+                readOnly
+                value={displayModeResult.stderr}
               />
             ) : null}
           </Stack>

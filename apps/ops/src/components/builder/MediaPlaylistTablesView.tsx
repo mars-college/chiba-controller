@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import {
   ActionIcon,
   Button,
@@ -18,7 +17,6 @@ import {
   TABLE_PAGE_SIZE,
   tableRangeLabel,
   type DraftPlaylist,
-  type DraftStore,
 } from "../../lib/opsModel";
 
 export type MediaPlaylistTablesVm = {
@@ -35,7 +33,7 @@ export type MediaPlaylistTablesVm = {
   playlistRowsPage: DraftPlaylist[];
   openPlaylistEditorRoute: (playlistId?: string) => void;
   selectedPlaylistId: string | null;
-  setDraftStore: Dispatch<SetStateAction<DraftStore>>;
+  deletePlaylistDraft: (playlistId: string) => void | Promise<void>;
   playlistCount: number;
   playlistTablePage: number;
   setPlaylistTablePage: (page: number) => void;
@@ -57,7 +55,7 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
     playlistRowsPage,
     openPlaylistEditorRoute,
     selectedPlaylistId,
-    setDraftStore,
+    deletePlaylistDraft,
     playlistCount,
     playlistTablePage,
     setPlaylistTablePage,
@@ -220,12 +218,7 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
                                               variant="light"
                                               onClick={(event) => {
                                                 event.stopPropagation();
-                                                setDraftStore((store) => ({
-                                                  ...store,
-                                                  playlists: store.playlists.filter(
-                                                    (item) => item.id !== row.id
-                                                  ),
-                                                }));
+                                                void deletePlaylistDraft(row.id);
                                               }}
                                               title="Delete playlist"
                                             >

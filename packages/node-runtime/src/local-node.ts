@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import http, { type ServerResponse } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,6 +30,10 @@ type ResolvedPlaybackItem = {
   mediaId: string;
   sourceType: "path" | "url";
   sourceValue: string;
+  web?: {
+    launchProfile?: "home_assistant_login";
+    launchArgs?: Record<string, string>;
+  };
   cache: boolean;
   durationSec?: number;
   title?: string;
@@ -87,6 +91,14 @@ type ActivePlaybackMeta = {
   title?: string;
   artist?: string;
   description?: string;
+};
+
+type DisplayTelemetry = {
+  backend: "wayland" | "x11" | "unknown";
+  output: string | null;
+  mode: string | null;
+  updatedAt: number;
+  error?: string;
 };
 
 const MEDIA_URL_EXTENSIONS = new Set([
@@ -147,6 +159,166 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (["1", "true", "yes", "on"].includes(raw)) return true;
   if (["0", "false", "no", "off"].includes(raw)) return false;
   return fallback;
+}
+
+function normalizeDisplayHz(raw: string): string {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return raw;
+  const roundedInt = Math.round(parsed);
+  if (Math.abs(parsed - roundedInt) < 0.05) return String(roundedInt);
+  return parsed.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function parseWlrRandrOutput(raw: string): { output: string | null; mode: string | null } {
+  const lines = raw.split(/\r?\n/);
+  let activeOutput: string | null = null;
+  let inModes = false;
+  let firstOutput: string | null = null;
+  let firstMode: string | null = null;
+  let preferredMode: string | null = null;
+  let preferredOutput: string | null = null;
+
+  for (const line of lines) {
+    const outputMatch = /^([A-Za-z0-9_.:-]+)\s+"/.exec(line);
+    if (outputMatch) {
+      activeOutput = outputMatch[1] ?? null;
+      if (!firstOutput) firstOutput = activeOutput;
+      inModes = false;
+      continue;
+    }
+    if (!activeOutput) continue;
+    if (/^\s*Modes:\s*$/.test(line)) {
+      inModes = true;
+      continue;
+    }
+    if (!inModes) continue;
+    const modeMatch = /^\s*([0-9]+x[0-9]+)\s+px,\s*([0-9.]+)\s+Hz(.*)$/.exec(line);
+    if (!modeMatch) continue;
+    const mode = `${modeMatch[1] ?? ""}@${normalizeDisplayHz(modeMatch[2] ?? "")}`;
+    const flags = modeMatch[3] || "";
+    if (!firstMode) firstMode = mode;
+    if (flags.includes("(preferred)") && !preferredMode) {
+      preferredMode = mode;
+      preferredOutput = activeOutput;
+    }
+    if (flags.includes("(current)")) {
+      return { output: activeOutput, mode };
+    }
+  }
+  if (preferredMode) {
+    return { output: preferredOutput, mode: preferredMode };
+  }
+  return { output: firstOutput, mode: firstMode };
+}
+
+function parseXrandrOutput(raw: string): { output: string | null; mode: string | null } {
+  const lines = raw.split(/\r?\n/);
+  let output: string | null = null;
+  let firstMode: string | null = null;
+  for (const line of lines) {
+    const connected = /^([A-Za-z0-9_.:-]+)\s+connected\b/.exec(line);
+    if (connected) {
+      if (output && firstMode) break;
+      output = connected[1] ?? null;
+      firstMode = null;
+      continue;
+    }
+    if (!output) continue;
+    const modeMatch = /^\s*([0-9]+x[0-9]+)\s+([0-9.]+)(.*)$/.exec(line);
+    if (!modeMatch) continue;
+    const mode = `${modeMatch[1] ?? ""}@${normalizeDisplayHz(modeMatch[2] ?? "")}`;
+    if (!firstMode) firstMode = mode;
+    if ((modeMatch[3] || "").includes("*")) {
+      return { output, mode };
+    }
+  }
+  return { output, mode: firstMode };
+}
+
+function probeDisplayTelemetry(): DisplayTelemetry {
+  const now = Date.now();
+  let errorHint = "";
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const runtimeCandidates = [
+    process.env.XDG_RUNTIME_DIR || "",
+    uid == null ? "" : `/run/user/${uid}`,
+  ]
+    .map((value) => value.trim())
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index);
+
+  for (const runtimeDir of runtimeCandidates) {
+    let sockets: string[] = [];
+    try {
+      sockets = readdirSync(runtimeDir).filter((entry) => entry.startsWith("wayland-"));
+    } catch {
+      sockets = [];
+    }
+    for (const socket of sockets) {
+      const res = spawnSync("wlr-randr", [], {
+        encoding: "utf8",
+        timeout: 1_200,
+        env: {
+          ...process.env,
+          XDG_RUNTIME_DIR: runtimeDir,
+          WAYLAND_DISPLAY: socket,
+        },
+      });
+      if (res.status === 0) {
+        const parsed = parseWlrRandrOutput(res.stdout || "");
+        if (parsed.output || parsed.mode) {
+          return {
+            backend: "wayland",
+            output: parsed.output,
+            mode: parsed.mode,
+            updatedAt: now,
+          };
+        }
+      }
+      if (res.error?.message) {
+        errorHint = res.error.message;
+      } else if ((res.stderr || "").trim()) {
+        errorHint = (res.stderr || "").trim().split("\n")[0] || errorHint;
+      }
+    }
+  }
+
+  const displayCandidates = [process.env.DISPLAY || "", ":0"].filter(
+    (value, index, all) => value.length > 0 && all.indexOf(value) === index
+  );
+  for (const display of displayCandidates) {
+    const res = spawnSync("xrandr", ["--query"], {
+      encoding: "utf8",
+      timeout: 1_200,
+      env: {
+        ...process.env,
+        DISPLAY: display,
+      },
+    });
+    if (res.status === 0) {
+      const parsed = parseXrandrOutput(res.stdout || "");
+      if (parsed.output || parsed.mode) {
+        return {
+          backend: "x11",
+          output: parsed.output,
+          mode: parsed.mode,
+          updatedAt: now,
+        };
+      }
+    }
+    if (res.error?.message) {
+      errorHint = res.error.message;
+    } else if ((res.stderr || "").trim()) {
+      errorHint = (res.stderr || "").trim().split("\n")[0] || errorHint;
+    }
+  }
+
+  return {
+    backend: "unknown",
+    output: null,
+    mode: null,
+    updatedAt: now,
+    ...(errorHint ? { error: errorHint } : {}),
+  };
 }
 
 function toNonNegativeNumber(value: unknown): number | null {
@@ -228,6 +400,9 @@ function buildKioskUrl(args: {
   }
   if (typeof args.launch.qr === "boolean") {
     params.set("qr", args.launch.qr ? "1" : "0");
+  }
+  if (typeof args.launch.remoteInput === "boolean") {
+    params.set("remoteInput", args.launch.remoteInput ? "1" : "0");
   }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
@@ -823,9 +998,13 @@ async function runHomeAssistantAutomation(args: {
   stepDelayMs: number;
   inputBinary: string;
   allowInputAnyPlatform: boolean;
+  force?: boolean;
 }): Promise<void> {
   if (!args.enabled) return;
-  if (!shouldRunHomeAssistantAutomation({ chromiumUrl: args.chromiumUrl, targetHost: args.targetHost })) {
+  if (
+    !args.force &&
+    !shouldRunHomeAssistantAutomation({ chromiumUrl: args.chromiumUrl, targetHost: args.targetHost })
+  ) {
     return;
   }
   if (!args.username || !args.password) {
@@ -880,6 +1059,33 @@ async function runHomeAssistantAutomation(args: {
   }
   toLog("info", "ha_automation_applied", {
     url: args.chromiumUrl,
+  });
+}
+
+async function runConfiguredWebAutomation(args: {
+  chromiumUrl: string;
+  launchProfile?: "home_assistant_login";
+  homeAssistantAutomationEnabled: boolean;
+  homeAssistantUser: string;
+  homeAssistantPass: string;
+  homeAssistantHost: string | null;
+  homeAssistantStartDelayMs: number;
+  homeAssistantStepDelayMs: number;
+  inputBinary: string;
+  allowInputAnyPlatform: boolean;
+}): Promise<void> {
+  const forceHomeAssistant = args.launchProfile === "home_assistant_login";
+  await runHomeAssistantAutomation({
+    chromiumUrl: args.chromiumUrl,
+    enabled: args.homeAssistantAutomationEnabled,
+    username: args.homeAssistantUser,
+    password: args.homeAssistantPass,
+    targetHost: args.homeAssistantHost,
+    startDelayMs: args.homeAssistantStartDelayMs,
+    stepDelayMs: args.homeAssistantStepDelayMs,
+    inputBinary: args.inputBinary,
+    allowInputAnyPlatform: args.allowInputAnyPlatform,
+    force: forceHomeAssistant,
   });
 }
 
@@ -972,6 +1178,19 @@ function createNodeApiServer(args: {
   inputBinary: string;
   allowInputAnyPlatform: boolean;
 }): http.Server {
+  let displayTelemetryCache: DisplayTelemetry | null = null;
+  let displayTelemetryExpiresAt = 0;
+  const readDisplayTelemetry = (): DisplayTelemetry => {
+    const now = Date.now();
+    if (displayTelemetryCache && now < displayTelemetryExpiresAt) {
+      return displayTelemetryCache;
+    }
+    const next = probeDisplayTelemetry();
+    displayTelemetryCache = next;
+    displayTelemetryExpiresAt = now + 5_000;
+    return next;
+  };
+
   return http.createServer((req, res) => {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -987,6 +1206,7 @@ function createNodeApiServer(args: {
     }
 
     if (method === "GET" && url.pathname === "/status") {
+      const display = readDisplayTelemetry();
       sendJson(res, 200, {
         ok: true,
         node: {
@@ -998,6 +1218,9 @@ function createNodeApiServer(args: {
           platform: process.platform,
           hostname: os.hostname(),
           kioskUrl: args.state.kioskUrl,
+          display,
+          displayMode: display.mode,
+          displayOutput: display.output,
           capabilities: {
             supportsWindowManager: true,
             supportsRotation: true,
@@ -1502,6 +1725,9 @@ async function main(): Promise<void> {
         const previousChromiumProfileDir = chromiumProfileDir;
 
         if (wantsChromium) {
+          const firstWebItem = useGuideChromium
+            ? null
+            : resolved.resolved.items.find((item) => item.renderer === "web") ?? null;
           const chromiumUrl = useGuideChromium
             ? runtimeState.kioskUrl
             : resolved.resolved.items[0]?.sourceValue ?? runtimeState.kioskUrl;
@@ -1547,14 +1773,15 @@ async function main(): Promise<void> {
             phase: "ready",
             desiredRevision: runtimeState.desiredRevision,
           });
-          await runHomeAssistantAutomation({
+          await runConfiguredWebAutomation({
             chromiumUrl,
-            enabled: homeAssistantAutomationEnabled,
-            username: homeAssistantUser,
-            password: homeAssistantPass,
-            targetHost: homeAssistantHost,
-            startDelayMs: homeAssistantStartDelayMs,
-            stepDelayMs: homeAssistantStepDelayMs,
+            launchProfile: firstWebItem?.web?.launchProfile,
+            homeAssistantAutomationEnabled,
+            homeAssistantUser,
+            homeAssistantPass,
+            homeAssistantHost,
+            homeAssistantStartDelayMs,
+            homeAssistantStepDelayMs,
             inputBinary,
             allowInputAnyPlatform,
           });

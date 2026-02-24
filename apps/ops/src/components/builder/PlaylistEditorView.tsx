@@ -1,6 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
 import {
-  ActionIcon,
   Anchor,
   Breadcrumbs,
   Button,
@@ -15,18 +14,28 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconGripVertical, IconSearch, IconTrash } from "@tabler/icons-react";
+import { IconSearch } from "@tabler/icons-react";
 import type { Media } from "../../lib/controlApi";
-import type { DraftPlaylist, DraftStore } from "../../lib/opsModel";
+import {
+  generateAutoResourceId,
+  type DraftPlaylist,
+  type DraftStore,
+} from "../../lib/opsModel";
+import { ReorderableSequenceItem } from "./ReorderableSequenceItem";
 
 export type PlaylistEditorViewVm = {
   isMobile: boolean;
+  draftStore: DraftStore;
   playlistDraft: DraftPlaylist;
   setPlaylistDraft: Dispatch<SetStateAction<DraftPlaylist>>;
   closePlaylistEditorRoute: () => void;
   setMediaPickerOpen: (open: boolean) => void;
-  setDraftStore: Dispatch<SetStateAction<DraftStore>>;
+  syncDraftStoreToControlDb: (
+    nextStore: DraftStore,
+    options?: { successTitle?: string; successMessage?: string; quietSuccess?: boolean }
+  ) => Promise<boolean>;
   setSelectedPlaylistId: (id: string | null) => void;
+  existingPlaylistIds: string[];
   mergedMedia: Media[];
   playlistDragIndex: number | null;
   setPlaylistDragIndex: (index: number | null) => void;
@@ -38,12 +47,14 @@ export type PlaylistEditorViewVm = {
 export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
   const {
     isMobile,
+    draftStore,
     playlistDraft,
     setPlaylistDraft,
     closePlaylistEditorRoute,
     setMediaPickerOpen,
-    setDraftStore,
+    syncDraftStoreToControlDb,
     setSelectedPlaylistId,
+    existingPlaylistIds,
     mergedMedia,
     playlistDragIndex,
     setPlaylistDragIndex,
@@ -102,26 +113,27 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                                 Select Media
                               </Button>
                               <Button
-                                onClick={() => {
-                                  const playlistId = playlistDraft.id.trim();
-                                  if (!playlistId) {
-                                    notifications.show({
-                                      color: "red",
-                                      title: "Playlist ID required",
-                                      message:
-                                        "Provide a playlist ID before saving.",
-                                    });
-                                    return;
-                                  }
-                                  setDraftStore((store) => ({
-                                    ...store,
+                                onClick={async () => {
+                                  const playlistId =
+                                    playlistDraft.id.trim() ||
+                                    generateAutoResourceId(
+                                      "playlist",
+                                      playlistDraft.title || "playlist",
+                                      existingPlaylistIds
+                                    );
+                                  const nextStore: DraftStore = {
+                                    ...draftStore,
                                     playlists: [
-                                      ...store.playlists.filter(
+                                      ...draftStore.playlists.filter(
                                         (p) => p.id !== playlistId
                                       ),
                                       { ...playlistDraft, id: playlistId },
                                     ],
-                                  }));
+                                  };
+                                  const synced = await syncDraftStoreToControlDb(nextStore, {
+                                    quietSuccess: true,
+                                  });
+                                  if (!synced) return;
                                   setSelectedPlaylistId(playlistId);
                                   closePlaylistEditorRoute();
                                   notifications.show({
@@ -142,14 +154,6 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                           </Text>
     
                           <SimpleGrid cols={{ base: 1, md: 2 }}>
-                            <TextInput
-                              label="Playlist ID"
-                              value={playlistDraft.id}
-                              onChange={(e) => {
-                                const value = e.currentTarget.value;
-                                setPlaylistDraft((d) => ({ ...d, id: value }));
-                              }}
-                            />
                             <TextInput
                               label="Title"
                               value={playlistDraft.title}
@@ -209,10 +213,30 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                                       playlistDropIndex === index ? (
                                         <div className="ops-playlist-drop-indicator" />
                                       ) : null}
-                                      <Paper
-                                        withBorder
-                                        p="sm"
-                                        draggable
+                                      <ReorderableSequenceItem
+                                        index={index}
+                                        title={media?.title || id}
+                                        subtitle={media?.artist || "unknown artist"}
+                                        preview={
+                                          media?.thumbnailUrl ? (
+                                            <Image
+                                              src={media.thumbnailUrl}
+                                              alt={media.title || id}
+                                              radius="sm"
+                                              w={88}
+                                              h={52}
+                                              fit="cover"
+                                            />
+                                          ) : undefined
+                                        }
+                                        onRemove={() =>
+                                          setPlaylistDraft((d) => ({
+                                            ...d,
+                                            mediaIds: d.mediaIds.filter(
+                                              (_, i) => i !== index
+                                            ),
+                                          }))
+                                        }
                                         onDragStart={() => {
                                           setPlaylistDragIndex(index);
                                           setPlaylistDropIndex(index);
@@ -244,56 +268,7 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                                           setPlaylistDragIndex(null);
                                           setPlaylistDropIndex(null);
                                         }}
-                                      >
-                                        <Group
-                                          justify="space-between"
-                                          wrap="nowrap"
-                                        >
-                                          <Group gap="sm" wrap="nowrap">
-                                            <ActionIcon
-                                              variant="subtle"
-                                              color="gray"
-                                              title="Drag to reorder"
-                                              style={{ cursor: "grab" }}
-                                            >
-                                              <IconGripVertical size={16} />
-                                            </ActionIcon>
-                                            {media?.thumbnailUrl ? (
-                                              <Image
-                                                src={media.thumbnailUrl}
-                                                alt={media.title || id}
-                                                radius="sm"
-                                                w={88}
-                                                h={52}
-                                                fit="cover"
-                                              />
-                                            ) : null}
-                                            <Stack gap={1}>
-                                              <Text fw={700}>
-                                                {index + 1}. {id}
-                                              </Text>
-                                              <Text size="xs" c="dimmed">
-                                                {media?.title || "untitled"} •{" "}
-                                                {media?.artist || "unknown artist"}
-                                              </Text>
-                                            </Stack>
-                                          </Group>
-                                          <ActionIcon
-                                            color="red"
-                                            variant="light"
-                                            onClick={() =>
-                                              setPlaylistDraft((d) => ({
-                                                ...d,
-                                                mediaIds: d.mediaIds.filter(
-                                                  (_, i) => i !== index
-                                                ),
-                                              }))
-                                            }
-                                          >
-                                            <IconTrash size={14} />
-                                          </ActionIcon>
-                                        </Group>
-                                      </Paper>
+                                      />
                                     </div>
                                   );
                                 })}

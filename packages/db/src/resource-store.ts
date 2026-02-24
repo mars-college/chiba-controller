@@ -27,6 +27,7 @@ export async function importResources(args: {
           sourceValue: media.sourceValue,
           thumbnailUrl: media.thumbnailUrl ?? null,
           thumbnailObjectKey: media.thumbnailObjectKey ?? null,
+          webConfigJson: media.web ?? null,
           cache: media.cache,
           createdAt: now,
           updatedAt: now,
@@ -41,6 +42,7 @@ export async function importResources(args: {
             sourceValue: media.sourceValue,
             thumbnailUrl: media.thumbnailUrl ?? null,
             thumbnailObjectKey: media.thumbnailObjectKey ?? null,
+            webConfigJson: media.web ?? null,
             cache: media.cache,
             updatedAt: now,
           },
@@ -768,6 +770,12 @@ export async function getResourceSnapshot(args: {
       sourceValue: row.sourceValue,
       thumbnailUrl: row.thumbnailUrl ?? undefined,
       thumbnailObjectKey: row.thumbnailObjectKey ?? undefined,
+      web:
+        row.webConfigJson &&
+        typeof row.webConfigJson === "object" &&
+        !Array.isArray(row.webConfigJson)
+          ? row.webConfigJson
+          : undefined,
       cache: row.cache,
     })),
     playlists: playlistRows.map((row) => ({

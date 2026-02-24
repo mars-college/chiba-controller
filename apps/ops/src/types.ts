@@ -26,6 +26,9 @@ export type RemoteNodeStatus = {
   version: string | null
   ipReported: string | null
   kioskUrl?: string | null
+  displayMode?: string | null
+  displayOutput?: string | null
+  displayBackend?: string | null
 }
 
 export type FleetPi = {
@@ -164,6 +167,44 @@ export type OpsNodeBootstrapResponse = {
   stderr?: string
 }
 
+export type OpsNodeDisplayModePreset =
+  | 'native'
+  | '2160p30'
+  | '1440p60'
+  | '1080p60'
+  | '900p60'
+  | '720p60'
+
+export type OpsNodeDisplayModeRequest = {
+  dryRun?: boolean
+  mode?: OpsNodeDisplayModePreset
+  restartDisplayManager?: boolean
+  namespace?: string
+  registryId?: string
+  host?: string
+  sshUser?: string
+  sshPort?: number
+  sshPassword?: string
+  output?: string
+}
+
+export type OpsNodeDisplayModeResponse = {
+  ok: boolean
+  dryRun?: boolean
+  nodeId: string
+  namespace: string
+  registryId: string
+  host: string
+  mode: OpsNodeDisplayModePreset
+  command: string[]
+  code?: number | null
+  signal?: string | null
+  timedOut?: boolean
+  durationMs?: number
+  stdout?: string
+  stderr?: string
+}
+
 export type OpsProfile = {
   id: string
   file: string
@@ -243,6 +284,7 @@ export type OpsApplyTargetRequest = {
   showQr?: boolean
   playlist?: boolean
   nosplash?: boolean
+  remoteInput?: boolean
   hudMode?: 'always' | 'start' | 'never'
   hudShowSec?: number
   theme?: string
@@ -250,6 +292,37 @@ export type OpsApplyTargetRequest = {
   scale?: number
   textScale?: number
   hours?: number
+}
+
+export type DesiredScreenAssignment = {
+  screenId: string
+  namespace: string
+  revision: number
+  controllerId: string
+  operationId: string
+  target: {
+    kind: 'profile' | 'channel' | 'block' | 'playlist' | 'media'
+    id: string
+  }
+  launch: {
+    mode?: 'guide' | 'gallery'
+    lock?: boolean
+    qr?: boolean
+    nosplash?: boolean
+    remoteInput?: boolean
+    hudMode?: 'always' | 'start' | 'never'
+    hudSec?: number
+    theme?: string
+    displayRotate?: 0 | 90 | 180 | 270
+  }
+  updatedAt: number
+}
+
+export type DesiredScreenAssignmentsResponse = {
+  ok: boolean
+  namespace: string
+  count: number
+  items: DesiredScreenAssignment[]
 }
 
 export type OpsCatalogResponse = {

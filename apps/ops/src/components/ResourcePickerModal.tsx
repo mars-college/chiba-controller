@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -9,171 +9,202 @@ import {
   Modal,
   Paper,
   ScrollArea,
+  SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
   TextInput,
-} from '@mantine/core'
-import { IconSearch } from '@tabler/icons-react'
+} from "@mantine/core";
+import { IconSearch } from "@tabler/icons-react";
+import { PreviewTileCluster, type PreviewTile } from "./PreviewTileCluster";
 
 export type ResourcePickerItem = {
-  id: string
-  title: string
-  subtitle?: string
-  description?: string
-  thumbnailUrl?: string
-  previewUrl?: string
-  badge?: string
-  searchText?: string
-}
+  id: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  previewTiles?: PreviewTile[];
+  previewTilesTotalCount?: number;
+  badge?: string;
+  searchText?: string;
+};
+
+type KindOption = { value: string; label: string };
 
 type Props = {
-  opened: boolean
-  onClose: () => void
-  title: string
-  items: ResourcePickerItem[]
-  selectedIds: string[]
-  multi?: boolean
-  applyLabel?: string
-  onApply: (ids: string[]) => void
-}
-
-const CARD_HEIGHT = 262
-const GRID_GAP = 12
-const ROW_HEIGHT = CARD_HEIGHT + GRID_GAP
-const OVERSCAN_ROWS = 2
+  opened: boolean;
+  onClose: () => void;
+  title: string;
+  items: ResourcePickerItem[];
+  selectedIds: string[];
+  multi?: boolean;
+  applyLabel?: string;
+  onApply: (ids: string[]) => void;
+  kind?: string;
+  kindOptions?: KindOption[];
+  onKindChange?: (kind: string) => void;
+};
 
 function normalizeSearch(item: ResourcePickerItem): string {
-  if (item.searchText?.trim()) return item.searchText.toLowerCase()
+  if (item.searchText?.trim()) return item.searchText.toLowerCase();
   return [item.id, item.title, item.subtitle, item.description, item.badge]
     .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
+    .join(" ")
+    .toLowerCase();
+}
+
+function badgeColor(value: string): string {
+  const lower = value.toLowerCase();
+  if (lower === "video") return "cyan";
+  if (lower === "web") return "indigo";
+  if (lower === "playlist") return "teal";
+  if (lower === "channel") return "green";
+  if (lower === "block") return "orange";
+  if (lower === "profile") return "grape";
+  return "blue";
 }
 
 export function ResourcePickerModal(props: Props) {
-  const multi = props.multi !== false
-  const [query, setQuery] = useState('')
-  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set(props.selectedIds))
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
-  const [viewportWidth, setViewportWidth] = useState(0)
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const selectedIdsKey = useMemo(() => props.selectedIds.join('\u0001'), [props.selectedIds])
+  const multi = props.multi !== false;
+  const [query, setQuery] = useState("");
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(
+    new Set(props.selectedIds)
+  );
+  const [badgeFilter, setBadgeFilter] = useState<string>("all");
+  const [selectionFilter, setSelectionFilter] = useState<"all" | "selected">(
+    "all"
+  );
+  const selectedIdsKey = useMemo(
+    () => props.selectedIds.join("\u0001"),
+    [props.selectedIds]
+  );
 
   useEffect(() => {
-    if (!props.opened) return
-    setSelectedSet(new Set(props.selectedIds))
-    setQuery('')
-    setScrollTop(0)
-  }, [props.opened, selectedIdsKey])
+    if (!props.opened) return;
+    setSelectedSet(new Set(props.selectedIds));
+    setQuery("");
+    setBadgeFilter("all");
+    setSelectionFilter("all");
+  }, [props.opened, selectedIdsKey]);
 
-  useEffect(() => {
-    if (!props.opened) return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const measure = () => {
-      setViewportHeight(viewport.clientHeight)
-      setViewportWidth(viewport.clientWidth)
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(viewport)
-    return () => observer.disconnect()
-  }, [props.opened])
+  const badgeOptions = useMemo(() => {
+    const unique = Array.from(
+      new Set(
+        props.items
+          .map((item) => item.badge?.trim().toLowerCase() || "")
+          .filter((value) => value.length > 0)
+      )
+    ).sort();
+    return [
+      { value: "all", label: "All Types" },
+      ...unique.map((value) => ({
+        value,
+        label: value[0].toUpperCase() + value.slice(1),
+      })),
+    ];
+  }, [props.items]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return props.items
-    return props.items.filter((item) => normalizeSearch(item).includes(q))
-  }, [props.items, query])
+    const q = query.trim().toLowerCase();
+    return props.items.filter((item) => {
+      if (selectionFilter === "selected" && !selectedSet.has(item.id))
+        return false;
+      if (badgeFilter !== "all") {
+        const badge = item.badge?.trim().toLowerCase() || "";
+        if (badge !== badgeFilter) return false;
+      }
+      if (!q) return true;
+      return normalizeSearch(item).includes(q);
+    });
+  }, [badgeFilter, props.items, query, selectedSet, selectionFilter]);
 
   const selectedOrdered = useMemo(
     () => props.items.filter((item) => selectedSet.has(item.id)).map((item) => item.id),
     [props.items, selectedSet]
-  )
-
-  const columns = useMemo(() => {
-    if (viewportWidth >= 1408) return 4
-    if (viewportWidth >= 1200) return 3
-    if (viewportWidth >= 768) return 2
-    return 1
-  }, [viewportWidth])
-
-  const totalRows = useMemo(
-    () => Math.max(1, Math.ceil(filtered.length / columns)),
-    [columns, filtered.length]
-  )
-
-  const { startRow, endRow } = useMemo(() => {
-    const estimatedVisibleRows = Math.ceil((viewportHeight || ROW_HEIGHT) / ROW_HEIGHT)
-    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS)
-    const end = Math.min(
-      totalRows - 1,
-      Math.floor(scrollTop / ROW_HEIGHT) + estimatedVisibleRows + OVERSCAN_ROWS
-    )
-    return { startRow: start, endRow: end }
-  }, [scrollTop, totalRows, viewportHeight])
-
-  const visibleStartIndex = startRow * columns
-  const visibleEndIndex = Math.min(filtered.length, (endRow + 1) * columns)
-  const visibleItems = useMemo(
-    () => filtered.slice(visibleStartIndex, visibleEndIndex),
-    [filtered, visibleEndIndex, visibleStartIndex]
-  )
-  const topSpacerHeight = startRow * ROW_HEIGHT
-  const bottomSpacerHeight = Math.max(0, (totalRows - endRow - 1) * ROW_HEIGHT)
+  );
 
   const toggle = (id: string) => {
     setSelectedSet((prev) => {
-      const next = new Set(prev)
+      const next = new Set(prev);
       if (multi) {
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
       }
-      if (next.has(id)) return new Set()
-      return new Set([id])
-    })
-  }
+      if (next.has(id)) return new Set();
+      return new Set([id]);
+    });
+  };
 
   return (
     <Modal opened={props.opened} onClose={props.onClose} title={props.title} fullScreen>
-      <Stack>
+      <Stack gap="sm">
+        {props.kindOptions?.length ? (
+          <Select
+            label="Step 1: Target type"
+            value={props.kind || ""}
+            data={props.kindOptions}
+            onChange={(value) => {
+              if (!value || !props.onKindChange) return;
+              props.onKindChange(value);
+              setSelectedSet(new Set());
+            }}
+          />
+        ) : null}
+
         <TextInput
           leftSection={<IconSearch size={16} />}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Search by id/title/artist/description"
+          placeholder="Step 2: Search by id/title/artist/description"
         />
+        <Group grow>
+          <SegmentedControl
+            value={badgeFilter}
+            onChange={setBadgeFilter}
+            data={badgeOptions}
+          />
+          <SegmentedControl
+            value={selectionFilter}
+            onChange={(value) =>
+              setSelectionFilter((value as "all" | "selected") || "all")
+            }
+            data={[
+              { value: "all", label: "All" },
+              { value: "selected", label: "Selected" },
+            ]}
+          />
+        </Group>
+
         <Text size="xs" c="dimmed">
-          {filtered.length} result(s), {selectedOrdered.length} selected
+          Showing {filtered.length} result(s), {selectedOrdered.length} selected
         </Text>
-        <ScrollArea
-          h="62vh"
-          viewportRef={viewportRef}
-          onScrollPositionChange={(position) => setScrollTop(position.y)}
-        >
-          <Stack gap={0}>
-            <div style={{ height: topSpacerHeight }} />
-            <SimpleGrid cols={columns} spacing="sm">
-              {visibleItems.map((item) => {
-              const selected = selectedSet.has(item.id)
+
+        <ScrollArea h="62vh">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 4 }} spacing="sm">
+            {filtered.map((item) => {
+              const selected = selectedSet.has(item.id);
+              const badge = item.badge?.trim();
+              const renderVideoPreview =
+                (badge || "").toLowerCase() === "video" && Boolean(item.previewUrl);
               return (
                 <Card
                   key={item.id}
                   withBorder
                   p="sm"
                   radius="md"
-                  className={`ops-media-card${selected ? ' is-selected' : ''}`}
-                  style={{ cursor: 'pointer', height: CARD_HEIGHT }}
+                  className={`ops-media-card${selected ? " is-selected" : ""}`}
+                  style={{ cursor: "pointer" }}
                   onClick={() => toggle(item.id)}
                 >
                   <Stack gap="sm">
                     <Group justify="space-between" align="center" wrap="nowrap">
-                      {item.badge ? (
-                        <Badge variant="light" color="cyan">
-                          {item.badge}
+                      {badge ? (
+                        <Badge variant="light" color={badgeColor(badge)}>
+                          {badge}
                         </Badge>
                       ) : (
                         <span />
@@ -185,7 +216,13 @@ export function ResourcePickerModal(props: Props) {
                       />
                     </Group>
 
-                    {item.previewUrl ? (
+                    {item.previewTiles && item.previewTiles.length > 0 ? (
+                      <PreviewTileCluster
+                        tiles={item.previewTiles}
+                        totalCount={item.previewTilesTotalCount}
+                        height={160}
+                      />
+                    ) : renderVideoPreview ? (
                       <video
                         className="ops-media-thumb-video"
                         muted
@@ -195,25 +232,25 @@ export function ResourcePickerModal(props: Props) {
                         poster={item.thumbnailUrl}
                         src={item.previewUrl}
                         onMouseEnter={(event) => {
-                          void event.currentTarget.play().catch(() => {})
+                          void event.currentTarget.play().catch(() => {});
                         }}
                         onMouseLeave={(event) => {
-                          event.currentTarget.pause()
-                          event.currentTarget.currentTime = 0
+                          event.currentTarget.pause();
+                          event.currentTarget.currentTime = 0;
                         }}
                       />
-                    ) : item.thumbnailUrl ? (
+                    ) : item.previewUrl || item.thumbnailUrl ? (
                       <Image
-                        src={item.thumbnailUrl}
+                        src={item.previewUrl || item.thumbnailUrl}
                         alt={item.title || item.id}
-                        h={120}
+                        h={160}
                         fit="cover"
                         radius="sm"
                         loading="lazy"
                         decoding="async"
                       />
                     ) : (
-                      <Paper withBorder h={120} radius="sm" p="sm">
+                      <Paper withBorder h={160} radius="sm" p="sm">
                         <Group justify="center" align="center" h="100%">
                           <Text size="sm" c="dimmed">
                             No preview
@@ -231,18 +268,26 @@ export function ResourcePickerModal(props: Props) {
                           {item.subtitle}
                         </Text>
                       ) : null}
-                      <Text size="xs" c="dimmed" lineClamp={1}>
-                        {item.description || item.id}
-                      </Text>
+                      {item.description ? (
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {item.description}
+                        </Text>
+                      ) : null}
                     </Stack>
                   </Stack>
                 </Card>
-              )
-              })}
-            </SimpleGrid>
-            <div style={{ height: bottomSpacerHeight }} />
-          </Stack>
+              );
+            })}
+          </SimpleGrid>
+          {filtered.length === 0 ? (
+            <Paper withBorder p="lg" mt="sm">
+              <Text c="dimmed" size="sm">
+                No targets match the current search/filter set.
+              </Text>
+            </Paper>
+          ) : null}
         </ScrollArea>
+
         <Paper withBorder p="sm">
           <Group justify="space-between" align="center">
             <Text size="sm" c="dimmed">
@@ -255,16 +300,19 @@ export function ResourcePickerModal(props: Props) {
               <Button
                 disabled={selectedOrdered.length === 0}
                 onClick={() => {
-                  props.onApply(selectedOrdered)
-                  props.onClose()
+                  props.onApply(selectedOrdered);
+                  props.onClose();
                 }}
               >
-                {props.applyLabel || (multi ? `Apply (${selectedOrdered.length})` : 'Select')}
+                {props.applyLabel ||
+                  (multi
+                    ? `Apply (${selectedOrdered.length})`
+                    : "Use selected target")}
               </Button>
             </Group>
           </Group>
         </Paper>
       </Stack>
     </Modal>
-  )
+  );
 }

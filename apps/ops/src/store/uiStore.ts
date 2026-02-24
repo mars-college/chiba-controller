@@ -5,6 +5,9 @@ export type BuilderMode =
   | "media"
   | "mediaDetail"
   | "playlistEditor"
+  | "blockEditor"
+  | "channelEditor"
+  | "profileEditor"
   | "mediaTable"
   | "playlist"
   | "block"
@@ -20,6 +23,7 @@ export type MediaLibrarySection =
   | "channels"
   | "profiles";
 export type PlaylistLibraryView = "cards" | "table";
+export type ContainerLibraryView = "cards" | "table";
 
 type OpsUiState = {
   controlOpen: boolean;
@@ -40,6 +44,15 @@ type OpsUiState = {
 
   playlistLibraryView: PlaylistLibraryView;
   setPlaylistLibraryView: (value: PlaylistLibraryView) => void;
+
+  blockLibraryView: ContainerLibraryView;
+  setBlockLibraryView: (value: ContainerLibraryView) => void;
+
+  channelLibraryView: ContainerLibraryView;
+  setChannelLibraryView: (value: ContainerLibraryView) => void;
+
+  profileLibraryView: ContainerLibraryView;
+  setProfileLibraryView: (value: ContainerLibraryView) => void;
 
   mediaPickerOpen: boolean;
   setMediaPickerOpen: (value: boolean) => void;
@@ -76,6 +89,15 @@ export const useOpsUiStore = create<OpsUiState>((set) => ({
 
   playlistLibraryView: "cards",
   setPlaylistLibraryView: (value) => set({ playlistLibraryView: value }),
+
+  blockLibraryView: "cards",
+  setBlockLibraryView: (value) => set({ blockLibraryView: value }),
+
+  channelLibraryView: "cards",
+  setChannelLibraryView: (value) => set({ channelLibraryView: value }),
+
+  profileLibraryView: "cards",
+  setProfileLibraryView: (value) => set({ profileLibraryView: value }),
 
   mediaPickerOpen: false,
   setMediaPickerOpen: (value) => set({ mediaPickerOpen: value }),

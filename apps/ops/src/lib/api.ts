@@ -1,4 +1,5 @@
 import type {
+  DesiredScreenAssignmentsResponse,
   FleetPi,
   FleetPiHealth,
   FleetResponse,
@@ -10,6 +11,8 @@ import type {
   OpsNodeRecord,
   OpsNodeBootstrapRequest,
   OpsNodeBootstrapResponse,
+  OpsNodeDisplayModeRequest,
+  OpsNodeDisplayModeResponse,
   OpsNodesResponse,
   OpsProfilesResponse,
 } from '../types'
@@ -60,6 +63,23 @@ export async function fetchFleet(signal?: AbortSignal): Promise<FleetResponse> {
     throw new Error(`fleet_fetch_failed:${res.status}:${text.slice(0, 120)}`)
   }
   return (await res.json()) as FleetResponse
+}
+
+export async function fetchDesiredScreenAssignments(opts?: {
+  namespace?: string
+  screenId?: string
+  signal?: AbortSignal
+}): Promise<DesiredScreenAssignmentsResponse> {
+  const params = new URLSearchParams()
+  if (opts?.namespace?.trim()) params.set('namespace', opts.namespace.trim())
+  if (opts?.screenId?.trim()) params.set('screenId', opts.screenId.trim())
+  const path = `/api/v1/screen-assignments${params.toString() ? `?${params.toString()}` : ''}`
+  const res = await fetch(path, { signal: opts?.signal })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`screen_assignments_fetch_failed:${res.status}:${text.slice(0, 240)}`)
+  }
+  return (await res.json()) as DesiredScreenAssignmentsResponse
 }
 
 export async function fetchPiHealth(id: string, signal?: AbortSignal): Promise<FleetPiHealth> {
@@ -193,6 +213,24 @@ export async function bootstrapOpsNode(
   return parseJsonResponseOrThrow<OpsNodeBootstrapResponse>({
     res,
     errorPrefix: 'node_bootstrap_failed',
+    maxErrorChars: 600,
+  })
+}
+
+export async function setOpsNodeDisplayMode(
+  nodeId: string,
+  payload: OpsNodeDisplayModeRequest
+): Promise<OpsNodeDisplayModeResponse> {
+  const id = nodeId.trim()
+  if (!id) throw new Error('node_display_mode_failed:400:node_id_required')
+  const res = await fetch(`/api/ops/nodes/${encodeURIComponent(id)}/display-mode`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return parseJsonResponseOrThrow<OpsNodeDisplayModeResponse>({
+    res,
+    errorPrefix: 'node_display_mode_failed',
     maxErrorChars: 600,
   })
 }
@@ -352,6 +390,7 @@ export async function applyTarget(opts: OpsApplyTargetRequest): Promise<OpsApply
       showQr: opts.showQr,
       playlist: opts.playlist,
       nosplash: opts.nosplash,
+      remoteInput: opts.remoteInput,
       hudMode: opts.hudMode,
       hudShowSec: opts.hudShowSec,
       theme: opts.theme,
