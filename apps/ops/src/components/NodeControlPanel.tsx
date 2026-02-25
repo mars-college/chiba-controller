@@ -56,6 +56,8 @@ type NodeControlPanelProps = {
   bootstrapBusy: boolean;
   bootstrapError: string | null;
   bootstrapResult: OpsNodeBootstrapResponse | null;
+  bootstrapStdout: string;
+  bootstrapStderr: string;
   onSetDisplayMode: (payload: {
     mode: OpsNodeDisplayModePreset;
     restartDisplayManager?: boolean;
@@ -137,6 +139,8 @@ export function NodeControlPanel({
   bootstrapBusy,
   bootstrapError,
   bootstrapResult,
+  bootstrapStdout,
+  bootstrapStderr,
   onSetDisplayMode,
   displayModeBusy,
   displayModeError,
@@ -229,6 +233,9 @@ export function NodeControlPanel({
       dryRun: displayDryRun,
     });
   };
+
+  const bootstrapStdoutValue = bootstrapResult?.stdout ?? bootstrapStdout;
+  const bootstrapStderrValue = bootstrapResult?.stderr ?? bootstrapStderr;
 
   return (
     <Paper withBorder p="md" radius="md">
@@ -448,24 +455,24 @@ export function NodeControlPanel({
                 value={bootstrapResult.command.join(" ")}
               />
             ) : null}
-            {bootstrapResult?.stdout ? (
+            {bootstrapStdoutValue ? (
               <Textarea
-                label="Bootstrap stdout"
+                label={bootstrapBusy ? "Bootstrap stdout (live)" : "Bootstrap stdout"}
                 minRows={4}
                 maxRows={12}
                 autosize
                 readOnly
-                value={bootstrapResult.stdout}
+                value={bootstrapStdoutValue}
               />
             ) : null}
-            {bootstrapResult?.stderr ? (
+            {bootstrapStderrValue ? (
               <Textarea
-                label="Bootstrap stderr"
+                label={bootstrapBusy ? "Bootstrap stderr (live)" : "Bootstrap stderr"}
                 minRows={4}
                 maxRows={12}
                 autosize
                 readOnly
-                value={bootstrapResult.stderr}
+                value={bootstrapStderrValue}
               />
             ) : null}
           </Stack>

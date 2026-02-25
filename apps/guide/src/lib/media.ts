@@ -1,5 +1,14 @@
 import type { MediaKind } from "../types/guide";
 
+function parseKindHint(value: string | null): MediaKind | null {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (raw === "image") return "image";
+  if (raw === "video") return "video";
+  if (raw === "audio") return "audio";
+  if (raw === "iframe") return "iframe";
+  return null;
+}
+
 function inferKindFromPathLike(value: string | null | undefined): MediaKind | null {
   if (!value) return null;
   const cleaned = value.split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
@@ -8,6 +17,10 @@ function inferKindFromPathLike(value: string | null | undefined): MediaKind | nu
   if (/\.(mp4|webm|ogg|m4v|mov|mkv|m3u8)$/i.test(cleaned)) return "video";
   if (/\.(mp3|wav|aac|m4a|flac|oga)$/i.test(cleaned)) return "audio";
   return null;
+}
+
+export function inferMediaKindFromLabel(value: string | null | undefined): MediaKind | null {
+  return inferKindFromPathLike(value);
 }
 
 function safeDecode(value: string | null): string | null {
@@ -25,6 +38,12 @@ export function getMediaKind(url: string): MediaKind {
 
   try {
     const parsed = new URL(url, window.location.origin);
+    const hinted =
+      parseKindHint(parsed.searchParams.get("k")) ??
+      parseKindHint(parsed.searchParams.get("kind")) ??
+      parseKindHint(parsed.searchParams.get("mediaKind"));
+    if (hinted) return hinted;
+
     const fromPath = inferKindFromPathLike(parsed.pathname);
     if (fromPath) return fromPath;
 
@@ -33,6 +52,9 @@ export function getMediaKind(url: string): MediaKind {
       safeDecode(parsed.searchParams.get("path")),
       safeDecode(parsed.searchParams.get("url")),
       safeDecode(parsed.searchParams.get("src")),
+      safeDecode(parsed.searchParams.get("filename")),
+      safeDecode(parsed.searchParams.get("name")),
+      safeDecode(parsed.searchParams.get("title")),
     ];
     for (const candidate of queryCandidates) {
       const inferred = inferKindFromPathLike(candidate);

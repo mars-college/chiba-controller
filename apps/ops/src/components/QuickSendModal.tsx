@@ -40,6 +40,16 @@ type Props = {
 };
 
 export function QuickSendModal(props: Props) {
+  const visibleRowIds = props.rows.map((row) => row.id);
+  const selectedNodeIds = new Set(props.nodeIds);
+  const selectedVisibleCount = visibleRowIds.filter((id) =>
+    selectedNodeIds.has(id)
+  ).length;
+  const allVisibleSelected =
+    visibleRowIds.length > 0 && selectedVisibleCount === visibleRowIds.length;
+  const someVisibleSelected =
+    selectedVisibleCount > 0 && selectedVisibleCount < visibleRowIds.length;
+
   return (
     <Modal
       opened={props.opened}
@@ -54,6 +64,37 @@ export function QuickSendModal(props: Props) {
           value={props.query}
           onChange={(event) => props.setQuery(event.currentTarget.value)}
         />
+        <Group justify="space-between" align="center" wrap="nowrap">
+          <Checkbox
+            label={`Select all (${props.rows.length})`}
+            checked={allVisibleSelected}
+            indeterminate={someVisibleSelected}
+            disabled={props.rows.length === 0}
+            onChange={(event) => {
+              const shouldSelect = event.currentTarget.checked;
+              props.setNodeIds((prev) => {
+                if (shouldSelect) {
+                  return Array.from(new Set([...prev, ...visibleRowIds]));
+                }
+                const hidden = new Set(visibleRowIds);
+                return prev.filter((id) => !hidden.has(id));
+              });
+            }}
+          />
+          <Button
+            variant="subtle"
+            size="compact-sm"
+            disabled={selectedVisibleCount === 0}
+            onClick={() =>
+              props.setNodeIds((prev) => {
+                const hidden = new Set(visibleRowIds);
+                return prev.filter((id) => !hidden.has(id));
+              })
+            }
+          >
+            Clear visible
+          </Button>
+        </Group>
         <ScrollArea h={320}>
           <Stack gap="xs">
             {props.rows.map((row) => {

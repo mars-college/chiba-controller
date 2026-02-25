@@ -191,27 +191,68 @@ if [[ -n "$SSH_PASSWORD" ]] && ! command -v sshpass >/dev/null 2>&1; then
   exit 1
 fi
 
+SSH_RETRIES="${CHIBA3_BOOTSTRAP_SSH_RETRIES:-3}"
+SSH_RETRY_DELAY_SECONDS="${CHIBA3_BOOTSTRAP_SSH_RETRY_DELAY_SECONDS:-2}"
+SSH_COMMON_OPTS=(
+  -o StrictHostKeyChecking=accept-new
+  -o ConnectTimeout=12
+  -o ConnectionAttempts=2
+  -o ServerAliveInterval=10
+  -o ServerAliveCountMax=3
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
+)
+
+run_with_retries() {
+  local label="$1"
+  shift
+  local attempt=1
+  local rc=0
+  while [[ "$attempt" -le "$SSH_RETRIES" ]]; do
+    if "$@"; then
+      return 0
+    fi
+    rc=$?
+    if [[ "$attempt" -lt "$SSH_RETRIES" ]]; then
+      echo "${label}: attempt ${attempt}/${SSH_RETRIES} failed (exit ${rc}); retrying in ${SSH_RETRY_DELAY_SECONDS}s..." >&2
+      sleep "$SSH_RETRY_DELAY_SECONDS"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return "$rc"
+}
+
 ssh_cmd() {
   if [[ -n "$SSH_PASSWORD" ]]; then
-    SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
-      -o StrictHostKeyChecking=accept-new \
+    run_with_retries "ssh" env SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
+      "${SSH_COMMON_OPTS[@]}" \
       -o PreferredAuthentications=password \
       -o PubkeyAuthentication=no \
       -p "$SSH_PORT" \
       "$@"
     return
   fi
-  ssh -o StrictHostKeyChecking=accept-new -p "$SSH_PORT" "$@"
+  run_with_retries "ssh" ssh "${SSH_COMMON_OPTS[@]}" -p "$SSH_PORT" "$@"
 }
 
 rsync_cmd() {
+  local rsync_ssh=""
   if [[ -n "$SSH_PASSWORD" ]]; then
-    SSHPASS="$SSH_PASSWORD" rsync \
-      -e "sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -p ${SSH_PORT}" \
+    rsync_ssh="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o ConnectionAttempts=2 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -o PreferredAuthentications=password -o PubkeyAuthentication=no -p ${SSH_PORT}"
+    run_with_retries "rsync" env SSHPASS="$SSH_PASSWORD" rsync \
+      --timeout=45 \
+      --contimeout=15 \
+      -e "$rsync_ssh" \
       "$@"
     return
   fi
-  rsync -e "ssh -o StrictHostKeyChecking=accept-new -p ${SSH_PORT}" "$@"
+  rsync_ssh="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o ConnectionAttempts=2 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -p ${SSH_PORT}"
+  run_with_retries "rsync" rsync \
+    --timeout=45 \
+    --contimeout=15 \
+    -e "$rsync_ssh" \
+    "$@"
 }
 
 TARGET_HOST=""

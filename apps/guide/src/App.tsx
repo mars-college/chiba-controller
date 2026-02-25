@@ -71,7 +71,7 @@ import {
   normalizeChannelNumber,
 } from "./lib/guide";
 import { createLogger } from "./lib/logger";
-import { getAppIdFromUrl, getMediaKind } from "./lib/media";
+import { getAppIdFromUrl, getMediaKind, inferMediaKindFromLabel } from "./lib/media";
 import {
   appendQueryParam,
   getFirstParam,
@@ -1218,10 +1218,25 @@ function App() {
   const hasAppControls =
     Boolean(effectiveRemoteAppId) &&
     (effectiveRemoteControls.includes("app") || Boolean(requestedRemoteAppId));
-  const playerKind = useMemo(
-    () => (playerUrl ? getMediaKind(playerUrl) : null),
-    [playerUrl]
-  );
+  const playerKind = useMemo(() => {
+    if (!playerUrl) return null;
+    const fromUrl = getMediaKind(playerUrl);
+    if (fromUrl !== "iframe") return fromUrl;
+    const titleHint =
+      inferMediaKindFromLabel(selectedProgram?.title) ??
+      inferMediaKindFromLabel(playerMeta?.title);
+    if (titleHint) return titleHint;
+    const subtitleHint =
+      inferMediaKindFromLabel(selectedProgram?.subtitle) ??
+      inferMediaKindFromLabel(playerMeta?.subtitle);
+    return subtitleHint ?? fromUrl;
+  }, [
+    playerUrl,
+    selectedProgram?.title,
+    selectedProgram?.subtitle,
+    playerMeta?.title,
+    playerMeta?.subtitle,
+  ]);
   const {
     hasPreviewMedia,
     posterImageReady,

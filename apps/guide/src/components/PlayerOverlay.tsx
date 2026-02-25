@@ -68,6 +68,7 @@ export function PlayerOverlay({
   const didSeekRef = useRef(false);
   const onMediaEndedRef = useRef(onMediaEnded);
   const [ambientOffsetSec, setAmbientOffsetSec] = useState<number | null>(null);
+  const [sniffedKind, setSniffedKind] = useState<MediaKind | null>(null);
 
   useEffect(() => {
     onMediaEndedRef.current = onMediaEnded;
@@ -92,27 +93,82 @@ export function PlayerOverlay({
     const inferred = inferMediaKind(playerUrl);
     return playerKind === "iframe" && inferred !== "iframe" ? inferred : playerKind ?? inferred;
   }, [playerKind, playerUrl]);
+  const resolvedPlayerKind = sniffedKind ?? effectivePlayerKind;
+
+  useEffect(() => {
+    setSniffedKind(null);
+  }, [playerUrl]);
+
+  useEffect(() => {
+    if (!playerUrl) return;
+    if (effectivePlayerKind && effectivePlayerKind !== "iframe") return;
+    let cancelled = false;
+    const ac = new AbortController();
+    const inferFromContentType = (contentType: string | null): MediaKind | null => {
+      const ct = (contentType ?? "").toLowerCase();
+      if (!ct) return null;
+      if (ct.startsWith("video/")) return "video";
+      if (ct.startsWith("image/")) return "image";
+      if (ct.startsWith("audio/")) return "audio";
+      return null;
+    };
+    const sniffKind = async () => {
+      const attempts: Array<{ method: "HEAD" | "GET"; headers?: Record<string, string> }> = [
+        { method: "HEAD" },
+        { method: "GET", headers: { Range: "bytes=0-0" } },
+      ];
+      for (const attempt of attempts) {
+        try {
+          const response = await fetch(playerUrl, {
+            method: attempt.method,
+            headers: attempt.headers,
+            signal: ac.signal,
+          });
+          const inferred = inferFromContentType(response.headers.get("content-type"));
+          if (inferred) {
+            if (!cancelled) {
+              setSniffedKind(inferred);
+              log.debug("kind-sniffed", {
+                url: playerUrl,
+                method: attempt.method,
+                contentType: response.headers.get("content-type"),
+                inferred,
+              });
+            }
+            return;
+          }
+        } catch {
+          // Ignore network/CORS failures and keep iframe fallback.
+        }
+      }
+    };
+    void sniffKind();
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [playerUrl, effectivePlayerKind]);
 
   const playlistTimedAdvanceFallback = useMemo(() => {
     // In gallery+playlist mode, unknown/iframe kinds should still advance.
     // This prevents "stuck on one frame" when a URL extension cannot be inferred.
     if (!playlistForcesNoLoop) return false;
-    return effectivePlayerKind === "iframe" || !effectivePlayerKind;
-  }, [playlistForcesNoLoop, effectivePlayerKind]);
+    return resolvedPlayerKind === "iframe" || !resolvedPlayerKind;
+  }, [playlistForcesNoLoop, resolvedPlayerKind]);
 
   const effectiveLoopVideo = playlistForcesNoLoop ? false : loopVideo;
   useEffect(() => {
     if (!playerUrl) return;
-    log.info("mount", { url: playerUrl, kind: effectivePlayerKind, open: playerOpen });
+    log.info("mount", { url: playerUrl, kind: resolvedPlayerKind, open: playerOpen });
     return () => {
-      log.info("unmount", { url: playerUrl, kind: effectivePlayerKind });
+      log.info("unmount", { url: playerUrl, kind: resolvedPlayerKind });
     };
-  }, [playerUrl, effectivePlayerKind, playerOpen]);
+  }, [playerUrl, resolvedPlayerKind, playerOpen]);
 
   useEffect(() => {
     if (!playerUrl) return;
-    log.debug("state", { url: playerUrl, kind: effectivePlayerKind, open: playerOpen });
-  }, [playerUrl, effectivePlayerKind, playerOpen]);
+    log.debug("state", { url: playerUrl, kind: resolvedPlayerKind, open: playerOpen });
+  }, [playerUrl, resolvedPlayerKind, playerOpen]);
 
   const iframePolicy = useMemo(() => {
     if (!playerUrl) {
@@ -186,7 +242,7 @@ export function PlayerOverlay({
       video.volume = Math.min(1, Math.max(0, masterVolume));
       video.muted = masterMuted || !playerOpen;
     }
-  }, [masterVolume, masterMuted, playerOpen, effectivePlayerKind]);
+  }, [masterVolume, masterMuted, playerOpen, resolvedPlayerKind]);
 
   useEffect(() => {
     const audio = ambientAudioRef.current;
@@ -226,33 +282,50 @@ export function PlayerOverlay({
     // Best-effort autoplay: some Chromium builds can still be finicky in kiosk mode.
     if (!playerOpen) return;
     if (!playerUrl) return;
-    if (effectivePlayerKind !== "video" && effectivePlayerKind !== "audio") return;
+    if (resolvedPlayerKind !== "video" && resolvedPlayerKind !== "audio") return;
 
-    const target = effectivePlayerKind === "video" ? mediaVideoRef.current : mediaAudioRef.current;
+    const target = resolvedPlayerKind === "video" ? mediaVideoRef.current : mediaAudioRef.current;
     if (!target) return;
 
     let cancelled = false;
-    const tryPlay = async () => {
+    const desiredMuted = masterMuted || !playerOpen;
+    const tryPlay = async (reason: "mount" | "canplay" | "loadeddata") => {
+      // For autoplay reliability, start muted and restore desired mute after play resolves.
+      const restoreMuted = desiredMuted;
+      if (!desiredMuted) {
+        target.muted = true;
+      }
       try {
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
         await target.play();
+        if (!cancelled) {
+          target.muted = restoreMuted;
+          log.debug("autoplay-ok", { url: playerUrl, kind: resolvedPlayerKind, reason });
+        }
       } catch (err) {
         if (cancelled) return;
-        log.warn("autoplay-failed", { url: playerUrl, kind: effectivePlayerKind, err: String(err) });
+        target.muted = restoreMuted;
+        log.warn("autoplay-failed", { url: playerUrl, kind: resolvedPlayerKind, err: String(err) });
       }
     };
+
+    const onCanPlay = () => void tryPlay("canplay");
+    const onLoadedData = () => void tryPlay("loadeddata");
+    target.addEventListener("canplay", onCanPlay);
+    target.addEventListener("loadeddata", onLoadedData);
     // Defer one tick so `muted` props have applied.
-    const t = window.setTimeout(() => void tryPlay(), 0);
+    const t = window.setTimeout(() => void tryPlay("mount"), 0);
     return () => {
       cancelled = true;
+      target.removeEventListener("canplay", onCanPlay);
+      target.removeEventListener("loadeddata", onLoadedData);
       window.clearTimeout(t);
     };
-  }, [playerOpen, playerUrl, effectivePlayerKind]);
+  }, [playerOpen, playerUrl, resolvedPlayerKind, masterMuted]);
 
   useEffect(() => {
     if (!playerOpen) return;
     if (!playerUrl) return;
-    if (effectivePlayerKind !== "image" && !playlistTimedAdvanceFallback) return;
+    if (resolvedPlayerKind !== "image" && !playlistTimedAdvanceFallback) return;
     const sec =
       typeof imageDurationSec === "number" && imageDurationSec > 0
         ? imageDurationSec
@@ -263,7 +336,7 @@ export function PlayerOverlay({
     return () => window.clearTimeout(timer);
   }, [
     imageDurationSec,
-    effectivePlayerKind,
+    resolvedPlayerKind,
     playlistTimedAdvanceFallback,
     playerOpen,
     playerUrl,
@@ -291,7 +364,7 @@ export function PlayerOverlay({
       aria-hidden={!playerOpen}
     >
       <div className="player-surface" ref={surfaceRef}>
-        {effectivePlayerKind === "image" ? (
+        {resolvedPlayerKind === "image" ? (
           <img
             className="player-media player-image"
             src={playerUrl}
@@ -305,13 +378,13 @@ export function PlayerOverlay({
               onMediaError?.("image", playerUrl);
             }}
           />
-        ) : effectivePlayerKind === "video" ? (
+        ) : resolvedPlayerKind === "video" ? (
           <video
             className="player-media player-video"
             src={playerUrl}
             autoPlay
             loop={effectiveLoopVideo}
-            muted={masterMuted || !playerOpen}
+            muted
             playsInline
             ref={mediaVideoRef}
             onLoadedData={() => {
@@ -326,7 +399,7 @@ export function PlayerOverlay({
               onMediaError?.("video", playerUrl);
             }}
           />
-        ) : effectivePlayerKind === "audio" ? (
+        ) : resolvedPlayerKind === "audio" ? (
           <div className="player-audio">
             <div className="player-audio-visual" />
             <audio
@@ -334,7 +407,7 @@ export function PlayerOverlay({
               src={playerUrl}
               autoPlay
               loop
-              muted={masterMuted || !playerOpen}
+              muted
               onCanPlay={() => {
                 log.info("loaded", { url: playerUrl, kind: "audio" });
                 setPlayerReady(true);

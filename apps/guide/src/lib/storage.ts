@@ -31,7 +31,8 @@ export function loadAudioSettings(): AudioSettings {
       typeof parsed.volume === "number" && Number.isFinite(parsed.volume)
         ? parsed.volume
         : AUDIO_VOLUME_DEFAULT;
-    return { volume, muted: false };
+    const muted = typeof parsed.muted === "boolean" ? parsed.muted : false;
+    return { volume, muted };
   } catch {
     return { volume: AUDIO_VOLUME_DEFAULT, muted: false };
   }

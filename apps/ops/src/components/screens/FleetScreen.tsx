@@ -100,6 +100,8 @@ export type FleetScreenVm = {
   nodeBootstrapBusy: boolean;
   nodeBootstrapError: string | null;
   nodeBootstrapResult: OpsNodeBootstrapResponse | null;
+  nodeBootstrapStdout: string;
+  nodeBootstrapStderr: string;
   setNodeDisplayMode: (payload: {
     mode: "native" | "2160p30" | "1440p60" | "1080p60" | "900p60" | "720p60";
     restartDisplayManager?: boolean;
@@ -223,6 +225,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     nodeBootstrapBusy,
     nodeBootstrapError,
     nodeBootstrapResult,
+    nodeBootstrapStdout,
+    nodeBootstrapStderr,
     setNodeDisplayMode,
     nodeDisplayModeBusy,
     nodeDisplayModeError,
@@ -835,6 +839,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     bootstrapBusy={nodeBootstrapBusy}
                     bootstrapError={nodeBootstrapError}
                     bootstrapResult={nodeBootstrapResult}
+                    bootstrapStdout={nodeBootstrapStdout}
+                    bootstrapStderr={nodeBootstrapStderr}
                     onSetDisplayMode={setNodeDisplayMode}
                     displayModeBusy={nodeDisplayModeBusy}
                     displayModeError={nodeDisplayModeError}

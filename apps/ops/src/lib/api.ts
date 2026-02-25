@@ -217,6 +217,112 @@ export async function bootstrapOpsNode(
   })
 }
 
+export async function bootstrapOpsNodeStream(
+  nodeId: string,
+  payload: OpsNodeBootstrapRequest,
+  handlers: {
+    onStart?: (event: { command?: string[]; nodeId?: string; namespace?: string; registryId?: string }) => void
+    onStdout?: (chunk: string) => void
+    onStderr?: (chunk: string) => void
+  }
+): Promise<OpsNodeBootstrapResponse> {
+  const id = nodeId.trim()
+  if (!id) throw new Error('node_bootstrap_failed:400:node_id_required')
+  const res = await fetch(`/api/ops/nodes/${encodeURIComponent(id)}/bootstrap`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...payload, stream: true }),
+  })
+  if (!res.ok) {
+    return parseJsonResponseOrThrow<OpsNodeBootstrapResponse>({
+      res,
+      errorPrefix: 'node_bootstrap_failed',
+      maxErrorChars: 600,
+    })
+  }
+  const contentType = (res.headers.get('content-type') || '').toLowerCase()
+  if (contentType.includes('application/json')) {
+    return parseJsonResponseOrThrow<OpsNodeBootstrapResponse>({
+      res,
+      errorPrefix: 'node_bootstrap_failed',
+      maxErrorChars: 600,
+    })
+  }
+  if (!res.body) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`node_bootstrap_failed:${res.status}:${text.slice(0, 600) || 'empty_stream'}`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResult: OpsNodeBootstrapResponse | null = null
+
+  const flushLine = (line: string) => {
+    if (!line) return
+    let event: unknown
+    try {
+      event = JSON.parse(line)
+    } catch {
+      return
+    }
+    if (!event || typeof event !== 'object') return
+    const typed = event as {
+      type?: string
+      chunk?: unknown
+      command?: string[]
+      nodeId?: string
+      namespace?: string
+      registryId?: string
+      result?: OpsNodeBootstrapResponse
+    }
+    if (typed.type === 'start') {
+      handlers.onStart?.({
+        command: Array.isArray(typed.command) ? typed.command : undefined,
+        nodeId: typeof typed.nodeId === 'string' ? typed.nodeId : undefined,
+        namespace: typeof typed.namespace === 'string' ? typed.namespace : undefined,
+        registryId: typeof typed.registryId === 'string' ? typed.registryId : undefined,
+      })
+      return
+    }
+    if (typed.type === 'stdout' && typeof typed.chunk === 'string') {
+      handlers.onStdout?.(typed.chunk)
+      return
+    }
+    if (typed.type === 'stderr' && typeof typed.chunk === 'string') {
+      handlers.onStderr?.(typed.chunk)
+      return
+    }
+    if (typed.type === 'result' && typed.result && typeof typed.result === 'object') {
+      finalResult = typed.result
+      return
+    }
+    if (
+      typeof (event as { ok?: unknown }).ok === 'boolean' &&
+      typeof (event as { nodeId?: unknown }).nodeId === 'string'
+    ) {
+      finalResult = event as OpsNodeBootstrapResponse
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    let lineBreak = buffer.indexOf('\n')
+    while (lineBreak >= 0) {
+      const line = buffer.slice(0, lineBreak).trim()
+      buffer = buffer.slice(lineBreak + 1)
+      flushLine(line)
+      lineBreak = buffer.indexOf('\n')
+    }
+    if (done) break
+  }
+  const trailing = buffer.trim()
+  if (trailing) flushLine(trailing)
+  if (finalResult) return finalResult
+  throw new Error('node_bootstrap_failed:500:stream_result_missing')
+}
+
 export async function setOpsNodeDisplayMode(
   nodeId: string,
   payload: OpsNodeDisplayModeRequest

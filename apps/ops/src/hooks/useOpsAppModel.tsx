@@ -14,7 +14,7 @@ import {
 } from "@mantine/core";
 import {
   applyTarget,
-  bootstrapOpsNode,
+  bootstrapOpsNodeStream,
   clearOpsNodeCache,
   createOpsNode,
   deleteOpsNode,
@@ -116,6 +116,16 @@ import {
   buildWebLaunchConfigFromEntries,
   type WebLaunchArgEntry,
 } from "../lib/webLaunchArgs";
+
+const BOOTSTRAP_LOG_MAX_CHARS = 120_000;
+
+function appendLogChunk(current: string, chunk: string): string {
+  if (!chunk) return current;
+  if (current.length >= BOOTSTRAP_LOG_MAX_CHARS) return current;
+  const next = current + chunk;
+  if (next.length <= BOOTSTRAP_LOG_MAX_CHARS) return next;
+  return next.slice(0, BOOTSTRAP_LOG_MAX_CHARS);
+}
 
 export function useOpsAppModel() {
   const isMobile = useMediaQuery("(max-width: 48em)");
@@ -231,6 +241,8 @@ export function useOpsAppModel() {
   const [nodeBootstrapError, setNodeBootstrapError] = useState<string | null>(null);
   const [nodeBootstrapResult, setNodeBootstrapResult] =
     useState<OpsNodeBootstrapResponse | null>(null);
+  const [nodeBootstrapStdout, setNodeBootstrapStdout] = useState("");
+  const [nodeBootstrapStderr, setNodeBootstrapStderr] = useState("");
   const [nodeDisplayModeBusy, setNodeDisplayModeBusy] = useState(false);
   const [nodeDisplayModeError, setNodeDisplayModeError] = useState<string | null>(null);
   const [nodeDisplayModeResult, setNodeDisplayModeResult] =
@@ -789,28 +801,44 @@ export function useOpsAppModel() {
       }
       setNodeBootstrapBusy(true);
       setNodeBootstrapError(null);
+      setNodeBootstrapResult(null);
+      setNodeBootstrapStdout("");
+      setNodeBootstrapStderr("");
       try {
-        const result = await bootstrapOpsNode(nodeId, {
-          controlApiUrl: payload.controlApiUrl.trim(),
-          nodeControlApiUrl: payload.nodeControlApiUrl.trim(),
-          guideBaseUrl: payload.guideBaseUrl.trim(),
-          namespace: payload.namespace?.trim() || undefined,
-          registryId:
-            payload.registryId?.trim() || activeRegistryId || undefined,
-          endpointsOnly: payload.endpointsOnly === true,
-          sshUser: payload.sshUser?.trim() || undefined,
-          sshPort:
-            typeof payload.sshPort === "number" && Number.isFinite(payload.sshPort)
-              ? payload.sshPort
-              : undefined,
-          sshPassword: payload.sshPassword?.trim() || undefined,
-          host: payload.host?.trim() || undefined,
-          guidePort:
-            typeof payload.guidePort === "number" && Number.isFinite(payload.guidePort)
-              ? payload.guidePort
-              : undefined,
-          dryRun: payload.dryRun === true,
-        });
+        const result = await bootstrapOpsNodeStream(
+          nodeId,
+          {
+            controlApiUrl: payload.controlApiUrl.trim(),
+            nodeControlApiUrl: payload.nodeControlApiUrl.trim(),
+            guideBaseUrl: payload.guideBaseUrl.trim(),
+            namespace: payload.namespace?.trim() || undefined,
+            registryId:
+              payload.registryId?.trim() || activeRegistryId || undefined,
+            endpointsOnly: payload.endpointsOnly === true,
+            sshUser: payload.sshUser?.trim() || undefined,
+            sshPort:
+              typeof payload.sshPort === "number" && Number.isFinite(payload.sshPort)
+                ? payload.sshPort
+                : undefined,
+            sshPassword: payload.sshPassword?.trim() || undefined,
+            host: payload.host?.trim() || undefined,
+            guidePort:
+              typeof payload.guidePort === "number" && Number.isFinite(payload.guidePort)
+                ? payload.guidePort
+                : undefined,
+            dryRun: payload.dryRun === true,
+          },
+          {
+            onStdout: (chunk) => {
+              setNodeBootstrapStdout((current) => appendLogChunk(current, chunk));
+            },
+            onStderr: (chunk) => {
+              setNodeBootstrapStderr((current) => appendLogChunk(current, chunk));
+            },
+          }
+        );
+        setNodeBootstrapStdout(result.stdout || "");
+        setNodeBootstrapStderr(result.stderr || "");
         setNodeBootstrapResult(result);
         const code =
           typeof result.code === "number" ? String(result.code) : "n/a";
@@ -969,6 +997,8 @@ export function useOpsAppModel() {
       setNodeBootstrapBusy(false);
       setNodeBootstrapError(null);
       setNodeBootstrapResult(null);
+      setNodeBootstrapStdout("");
+      setNodeBootstrapStderr("");
       setNodeDisplayModeBusy(false);
       setNodeDisplayModeError(null);
       setNodeDisplayModeResult(null);
@@ -3353,6 +3383,8 @@ export function useOpsAppModel() {
     nodeBootstrapBusy,
     nodeBootstrapError,
     nodeBootstrapResult,
+    nodeBootstrapStdout,
+    nodeBootstrapStderr,
     setNodeDisplayMode,
     nodeDisplayModeBusy,
     nodeDisplayModeError,

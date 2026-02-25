@@ -139,6 +139,7 @@ export type OpsBootstrapDefaultsResponse = {
 
 export type OpsNodeBootstrapRequest = {
   dryRun?: boolean
+  stream?: boolean
   endpointsOnly?: boolean
   controlApiUrl?: string
   nodeControlApiUrl?: string

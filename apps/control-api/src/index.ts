@@ -134,6 +134,24 @@ const MEDIA_URL_EXTENSIONS = new Set([
   ".tiff",
 ]);
 
+const VIDEO_URL_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".m4v",
+  ".webm",
+  ".mkv",
+  ".avi",
+]);
+
+const AUDIO_URL_EXTENSIONS = new Set([
+  ".mp3",
+  ".wav",
+  ".flac",
+  ".aac",
+  ".m4a",
+  ".ogg",
+]);
+
 const IMAGE_URL_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -301,6 +319,7 @@ const OpsOpenGuideRequestSchema = z
 const OpsNodeBootstrapRequestSchema = z
   .object({
     dryRun: z.boolean().optional(),
+    stream: z.boolean().optional(),
     endpointsOnly: z.boolean().optional(),
     controlApiUrl: z.string().url().optional(),
     nodeControlApiUrl: z.string().url().optional(),
@@ -507,6 +526,15 @@ function looksLikeImageSource(value: string): boolean {
   return ext.length > 0 && IMAGE_URL_EXTENSIONS.has(ext);
 }
 
+function inferStreamMediaKind(media: MediaResource): "image" | "video" | "audio" | null {
+  const ext = getSourceExt(media.sourceValue);
+  if (!ext) return null;
+  if (IMAGE_URL_EXTENSIONS.has(ext)) return "image";
+  if (VIDEO_URL_EXTENSIONS.has(ext)) return "video";
+  if (AUDIO_URL_EXTENSIONS.has(ext)) return "audio";
+  return null;
+}
+
 function mediaStreamVersion(media: MediaResource): string {
   let seed = `${media.sourceType}:${media.sourceValue}`;
   if (media.sourceType === "path") {
@@ -525,7 +553,11 @@ function buildMediaStreamUrl(args: {
   media: MediaResource;
 }): string {
   const version = mediaStreamVersion(args.media);
-  return `${args.streamBaseUrl}/api/v1/resources/media/${encodeURIComponent(args.media.id)}/stream?v=${version}`;
+  const kind = inferStreamMediaKind(args.media);
+  const params = new URLSearchParams();
+  params.set("v", version);
+  if (kind) params.set("k", kind);
+  return `${args.streamBaseUrl}/api/v1/resources/media/${encodeURIComponent(args.media.id)}/stream?${params.toString()}`;
 }
 
 function buildFallbackPreviewDataUrl(args: {
@@ -1664,6 +1696,8 @@ async function runScript(args: {
   argv: string[];
   timeoutMs: number;
   cwd: string;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }): Promise<{
   code: number | null;
   signal: string | null;
@@ -1703,19 +1737,31 @@ async function runScript(args: {
     };
 
     child.stdout.on("data", (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
       stdout = pushWithLimit(
         stdout,
-        typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+        text,
         BOOTSTRAP_OUTPUT_MAX_CHARS
       );
+      try {
+        args.onStdout?.(text);
+      } catch {
+        // Ignore stream callback failures; process completion still matters.
+      }
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
       stderr = pushWithLimit(
         stderr,
-        typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+        text,
         BOOTSTRAP_OUTPUT_MAX_CHARS
       );
+      try {
+        args.onStderr?.(text);
+      } catch {
+        // Ignore stream callback failures; process completion still matters.
+      }
     });
 
     child.on("error", (error) => {
@@ -3679,6 +3725,7 @@ async function main(): Promise<void> {
     }
 
     const maskedCommand = ["bash", scriptPath, ...maskSensitiveScriptArgs(scriptArgs)];
+    const streamLogs = parsedBody.data.stream === true;
     if (parsedBody.data.dryRun === true) {
       res.json({
         ok: true,
@@ -3688,6 +3735,76 @@ async function main(): Promise<void> {
         registryId,
         command: maskedCommand,
       });
+      return;
+    }
+
+    if (streamLogs) {
+      const stream = res.raw;
+      stream.writeHead(200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+      });
+      const writeEvent = (payload: unknown) => {
+        if (stream.destroyed || stream.writableEnded) return;
+        try {
+          stream.write(`${JSON.stringify(payload)}\n`);
+        } catch {
+          // Client may disconnect mid-stream; ignore write failures.
+        }
+      };
+
+      writeEvent({
+        type: "start",
+        nodeId,
+        namespace,
+        registryId,
+        command: maskedCommand,
+        startedAt: Date.now(),
+      });
+
+      const run = await runScript({
+        command: "bash",
+        argv: [scriptPath, ...scriptArgs],
+        timeoutMs: DEFAULT_BOOTSTRAP_TIMEOUT_MS,
+        cwd: REPO_ROOT,
+        onStdout: (chunk) => {
+          writeEvent({ type: "stdout", chunk });
+        },
+        onStderr: (chunk) => {
+          writeEvent({ type: "stderr", chunk });
+        },
+      });
+      const ok = run.code === 0 && !run.timedOut;
+      const summarySource = (run.stderr || run.stdout || "")
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+      const summary =
+        summarySource ||
+        (run.timedOut
+          ? "bootstrap_timed_out"
+          : `bootstrap_exit_${run.code ?? "unknown"}`);
+      writeEvent({
+        type: "result",
+        result: {
+          ok,
+          ...(ok ? {} : { error: "bootstrap_failed", detail: summary }),
+          nodeId,
+          namespace,
+          registryId,
+          command: maskedCommand,
+          code: run.code,
+          signal: run.signal,
+          timedOut: run.timedOut,
+          durationMs: run.durationMs,
+          stdout: run.stdout,
+          stderr: run.stderr,
+        },
+      });
+      if (!stream.destroyed && !stream.writableEnded) {
+        stream.end();
+      }
       return;
     }
 
