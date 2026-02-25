@@ -625,6 +625,8 @@ function App() {
     const base = loadAudioSettings();
     const forcedMuted = parseBooleanParam(muteParam);
     if (forcedMuted !== null) return { ...base, muted: forcedMuted };
+    const isManagedScreen = Boolean((screenParam ?? "").trim());
+    if (isManagedScreen) return { ...base, muted: true };
     // Default to muted in gallery/kiosk mode so autoplay works reliably
     // across Chromium builds and without user gestures.
     if (galleryEnabledEffective) return { ...base, muted: true };

@@ -29,8 +29,15 @@ export function getWsUrl(): string {
   const screenId = readScreenId(params);
   const wsParam = params.get(PARAM_WS);
   if (wsParam) return withScreenId(wsParam, screenId);
-  // In kiosk/gallery mode, ignore persisted WS targets. These are usually set
-  // during debugging and can cause a kiosk to "stick" to a stale LAN host.
+  // On managed screens (screenId present), ignore persisted WS targets.
+  // These are usually set during debugging and can cause kiosks to report
+  // to stale hosts, breaking remote telemetry/control.
+  if (screenId) {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const base = `${protocol}//${window.location.host}/ws`;
+    return withScreenId(base, screenId);
+  }
+  // In gallery mode, also ignore persisted WS targets for the same reason.
   const gallery = (params.get("gallery") ?? "").trim().toLowerCase();
   const isGallery =
     gallery === "1" || gallery === "true" || gallery === "yes" || gallery === "on";
