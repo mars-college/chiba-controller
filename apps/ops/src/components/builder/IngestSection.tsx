@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Code,
   Divider,
   Group,
@@ -65,6 +66,8 @@ export type IngestSectionVm = {
   webLaunchArgsError: string | null;
   edenInput: string;
   setEdenInput: (value: string) => void;
+  edenCreatePlaylist: boolean;
+  setEdenCreatePlaylist: (value: boolean) => void;
   getUploadRootProps: () => any;
   getUploadInputProps: () => any;
   isUploadDragActive: boolean;
@@ -73,6 +76,10 @@ export type IngestSectionVm = {
   setUploadArtist: (value: string) => void;
   uploadDescription: string;
   setUploadDescription: (value: string) => void;
+  uploadCreatePlaylist: boolean;
+  setUploadCreatePlaylist: (value: boolean) => void;
+  uploadPlaylistTitle: string;
+  setUploadPlaylistTitle: (value: string) => void;
   uploadPreviewItems: UploadPreviewItem[];
   removeUploadFileAtIndex: (index: number) => void;
   uploadDropError: string | null;
@@ -117,6 +124,8 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     webLaunchArgsError,
     edenInput,
     setEdenInput,
+    edenCreatePlaylist,
+    setEdenCreatePlaylist,
     getUploadRootProps,
     getUploadInputProps,
     isUploadDragActive,
@@ -125,6 +134,10 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     setUploadArtist,
     uploadDescription,
     setUploadDescription,
+    uploadCreatePlaylist,
+    setUploadCreatePlaylist,
+    uploadPlaylistTitle,
+    setUploadPlaylistTitle,
     uploadPreviewItems,
     removeUploadFileAtIndex,
     uploadDropError,
@@ -391,14 +404,25 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                   </Stack>
                                 ) : null}
                                 {ingestSource === "eden" ? (
-                                  <TextInput
-                                    label="Collection URL or ID"
-                                    placeholder="https://app.eden.art/collections/... or 6980..."
-                                    value={edenInput}
-                                    onChange={(e) =>
-                                      setEdenInput(e.currentTarget.value)
-                                    }
-                                  />
+                                  <Stack>
+                                    <TextInput
+                                      label="Collection URL or ID"
+                                      placeholder="https://app.eden.art/collections/... or 6980..."
+                                      value={edenInput}
+                                      onChange={(e) =>
+                                        setEdenInput(e.currentTarget.value)
+                                      }
+                                    />
+                                    <Checkbox
+                                      label="Create playlist from imported media"
+                                      checked={edenCreatePlaylist}
+                                      onChange={(event) =>
+                                        setEdenCreatePlaylist(
+                                          event.currentTarget.checked
+                                        )
+                                      }
+                                    />
+                                  </Stack>
                                 ) : null}
                                 {ingestSource === "upload" ? (
                                   <Stack>
@@ -457,6 +481,27 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                         }
                                       />
                                     </SimpleGrid>
+                                    <Checkbox
+                                      label="Create playlist from imported media"
+                                      checked={uploadCreatePlaylist}
+                                      onChange={(event) =>
+                                        setUploadCreatePlaylist(
+                                          event.currentTarget.checked
+                                        )
+                                      }
+                                    />
+                                    {uploadCreatePlaylist ? (
+                                      <TextInput
+                                        label="Playlist title (optional)"
+                                        placeholder="Uploaded Media"
+                                        value={uploadPlaylistTitle}
+                                        onChange={(e) =>
+                                          setUploadPlaylistTitle(
+                                            e.currentTarget.value
+                                          )
+                                        }
+                                      />
+                                    ) : null}
                                     {uploadFiles.length > 0 ? (
                                       <SimpleGrid
                                         cols={{ base: 1, sm: 2, lg: 3 }}
@@ -606,6 +651,13 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                           artist: {uploadArtist.trim()}
                                         </Badge>
                                       ) : null}
+                                      {uploadCreatePlaylist ? (
+                                        <Badge variant="light" color="teal">
+                                          playlist:{" "}
+                                          {uploadPlaylistTitle.trim() ||
+                                            "Uploaded Media"}
+                                        </Badge>
+                                      ) : null}
                                     </Group>
                                     {uploadDescription.trim() ? (
                                       <Text size="sm" c="dimmed">
@@ -716,6 +768,7 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
                                       : JSON.stringify(
                                           {
                                             input: edenInput.trim(),
+                                            playlist: edenCreatePlaylist,
                                           },
                                           null,
                                           2

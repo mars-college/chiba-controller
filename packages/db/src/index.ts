@@ -10,6 +10,12 @@ export {
   upsertRegistryNode,
 } from "./node-store.js";
 export {
+  listEdenSyncFeeds,
+  upsertEdenSyncFeed,
+  type EdenSyncDbName,
+  type EdenSyncFeedRecord,
+} from "./eden-sync-store.js";
+export {
   importResources,
   getResourceSnapshot,
   deleteMediaResource,

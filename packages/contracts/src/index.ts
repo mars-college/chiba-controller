@@ -338,6 +338,7 @@ export const IngestEdenCollectionRequestSchema = z
     collectionId: z.string().min(1).optional(),
     db: z.enum(["PROD", "STAGE"]).optional(),
     playlistId: z.string().min(1).optional(),
+    playlist: z.boolean().optional(),
     apiKey: z.string().min(1).optional(),
   })
   .strict();
@@ -349,6 +350,18 @@ export const IngestUploadMetadataSchema = z
   .object({
     artist: z.string().min(1).max(256).optional(),
     description: z.string().min(1).max(4_000).optional(),
+    playlist: z
+      .preprocess((value) => {
+        if (typeof value === "boolean") return value;
+        if (typeof value === "string") {
+          const normalized = value.trim().toLowerCase();
+          if (["1", "true", "yes", "on"].includes(normalized)) return true;
+          if (["0", "false", "no", "off", ""].includes(normalized)) return false;
+        }
+        return value;
+      }, z.boolean())
+      .optional(),
+    playlistTitle: z.string().min(1).max(256).optional(),
   })
   .strict();
 export type IngestUploadMetadata = z.infer<typeof IngestUploadMetadataSchema>;

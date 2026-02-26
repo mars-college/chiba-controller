@@ -265,9 +265,12 @@ export function useOpsAppModel() {
     WebLaunchArgEntry[]
   >([]);
   const [edenInput, setEdenInput] = useState("");
+  const [edenCreatePlaylist, setEdenCreatePlaylist] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadArtist, setUploadArtist] = useState("");
   const [uploadDescription, setUploadDescription] = useState("");
+  const [uploadCreatePlaylist, setUploadCreatePlaylist] = useState(false);
+  const [uploadPlaylistTitle, setUploadPlaylistTitle] = useState("");
   const [uploadDropError, setUploadDropError] = useState<string | null>(null);
   const [ingestJobs, setIngestJobs] = useState<MediaIngestJob[]>([]);
   const ingestPollersRef = useRef<Record<string, number>>({});
@@ -1197,7 +1200,7 @@ export function useOpsAppModel() {
         id: media.id,
         title: media.title || undefined,
         artist: media.artist || undefined,
-        description: undefined,
+        description: media.description || undefined,
         sourceType: media.sourceType,
         sourceValue: media.sourceValue,
         thumbnailUrl: media.thumbnailUrl,
@@ -1835,6 +1838,7 @@ export function useOpsAppModel() {
       setIngestBusy(true);
       const result = await startEdenIngestJob({
         input: edenInput.trim(),
+        ...(edenCreatePlaylist ? { playlist: true } : {}),
       });
       upsertIngestJob(result.job, { notifyTransitions: true });
       startPollingJob(result.job.id);
@@ -1854,6 +1858,7 @@ export function useOpsAppModel() {
       setIngestBusy(false);
     }
   }, [
+    edenCreatePlaylist,
     edenInput,
     routeToMediaLibraryAfterQueue,
     startPollingJob,
@@ -1983,6 +1988,12 @@ export function useOpsAppModel() {
       if (uploadArtist.trim()) formData.append("artist", uploadArtist.trim());
       if (uploadDescription.trim())
         formData.append("description", uploadDescription.trim());
+      if (uploadCreatePlaylist) {
+        formData.append("playlist", "true");
+        if (uploadPlaylistTitle.trim()) {
+          formData.append("playlistTitle", uploadPlaylistTitle.trim());
+        }
+      }
       const result = await startUploadIngestJob(formData);
       upsertIngestJob(result.job, { notifyTransitions: true });
       startPollingJob(result.job.id);
@@ -1994,6 +2005,8 @@ export function useOpsAppModel() {
       setUploadFiles([]);
       setUploadArtist("");
       setUploadDescription("");
+      setUploadCreatePlaylist(false);
+      setUploadPlaylistTitle("");
       setUploadDropError(null);
       routeToMediaLibraryAfterQueue();
     } catch (error) {
@@ -2010,8 +2023,10 @@ export function useOpsAppModel() {
     startPollingJob,
     upsertIngestJob,
     uploadArtist,
+    uploadCreatePlaylist,
     uploadDescription,
     uploadFiles,
+    uploadPlaylistTitle,
   ]);
 
   const serverMedia = useMemo(() => {
@@ -2027,7 +2042,7 @@ export function useOpsAppModel() {
         id: media.id,
         title: media.title || undefined,
         artist: media.artist || undefined,
-        description: undefined,
+        description: media.description || undefined,
         sourceType: media.sourceType,
         sourceValue: media.sourceValue,
         thumbnailUrl: media.thumbnailUrl,
@@ -3485,6 +3500,8 @@ export function useOpsAppModel() {
     webLaunchArgsError: parsedWebLaunchConfig.error,
     edenInput,
     setEdenInput,
+    edenCreatePlaylist,
+    setEdenCreatePlaylist,
     getUploadRootProps,
     getUploadInputProps,
     isUploadDragActive,
@@ -3493,6 +3510,10 @@ export function useOpsAppModel() {
     setUploadArtist,
     uploadDescription,
     setUploadDescription,
+    uploadCreatePlaylist,
+    setUploadCreatePlaylist,
+    uploadPlaylistTitle,
+    setUploadPlaylistTitle,
     uploadPreviewItems,
     removeUploadFileAtIndex,
     uploadDropError,

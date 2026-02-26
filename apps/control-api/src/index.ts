@@ -55,7 +55,9 @@ import {
   deleteProfileResource,
   importResources,
   listDesiredScreenStates,
+  listEdenSyncFeeds,
   schema,
+  upsertEdenSyncFeed,
   upsertNodeConnectivity,
   upsertRegistryNode,
   deleteRegistryNode,
@@ -68,12 +70,17 @@ import {
   enqueueYouTubeIngest,
 } from "./ingest/queue.js";
 import {
+  EdenSyncScheduler,
+  DEFAULT_EDEN_SYNC_INTERVAL_SEC,
+} from "./ingest/eden-sync.js";
+import {
   ingestEdenCollection,
   ingestUploadedFiles,
   ingestYouTube,
   readMultipartUploadFromRequest,
   readThumbnail,
 } from "./ingest/runtime.js";
+import { parseEdenCollectionInput } from "./ingest/service.js";
 import { normalizeOpsApplyLaunch } from "./launch-policy.js";
 import { buildConnectivitySummary, toRegistryToml } from "./nodes-utils.js";
 
@@ -2158,6 +2165,41 @@ async function main(): Promise<void> {
   const pool = createDbPool();
   const db = createDb(pool);
   const ingestQueue = createIngestJobQueue();
+  const edenSyncScheduler = new EdenSyncScheduler({
+    db,
+    store: {
+      listFeeds: async () => {
+        const feeds = await listEdenSyncFeeds({ db });
+        return feeds.map((feed) => ({
+          collectionId: feed.collectionId,
+          dbName: feed.dbName,
+          ...(feed.playlistId ? { playlistId: feed.playlistId } : {}),
+          playlist: feed.playlist,
+          ...(feed.apiKey ? { apiKey: feed.apiKey } : {}),
+          enabled: feed.enabled,
+          intervalSec: feed.intervalSec,
+        }));
+      },
+      upsertFeed: async (feed) => {
+        await upsertEdenSyncFeed({
+          db,
+          feed: {
+            collectionId: feed.collectionId,
+            ...(feed.dbName ? { dbName: feed.dbName } : {}),
+            ...(feed.playlistId ? { playlistId: feed.playlistId } : {}),
+            ...(typeof feed.playlist === "boolean" ? { playlist: feed.playlist } : {}),
+            ...(feed.apiKey ? { apiKey: feed.apiKey } : {}),
+            ...(typeof feed.enabled === "boolean" ? { enabled: feed.enabled } : {}),
+            ...(typeof feed.intervalSec === "number"
+              ? { intervalSec: feed.intervalSec }
+              : {}),
+          },
+        });
+      },
+    },
+  });
+  await edenSyncScheduler.hydrate();
+  edenSyncScheduler.start();
   const wss = new WebSocketServer({ noServer: true });
   const wsMeta = new Map<WebSocket, { screenId: string; role: string; alive: boolean }>();
 
@@ -2277,6 +2319,27 @@ async function main(): Promise<void> {
       }
     }
   }, 20_000);
+
+  const registerEdenSyncFeed = async (args: {
+    input: string;
+    db?: "PROD" | "STAGE";
+    playlistId?: string;
+    playlist?: boolean;
+    apiKey?: string;
+  }): Promise<void> => {
+    const normalized = parseEdenCollectionInput({
+      input: args.input,
+      ...(args.db ? { db: args.db } : {}),
+    });
+    await edenSyncScheduler.registerFeed({
+      collectionId: normalized.collectionId,
+      dbName: normalized.db,
+      playlist: args.playlist !== false,
+      ...(args.playlistId ? { playlistId: args.playlistId } : {}),
+      ...(args.apiKey ? { apiKey: args.apiKey } : {}),
+      intervalSec: DEFAULT_EDEN_SYNC_INTERVAL_SEC,
+    });
+  };
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true, service: "cable3-control-api", ts: Date.now() });
@@ -2828,8 +2891,26 @@ async function main(): Promise<void> {
       input,
       ...(parsed.data.db ? { dbName: parsed.data.db } : {}),
       ...(parsed.data.playlistId ? { playlistId: parsed.data.playlistId } : {}),
+      ...(typeof parsed.data.playlist === "boolean"
+        ? { playlist: parsed.data.playlist }
+        : {}),
       ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
     });
+    if (result.status >= 200 && result.status < 300) {
+      try {
+        await registerEdenSyncFeed({
+          input,
+          ...(parsed.data.db ? { db: parsed.data.db } : {}),
+          playlist: parsed.data.playlist !== false,
+          ...(parsed.data.playlistId
+            ? { playlistId: parsed.data.playlistId }
+            : {}),
+          ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
+        });
+      } catch {
+        // ignore sync registration failures for one-off ingest requests
+      }
+    }
     res.status(result.status).json(result.payload);
   });
 
@@ -2909,9 +2990,23 @@ async function main(): Promise<void> {
         input,
         ...(parsed.data.db ? { dbName: parsed.data.db } : {}),
         ...(parsed.data.playlistId ? { playlistId: parsed.data.playlistId } : {}),
+        ...(typeof parsed.data.playlist === "boolean"
+          ? { playlist: parsed.data.playlist }
+          : {}),
         ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
       },
     });
+    try {
+      await registerEdenSyncFeed({
+        input,
+        ...(parsed.data.db ? { db: parsed.data.db } : {}),
+        playlist: parsed.data.playlist !== false,
+        ...(parsed.data.playlistId ? { playlistId: parsed.data.playlistId } : {}),
+        ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
+      });
+    } catch {
+      // ignore sync registration failures for queued ingest requests
+    }
     res.status(202).json({ ok: true, job });
   });
 
@@ -2934,6 +3029,23 @@ async function main(): Promise<void> {
     const query = queryOf(req);
     const limit = Math.max(1, Math.min(200, Number(query.limit ?? 50) || 50));
     res.json({ ok: true, jobs: ingestQueue.list(limit) });
+  });
+
+  app.get("/api/v1/eden-sync/status", async (_req, res) => {
+    res.json({
+      ok: true,
+      defaultIntervalSec: DEFAULT_EDEN_SYNC_INTERVAL_SEC,
+      feeds: edenSyncScheduler.listFeeds(),
+    });
+  });
+
+  app.post("/api/v1/eden-sync/run", async (_req, res) => {
+    await edenSyncScheduler.tick();
+    res.json({
+      ok: true,
+      defaultIntervalSec: DEFAULT_EDEN_SYNC_INTERVAL_SEC,
+      feeds: edenSyncScheduler.listFeeds(),
+    });
   });
 
   app.get("/api/v1/assets/thumbs/:fileName", async (req, res) => {
@@ -4538,6 +4650,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     clearInterval(wsHeartbeatTimer);
+    edenSyncScheduler.stop();
     for (const client of wss.clients) {
       try {
         client.close();

@@ -131,6 +131,11 @@ function digestHex(bytes: Buffer): string {
   return createHash("sha1").update(bytes).digest("hex");
 }
 
+function playlistIdFromSeed(prefix: string, seed: string): string {
+  const digest = createHash("sha1").update(seed).digest("hex").slice(0, 14);
+  return `pl-${prefix}-${digest}`;
+}
+
 async function writeAsset(args: {
   bytes: Buffer;
   originalName: string;
@@ -446,9 +451,33 @@ export async function ingestUploadedFiles(args: {
   }
 
   const dedupedMedia = Array.from(new Map(media.map((row) => [row.id, row])).values());
+  const wantsPlaylist = args.metadata?.playlist === true;
+  const shouldCreatePlaylist = wantsPlaylist && dedupedMedia.length > 1;
+  const playlistId = shouldCreatePlaylist
+    ? playlistIdFromSeed(
+        "upload",
+        `${Date.now()}:${dedupedMedia.map((row) => row.id).join(",")}`
+      )
+    : null;
+  const playlistTitle = args.metadata?.playlistTitle?.trim() || "Uploaded Media";
+  if (wantsPlaylist && !shouldCreatePlaylist) {
+    warnings.push("playlist_skipped_requires_multiple_media");
+  }
   const payload: ResourceImportPayload = {
     media: dedupedMedia,
-    playlists: [],
+    playlists:
+      shouldCreatePlaylist && playlistId
+        ? [
+            {
+              id: playlistId,
+              title: playlistTitle,
+              items: dedupedMedia.map((row, index) => ({
+                index,
+                mediaId: row.id,
+              })),
+            },
+          ]
+        : [],
     blocks: [],
     channels: [],
     profiles: [],
@@ -473,6 +502,7 @@ export async function ingestUploadedFiles(args: {
           thumbnailObjectKey: row.thumbnailObjectKey,
         })),
       },
+      ...(playlistId ? { playlistId } : {}),
       warnings,
     },
   };
@@ -792,6 +822,7 @@ export async function ingestEdenCollection(args: {
   input: string;
   dbName?: EdenDb;
   playlistId?: string;
+  playlist?: boolean;
   apiKey?: string;
   persistResources?: PersistResourcesFn;
   onProgress?: (progress: IngestProgress) => void;
@@ -883,22 +914,25 @@ export async function ingestEdenCollection(args: {
     });
   }
 
-  const playlistId =
-    args.playlistId?.trim() || `pl-eden-${parsed.collectionId.toLowerCase()}`;
-  const playlistTitle =
-    collection.collectionTitle || `Eden Collection ${parsed.collectionId}`;
+  const wantsPlaylist = args.playlist === true || Boolean(args.playlistId?.trim());
+  const playlistId = wantsPlaylist
+    ? args.playlistId?.trim() || `pl-eden-${parsed.collectionId.toLowerCase()}`
+    : "";
+  const playlistTitle = collection.collectionTitle || `Eden Collection ${parsed.collectionId}`;
   const payload: ResourceImportPayload = {
     media,
-    playlists: [
-      {
-        id: playlistId,
-        title: playlistTitle,
-        items: media.map((row, index) => ({
-          index,
-          mediaId: row.id,
-        })),
-      },
-    ],
+    playlists: wantsPlaylist
+      ? [
+          {
+            id: playlistId,
+            title: playlistTitle,
+            items: media.map((row, index) => ({
+              index,
+              mediaId: row.id,
+            })),
+          },
+        ]
+      : [],
     blocks: [],
     channels: [],
     profiles: [],
@@ -916,7 +950,7 @@ export async function ingestEdenCollection(args: {
       ok: true,
       collectionId: parsed.collectionId,
       db: parsed.db,
-      playlistId,
+      ...(wantsPlaylist && playlistId ? { playlistId } : {}),
       counts,
       warnings,
     },

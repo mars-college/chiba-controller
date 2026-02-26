@@ -194,6 +194,7 @@ export function enqueueEdenCollectionIngest(args: {
     input: string;
     dbName?: EdenDb;
     playlistId?: string;
+    playlist?: boolean;
     apiKey?: string;
   };
 }): IngestJob {

@@ -19,6 +19,7 @@ export type DraftMedia = {
   id: string;
   title: string;
   artist: string;
+  description: string;
   sourceType: "path" | "url";
   sourceValue: string;
   thumbnailUrl?: string;
@@ -558,6 +559,7 @@ export function toResourcePayload(store: DraftStore): ResourcePayload {
       id: m.id.trim(),
       title: m.title.trim() || undefined,
       artist: m.artist.trim() || undefined,
+      description: m.description.trim() || undefined,
       sourceType: m.sourceType,
       sourceValue: m.sourceValue.trim(),
       thumbnailUrl: m.thumbnailUrl,
@@ -625,6 +627,7 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
       id: m.id,
       title: m.title || "",
       artist: m.artist || "",
+      description: m.description || "",
       sourceType: m.sourceType,
       sourceValue: m.sourceValue,
       thumbnailUrl: m.thumbnailUrl,

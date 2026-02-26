@@ -212,8 +212,9 @@ run_with_retries() {
   while [[ "$attempt" -le "$SSH_RETRIES" ]]; do
     if "$@"; then
       return 0
+    else
+      rc=$?
     fi
-    rc=$?
     if [[ "$attempt" -lt "$SSH_RETRIES" ]]; then
       echo "${label}: attempt ${attempt}/${SSH_RETRIES} failed (exit ${rc}); retrying in ${SSH_RETRY_DELAY_SECONDS}s..." >&2
       sleep "$SSH_RETRY_DELAY_SECONDS"
@@ -242,7 +243,6 @@ rsync_cmd() {
     rsync_ssh="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o ConnectionAttempts=2 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -o PreferredAuthentications=password -o PubkeyAuthentication=no -p ${SSH_PORT}"
     run_with_retries "rsync" env SSHPASS="$SSH_PASSWORD" rsync \
       --timeout=45 \
-      --contimeout=15 \
       -e "$rsync_ssh" \
       "$@"
     return
@@ -250,7 +250,6 @@ rsync_cmd() {
   rsync_ssh="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o ConnectionAttempts=2 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -p ${SSH_PORT}"
   run_with_retries "rsync" rsync \
     --timeout=45 \
-    --contimeout=15 \
     -e "$rsync_ssh" \
     "$@"
 }

@@ -69,6 +69,24 @@ export const nodeConnectivity = pgTable(
   })
 );
 
+export const edenSyncFeeds = pgTable(
+  "eden_sync_feeds",
+  {
+    collectionId: text("collection_id").notNull(),
+    dbName: text("db_name").notNull(),
+    playlistId: text("playlist_id"),
+    playlist: boolean("playlist").notNull(),
+    apiKey: text("api_key"),
+    enabled: boolean("enabled").notNull(),
+    intervalSec: integer("interval_sec").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.collectionId, table.dbName] }),
+  })
+);
+
 export const desiredScreenState = pgTable(
   "desired_screen_state",
   {
