@@ -26,7 +26,7 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconPencil, IconTrash } from "@tabler/icons-react";
+import { IconPencil, IconSearch, IconTrash } from "@tabler/icons-react";
 import type { BuilderMode } from "../../store/uiStore";
 import {
   generateAutoResourceId,
@@ -63,10 +63,13 @@ export type ContainerEditorsVm = {
   deleteChannelDraft: (channelId: string) => Promise<boolean>;
   deleteProfileDraft: (profileId: string) => Promise<boolean>;
   isMobile: boolean;
+  serverMediaQuery: string;
+  setServerMediaQuery: (value: string) => void;
 
   blockLibraryView: "cards" | "table";
   setBlockLibraryView: (value: "cards" | "table") => void;
   blockRowsPage: DraftBlock[];
+  blockCount: number;
   selectedBlockId: string | null;
   setSelectedBlockId: (id: string | null) => void;
   blockTablePage: number;
@@ -80,6 +83,7 @@ export type ContainerEditorsVm = {
   channelLibraryView: "cards" | "table";
   setChannelLibraryView: (value: "cards" | "table") => void;
   channelRowsPage: DraftChannel[];
+  channelCount: number;
   selectedChannelId: string | null;
   setSelectedChannelId: (id: string | null) => void;
   channelTablePage: number;
@@ -93,6 +97,7 @@ export type ContainerEditorsVm = {
   profileLibraryView: "cards" | "table";
   setProfileLibraryView: (value: "cards" | "table") => void;
   profileRowsPage: DraftProfile[];
+  profileCount: number;
   selectedProfileId: string | null;
   setSelectedProfileId: (id: string | null) => void;
   profileTablePage: number;
@@ -146,10 +151,13 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     deleteChannelDraft,
     deleteProfileDraft,
     isMobile,
+    serverMediaQuery,
+    setServerMediaQuery,
 
     blockLibraryView,
     setBlockLibraryView,
     blockRowsPage,
+    blockCount,
     selectedBlockId,
     setSelectedBlockId,
     blockTablePage,
@@ -163,6 +171,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     channelLibraryView,
     setChannelLibraryView,
     channelRowsPage,
+    channelCount,
     selectedChannelId,
     setSelectedChannelId,
     channelTablePage,
@@ -176,6 +185,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     profileLibraryView,
     setProfileLibraryView,
     profileRowsPage,
+    profileCount,
     selectedProfileId,
     setSelectedProfileId,
     profileTablePage,
@@ -342,12 +352,23 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 ]}
               />
             </Group>
-            <Badge variant="light">{draftStore.blocks.length} blocks</Badge>
+            <Group gap="xs">
+              <Badge variant="light">{blockCount} shown</Badge>
+              <Badge variant="light" color="gray">
+                {draftStore.blocks.length} total
+              </Badge>
+            </Group>
           </Group>
+          <TextInput
+            leftSection={<IconSearch size={16} />}
+            placeholder="Search blocks by id, title, mode, or item breakdown"
+            value={serverMediaQuery}
+            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+          />
 
           {blockLibraryView === "cards" ? (
             <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {draftStore.blocks.map((row) => {
+              {blockRowsPage.map((row) => {
                 const mediaCount = row.items.filter((item) => item.kind === "media").length;
                 const playlistCount = row.items.filter(
                   (item) => item.kind === "playlist"
@@ -477,31 +498,33 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   </Table.Tbody>
                 </Table>
               </ScrollArea>
-              <Group justify="space-between" mt="xs" wrap="wrap">
-                <Text size="xs" c="dimmed">
-                  {tableRangeLabel(
-                    draftStore.blocks.length,
-                    blockTablePage,
-                    TABLE_PAGE_SIZE.blocks
-                  )}
-                </Text>
-                <Pagination
-                  total={blockTablePageCount}
-                  value={blockTablePage}
-                  onChange={setBlockTablePage}
-                  size={isMobile ? "sm" : "md"}
-                  siblings={1}
-                  boundaries={1}
-                  withEdges
-                />
-              </Group>
             </Card>
           )}
+          <Group justify="space-between" mt="xs" wrap="wrap">
+            <Text size="xs" c="dimmed">
+              {tableRangeLabel(blockCount, blockTablePage, TABLE_PAGE_SIZE.blocks)}
+            </Text>
+            <Pagination
+              total={blockTablePageCount}
+              value={blockTablePage}
+              onChange={setBlockTablePage}
+              size={isMobile ? "sm" : "md"}
+              siblings={1}
+              boundaries={1}
+              withEdges
+            />
+          </Group>
 
           {draftStore.blocks.length === 0 ? (
             <Paper withBorder p="md">
               <Text size="sm" c="dimmed">
                 No blocks yet. Blocks can sequence media and/or playlists.
+              </Text>
+            </Paper>
+          ) : blockCount === 0 ? (
+            <Paper withBorder p="md">
+              <Text size="sm" c="dimmed">
+                No blocks match this search.
               </Text>
             </Paper>
           ) : null}
@@ -801,12 +824,23 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 ]}
               />
             </Group>
-            <Badge variant="light">{draftStore.channels.length} channels</Badge>
+            <Group gap="xs">
+              <Badge variant="light">{channelCount} shown</Badge>
+              <Badge variant="light" color="gray">
+                {draftStore.channels.length} total
+              </Badge>
+            </Group>
           </Group>
+          <TextInput
+            leftSection={<IconSearch size={16} />}
+            placeholder="Search channels by id, title, or block ids"
+            value={serverMediaQuery}
+            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+          />
 
           {channelLibraryView === "cards" ? (
             <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {draftStore.channels.map((row) => (
+              {channelRowsPage.map((row) => (
                 <Card
                   key={row.id}
                   withBorder
@@ -909,31 +943,37 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   </Table.Tbody>
                 </Table>
               </ScrollArea>
-              <Group justify="space-between" mt="xs" wrap="wrap">
-                <Text size="xs" c="dimmed">
-                  {tableRangeLabel(
-                    draftStore.channels.length,
-                    channelTablePage,
-                    TABLE_PAGE_SIZE.channels
-                  )}
-                </Text>
-                <Pagination
-                  total={channelTablePageCount}
-                  value={channelTablePage}
-                  onChange={setChannelTablePage}
-                  size={isMobile ? "sm" : "md"}
-                  siblings={1}
-                  boundaries={1}
-                  withEdges
-                />
-              </Group>
             </Card>
           )}
+          <Group justify="space-between" mt="xs" wrap="wrap">
+            <Text size="xs" c="dimmed">
+              {tableRangeLabel(
+                channelCount,
+                channelTablePage,
+                TABLE_PAGE_SIZE.channels
+              )}
+            </Text>
+            <Pagination
+              total={channelTablePageCount}
+              value={channelTablePage}
+              onChange={setChannelTablePage}
+              size={isMobile ? "sm" : "md"}
+              siblings={1}
+              boundaries={1}
+              withEdges
+            />
+          </Group>
 
           {draftStore.channels.length === 0 ? (
             <Paper withBorder p="md">
               <Text size="sm" c="dimmed">
                 No channels yet. Channels sequence blocks in a repeatable order.
+              </Text>
+            </Paper>
+          ) : channelCount === 0 ? (
+            <Paper withBorder p="md">
+              <Text size="sm" c="dimmed">
+                No channels match this search.
               </Text>
             </Paper>
           ) : null}
@@ -1166,12 +1206,23 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 ]}
               />
             </Group>
-            <Badge variant="light">{draftStore.profiles.length} profiles</Badge>
+            <Group gap="xs">
+              <Badge variant="light">{profileCount} shown</Badge>
+              <Badge variant="light" color="gray">
+                {draftStore.profiles.length} total
+              </Badge>
+            </Group>
           </Group>
+          <TextInput
+            leftSection={<IconSearch size={16} />}
+            placeholder="Search profiles by id, title, targets, or node assignments"
+            value={serverMediaQuery}
+            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+          />
 
           {profileLibraryView === "cards" ? (
             <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {draftStore.profiles.map((row) => (
+              {profileRowsPage.map((row) => (
                 <Card
                   key={row.id}
                   withBorder
@@ -1291,31 +1342,37 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   </Table.Tbody>
                 </Table>
               </ScrollArea>
-              <Group justify="space-between" mt="xs" wrap="wrap">
-                <Text size="xs" c="dimmed">
-                  {tableRangeLabel(
-                    draftStore.profiles.length,
-                    profileTablePage,
-                    TABLE_PAGE_SIZE.profiles
-                  )}
-                </Text>
-                <Pagination
-                  total={profileTablePageCount}
-                  value={profileTablePage}
-                  onChange={setProfileTablePage}
-                  size={isMobile ? "sm" : "md"}
-                  siblings={1}
-                  boundaries={1}
-                  withEdges
-                />
-              </Group>
             </Card>
           )}
+          <Group justify="space-between" mt="xs" wrap="wrap">
+            <Text size="xs" c="dimmed">
+              {tableRangeLabel(
+                profileCount,
+                profileTablePage,
+                TABLE_PAGE_SIZE.profiles
+              )}
+            </Text>
+            <Pagination
+              total={profileTablePageCount}
+              value={profileTablePage}
+              onChange={setProfileTablePage}
+              size={isMobile ? "sm" : "md"}
+              siblings={1}
+              boundaries={1}
+              withEdges
+            />
+          </Group>
 
           {draftStore.profiles.length === 0 ? (
             <Paper withBorder p="md">
               <Text size="sm" c="dimmed">
                 No profiles yet. Profiles assign default and per-node targets.
+              </Text>
+            </Paper>
+          ) : profileCount === 0 ? (
+            <Paper withBorder p="md">
+              <Text size="sm" c="dimmed">
+                No profiles match this search.
               </Text>
             </Paper>
           ) : null}

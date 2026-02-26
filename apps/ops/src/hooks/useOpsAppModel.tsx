@@ -127,6 +127,28 @@ function appendLogChunk(current: string, chunk: string): string {
   return next.slice(0, BOOTSTRAP_LOG_MAX_CHARS);
 }
 
+function buildServerOrderMap(rows: Array<{ id: string }>): Map<string, number> {
+  const order = new Map<string, number>();
+  rows.forEach((row, index) => {
+    order.set(row.id, index);
+  });
+  return order;
+}
+
+function sortByServerOrder<T extends { id: string }>(
+  rows: T[],
+  order: Map<string, number>
+): T[] {
+  return [...rows].sort((a, b) => {
+    const left = order.get(a.id);
+    const right = order.get(b.id);
+    if (typeof left === "number" && typeof right === "number") return left - right;
+    if (typeof left === "number") return -1;
+    if (typeof right === "number") return 1;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export function useOpsAppModel() {
   const isMobile = useMediaQuery("(max-width: 48em)");
   const controlOpen = useOpsUiStore((s) => s.controlOpen);
@@ -192,6 +214,7 @@ export function useOpsAppModel() {
     null
   );
   const [fleetPage, setFleetPage] = useState(1);
+  const [mediaLibraryPage, setMediaLibraryPage] = useState(1);
   const [mediaTablePage, setMediaTablePage] = useState(1);
   const [playlistTablePage, setPlaylistTablePage] = useState(1);
   const [blockTablePage, setBlockTablePage] = useState(1);
@@ -2031,8 +2054,42 @@ export function useOpsAppModel() {
 
   const serverMedia = useMemo(() => {
     const rows = serverSnapshot?.media ?? [];
-    return [...rows].reverse();
+    return [...rows];
   }, [serverSnapshot]);
+
+  const playlistServerOrder = useMemo(
+    () => buildServerOrderMap(serverSnapshot?.playlists ?? []),
+    [serverSnapshot?.playlists]
+  );
+  const blockServerOrder = useMemo(
+    () => buildServerOrderMap(serverSnapshot?.blocks ?? []),
+    [serverSnapshot?.blocks]
+  );
+  const channelServerOrder = useMemo(
+    () => buildServerOrderMap(serverSnapshot?.channels ?? []),
+    [serverSnapshot?.channels]
+  );
+  const profileServerOrder = useMemo(
+    () => buildServerOrderMap(serverSnapshot?.profiles ?? []),
+    [serverSnapshot?.profiles]
+  );
+
+  const playlistsSorted = useMemo(
+    () => sortByServerOrder(draftStore.playlists, playlistServerOrder),
+    [draftStore.playlists, playlistServerOrder]
+  );
+  const blocksSorted = useMemo(
+    () => sortByServerOrder(draftStore.blocks, blockServerOrder),
+    [blockServerOrder, draftStore.blocks]
+  );
+  const channelsSorted = useMemo(
+    () => sortByServerOrder(draftStore.channels, channelServerOrder),
+    [channelServerOrder, draftStore.channels]
+  );
+  const profilesSorted = useMemo(
+    () => sortByServerOrder(draftStore.profiles, profileServerOrder),
+    [draftStore.profiles, profileServerOrder]
+  );
 
   const mergedMedia = useMemo<Media[]>(() => {
     const map = new Map<string, Media>();
@@ -2522,14 +2579,74 @@ export function useOpsAppModel() {
     });
   }, [serverMedia, serverMediaQuery, serverMediaSourceFilter]);
 
+  const playlistRowsFiltered = useMemo(() => {
+    const q = serverMediaQuery.trim().toLowerCase();
+    if (!q) return playlistsSorted;
+    return playlistsSorted.filter((row) =>
+      [row.id, row.title, row.artist, row.description]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [playlistsSorted, serverMediaQuery]);
+
+  const blockRowsFiltered = useMemo(() => {
+    const q = serverMediaQuery.trim().toLowerCase();
+    if (!q) return blocksSorted;
+    return blocksSorted.filter((row) => {
+      const mediaCount = row.items.filter((item) => item.kind === "media").length;
+      const playlistCount = row.items.filter((item) => item.kind === "playlist").length;
+      return [row.id, row.title, row.mode, row.items.length, mediaCount, playlistCount]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [blocksSorted, serverMediaQuery]);
+
+  const channelRowsFiltered = useMemo(() => {
+    const q = serverMediaQuery.trim().toLowerCase();
+    if (!q) return channelsSorted;
+    return channelsSorted.filter((row) =>
+      [row.id, row.title, row.blockIds.join(" ")]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [channelsSorted, serverMediaQuery]);
+
+  const profileRowsFiltered = useMemo(() => {
+    const q = serverMediaQuery.trim().toLowerCase();
+    if (!q) return profilesSorted;
+    return profilesSorted.filter((row) =>
+      [
+        row.id,
+        row.title,
+        row.defaultTargetKind,
+        row.defaultTargetId,
+        ...row.nodeAssignments.flatMap((node) => [
+          node.nodeId,
+          node.targetKind,
+          node.targetId,
+        ]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [profilesSorted, serverMediaQuery]);
+
   const mediaFeedItems = useMemo(
-    () => serverMediaFiltered.slice(0, mediaFeedLimit),
-    [mediaFeedLimit, serverMediaFiltered]
+    () => [],
+    []
   );
 
   const hasMoreMediaFeed = useMemo(
-    () => mediaFeedItems.length < serverMediaFiltered.length,
-    [mediaFeedItems.length, serverMediaFiltered.length]
+    () => false,
+    []
   );
 
   const selectedMediaDetail = useMemo(() => {
@@ -2829,7 +2946,11 @@ export function useOpsAppModel() {
   }, [selectedServerMediaId, serverMediaFiltered]);
 
   useEffect(() => {
-    setMediaFeedLimit(24);
+    setMediaLibraryPage(1);
+    setPlaylistTablePage(1);
+    setBlockTablePage(1);
+    setChannelTablePage(1);
+    setProfileTablePage(1);
   }, [serverMediaQuery, serverMediaSourceFilter]);
 
   useEffect(() => {
@@ -2894,34 +3015,39 @@ export function useOpsAppModel() {
     () => Math.max(1, Math.ceil(serverMedia.length / TABLE_PAGE_SIZE.media)),
     [serverMedia.length]
   );
+  const mediaLibraryPageCount = useMemo(
+    () =>
+      Math.max(1, Math.ceil(serverMediaFiltered.length / TABLE_PAGE_SIZE.media)),
+    [serverMediaFiltered.length]
+  );
   const playlistTablePageCount = useMemo(
     () =>
       Math.max(
         1,
-        Math.ceil(draftStore.playlists.length / TABLE_PAGE_SIZE.playlists)
+        Math.ceil(playlistRowsFiltered.length / TABLE_PAGE_SIZE.playlists)
       ),
-    [draftStore.playlists.length]
+    [playlistRowsFiltered.length]
   );
   const blockTablePageCount = useMemo(
     () =>
-      Math.max(1, Math.ceil(draftStore.blocks.length / TABLE_PAGE_SIZE.blocks)),
-    [draftStore.blocks.length]
+      Math.max(1, Math.ceil(blockRowsFiltered.length / TABLE_PAGE_SIZE.blocks)),
+    [blockRowsFiltered.length]
   );
   const channelTablePageCount = useMemo(
     () =>
       Math.max(
         1,
-        Math.ceil(draftStore.channels.length / TABLE_PAGE_SIZE.channels)
+        Math.ceil(channelRowsFiltered.length / TABLE_PAGE_SIZE.channels)
       ),
-    [draftStore.channels.length]
+    [channelRowsFiltered.length]
   );
   const profileTablePageCount = useMemo(
     () =>
       Math.max(
         1,
-        Math.ceil(draftStore.profiles.length / TABLE_PAGE_SIZE.profiles)
+        Math.ceil(profileRowsFiltered.length / TABLE_PAGE_SIZE.profiles)
       ),
-    [draftStore.profiles.length]
+    [profileRowsFiltered.length]
   );
 
   useEffect(() => {
@@ -2930,6 +3056,9 @@ export function useOpsAppModel() {
   useEffect(() => {
     setMediaTablePage((prev) => Math.min(prev, mediaTablePageCount));
   }, [mediaTablePageCount]);
+  useEffect(() => {
+    setMediaLibraryPage((prev) => Math.min(prev, mediaLibraryPageCount));
+  }, [mediaLibraryPageCount]);
   useEffect(() => {
     setPlaylistTablePage((prev) => Math.min(prev, playlistTablePageCount));
   }, [playlistTablePageCount]);
@@ -2951,37 +3080,42 @@ export function useOpsAppModel() {
     () => paginateRows(serverMedia, mediaTablePage, TABLE_PAGE_SIZE.media),
     [mediaTablePage, serverMedia]
   );
+  const mediaRowsPage = useMemo(
+    () =>
+      paginateRows(serverMediaFiltered, mediaLibraryPage, TABLE_PAGE_SIZE.media),
+    [mediaLibraryPage, serverMediaFiltered]
+  );
   const playlistRowsPage = useMemo(
     () =>
       paginateRows(
-        draftStore.playlists,
+        playlistRowsFiltered,
         playlistTablePage,
         TABLE_PAGE_SIZE.playlists
       ),
-    [draftStore.playlists, playlistTablePage]
+    [playlistRowsFiltered, playlistTablePage]
   );
   const blockRowsPage = useMemo(
     () =>
-      paginateRows(draftStore.blocks, blockTablePage, TABLE_PAGE_SIZE.blocks),
-    [blockTablePage, draftStore.blocks]
+      paginateRows(blockRowsFiltered, blockTablePage, TABLE_PAGE_SIZE.blocks),
+    [blockRowsFiltered, blockTablePage]
   );
   const channelRowsPage = useMemo(
     () =>
       paginateRows(
-        draftStore.channels,
+        channelRowsFiltered,
         channelTablePage,
         TABLE_PAGE_SIZE.channels
       ),
-    [channelTablePage, draftStore.channels]
+    [channelRowsFiltered, channelTablePage]
   );
   const profileRowsPage = useMemo(
     () =>
       paginateRows(
-        draftStore.profiles,
+        profileRowsFiltered,
         profileTablePage,
         TABLE_PAGE_SIZE.profiles
       ),
-    [draftStore.profiles, profileTablePage]
+    [profileRowsFiltered, profileTablePage]
   );
 
   const onUploadDrop = useCallback((files: File[]) => {
@@ -3544,13 +3678,18 @@ export function useOpsAppModel() {
     setMediaFeedLimit,
     activeIngestJobs,
     mediaFeedItems,
+    mediaRowsPage,
+    mediaLibraryPage,
+    setMediaLibraryPage,
+    mediaLibraryPageCount,
     selectedServerMediaId,
     setSelectedServerMediaId,
     setMediaDetailId,
     setBuilderTab,
     openQuickSend,
     deleteMediaItem,
-    draftPlaylists: draftStore.playlists,
+    playlistCount: playlistRowsFiltered.length,
+    playlistTotalCount: draftStore.playlists.length,
     mergedMediaById,
     deletePlaylistDraft,
     playlistRowsPage,
@@ -3608,7 +3747,7 @@ export function useOpsAppModel() {
     openPlaylistEditorRoute,
     selectedPlaylistId,
     deletePlaylistDraft,
-    playlistCount: draftStore.playlists.length,
+    playlistCount: playlistRowsFiltered.length,
     playlistTablePage,
     setPlaylistTablePage,
     playlistTablePageCount,
@@ -3622,9 +3761,12 @@ export function useOpsAppModel() {
     deleteChannelDraft,
     deleteProfileDraft,
     isMobile: Boolean(isMobile),
+    serverMediaQuery,
+    setServerMediaQuery,
     blockLibraryView,
     setBlockLibraryView,
     blockRowsPage,
+    blockCount: blockRowsFiltered.length,
     selectedBlockId,
     setSelectedBlockId,
     blockTablePage,
@@ -3637,6 +3779,7 @@ export function useOpsAppModel() {
     channelLibraryView,
     setChannelLibraryView,
     channelRowsPage,
+    channelCount: channelRowsFiltered.length,
     selectedChannelId,
     setSelectedChannelId,
     channelTablePage,
@@ -3649,6 +3792,7 @@ export function useOpsAppModel() {
     profileLibraryView,
     setProfileLibraryView,
     profileRowsPage,
+    profileCount: profileRowsFiltered.length,
     selectedProfileId,
     setSelectedProfileId,
     profileTablePage,

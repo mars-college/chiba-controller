@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import {
   ActionIcon,
   Badge,
@@ -51,17 +50,19 @@ export type MediaLibraryViewVm = {
   serverMediaSourceFilter: "all" | "path" | "url";
   setServerMediaSourceFilter: (value: "all" | "path" | "url") => void;
   mediaFilterData: Array<{ value: string; label: string }>;
-  hasMoreMediaFeed: boolean;
-  setMediaFeedLimit: Dispatch<SetStateAction<number>>;
   activeIngestJobs: MediaIngestJob[];
-  mediaFeedItems: Media[];
+  mediaRowsPage: Media[];
+  mediaLibraryPage: number;
+  setMediaLibraryPage: (page: number) => void;
+  mediaLibraryPageCount: number;
   selectedServerMediaId: string | null;
   setSelectedServerMediaId: (id: string | null) => void;
   setMediaDetailId: (id: string | null) => void;
   setBuilderTab: (tab: BuilderMode) => void;
   openQuickSend: (target: { kind: "media" | "playlist"; id: string; label: string }) => void;
   deleteMediaItem: (id: string) => Promise<void>;
-  draftPlaylists: DraftPlaylist[];
+  playlistCount: number;
+  playlistTotalCount: number;
   mergedMediaById: Map<string, Media>;
   deletePlaylistDraft: (id: string) => void | Promise<void> | Promise<boolean>;
   playlistRowsPage: DraftPlaylist[];
@@ -88,17 +89,19 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
     serverMediaSourceFilter,
     setServerMediaSourceFilter,
     mediaFilterData,
-    hasMoreMediaFeed,
-    setMediaFeedLimit,
     activeIngestJobs,
-    mediaFeedItems,
+    mediaRowsPage,
+    mediaLibraryPage,
+    setMediaLibraryPage,
+    mediaLibraryPageCount,
     selectedServerMediaId,
     setSelectedServerMediaId,
     setMediaDetailId,
     setBuilderTab,
     openQuickSend,
     deleteMediaItem,
-    draftPlaylists,
+    playlistCount,
+    playlistTotalCount,
     mergedMediaById,
     deletePlaylistDraft,
     playlistRowsPage,
@@ -197,25 +200,7 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                   />
                                 </SimpleGrid>
       
-                                <div
-                                  className="ops-media-feed"
-                                  onScroll={(event) => {
-                                    if (!hasMoreMediaFeed) return;
-                                    const target = event.currentTarget;
-                                    const nearBottom =
-                                      target.scrollHeight -
-                                        (target.scrollTop + target.clientHeight) <
-                                      220;
-                                    if (nearBottom) {
-                                      setMediaFeedLimit((prev) =>
-                                        Math.min(
-                                          prev + 24,
-                                          serverMediaFiltered.length
-                                        )
-                                      );
-                                    }
-                                  }}
-                                >
+                                <div className="ops-media-feed">
                                   <SimpleGrid
                                     cols={{ base: 1, sm: 2, lg: 3, xl: 4 }}
                                     spacing="sm"
@@ -256,7 +241,7 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                         </Stack>
                                       </Card>
                                     ))}
-                                    {mediaFeedItems.map((row) => {
+                                    {mediaRowsPage.map((row) => {
                                       const previewSrc = mediaPreviewSource(row);
                                       const isVideo = isVideoMedia(row);
                                       return (
@@ -407,34 +392,42 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                       No media matches this filter.
                                     </Text>
                                   ) : null}
-                                  {hasMoreMediaFeed ? (
-                                    <Group justify="center" mt="md">
-                                      <Button
-                                        variant="light"
-                                        size="xs"
-                                        onClick={() =>
-                                          setMediaFeedLimit((prev) =>
-                                            Math.min(
-                                              prev + 24,
-                                              serverMediaFiltered.length
-                                            )
-                                          )
-                                        }
-                                      >
-                                        Load More
-                                      </Button>
-                                    </Group>
-                                  ) : null}
                                 </div>
+                                <Group justify="space-between" mt="xs" wrap="wrap">
+                                  <Text size="xs" c="dimmed">
+                                    {tableRangeLabel(
+                                      serverMediaFiltered.length,
+                                      mediaLibraryPage,
+                                      TABLE_PAGE_SIZE.media
+                                    )}
+                                  </Text>
+                                  <Pagination
+                                    total={mediaLibraryPageCount}
+                                    value={mediaLibraryPage}
+                                    onChange={setMediaLibraryPage}
+                                    size={isMobile ? "sm" : "md"}
+                                    siblings={1}
+                                    boundaries={1}
+                                    withEdges
+                                  />
+                                </Group>
                               </>
                             ) : (
                               <>
+                                <TextInput
+                                  leftSection={<IconSearch size={16} />}
+                                  placeholder="Search playlists by id, title, artist, description"
+                                  value={serverMediaQuery}
+                                  onChange={(e) =>
+                                    setServerMediaQuery(e.currentTarget.value)
+                                  }
+                                />
                                 {playlistLibraryView === "cards" ? (
                                   <SimpleGrid
                                     cols={{ base: 1, md: 2, xl: 3 }}
                                     spacing="sm"
                                   >
-                                    {draftPlaylists.map((row) => (
+                                    {playlistRowsPage.map((row) => (
                                       <Card
                                         key={row.id}
                                         withBorder
@@ -633,35 +626,37 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
                                         </Table.Tbody>
                                       </Table>
                                     </ScrollArea>
-                                    <Group
-                                      justify="space-between"
-                                      mt="xs"
-                                      wrap="wrap"
-                                    >
-                                      <Text size="xs" c="dimmed">
-                                        {tableRangeLabel(
-                                          draftPlaylists.length,
-                                          playlistTablePage,
-                                          TABLE_PAGE_SIZE.playlists
-                                        )}
-                                      </Text>
-                                      <Pagination
-                                        total={playlistTablePageCount}
-                                        value={playlistTablePage}
-                                        onChange={setPlaylistTablePage}
-                                        size={isMobile ? "sm" : "md"}
-                                        siblings={1}
-                                        boundaries={1}
-                                        withEdges
-                                      />
-                                    </Group>
                                   </Card>
                                 )}
-                                {draftPlaylists.length === 0 ? (
+                                <Group justify="space-between" mt="xs" wrap="wrap">
+                                  <Text size="xs" c="dimmed">
+                                    {tableRangeLabel(
+                                      playlistCount,
+                                      playlistTablePage,
+                                      TABLE_PAGE_SIZE.playlists
+                                    )}
+                                  </Text>
+                                  <Pagination
+                                    total={playlistTablePageCount}
+                                    value={playlistTablePage}
+                                    onChange={setPlaylistTablePage}
+                                    size={isMobile ? "sm" : "md"}
+                                    siblings={1}
+                                    boundaries={1}
+                                    withEdges
+                                  />
+                                </Group>
+                                {playlistTotalCount === 0 ? (
                                   <Paper withBorder p="md">
                                     <Text size="sm" c="dimmed">
                                       No playlists yet. Create one to start assembling
                                       programming.
+                                    </Text>
+                                  </Paper>
+                                ) : playlistCount === 0 ? (
+                                  <Paper withBorder p="md">
+                                    <Text size="sm" c="dimmed">
+                                      No playlists match this search.
                                     </Text>
                                   </Paper>
                                 ) : null}

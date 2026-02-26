@@ -139,11 +139,11 @@ export const EMPTY_PROFILE_DRAFT: DraftProfile = {
 
 export const TABLE_PAGE_SIZE = {
   fleet: 25,
-  media: 24,
-  playlists: 16,
-  blocks: 12,
-  channels: 12,
-  profiles: 12,
+  media: 20,
+  playlists: 20,
+  blocks: 20,
+  channels: 20,
+  profiles: 20,
 } as const;
 
 export function paginateRows<T>(rows: T[], page: number, pageSize: number): T[] {

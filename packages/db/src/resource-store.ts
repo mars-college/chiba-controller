@@ -1131,22 +1131,34 @@ export async function getResourceSnapshot(args: {
         .select()
         .from(schema.mediaResources)
         .orderBy(desc(schema.mediaResources.createdAt), desc(schema.mediaResources.id)),
-      args.db.select().from(schema.playlistResources).orderBy(asc(schema.playlistResources.id)),
+      args.db
+        .select()
+        .from(schema.playlistResources)
+        .orderBy(desc(schema.playlistResources.updatedAt), desc(schema.playlistResources.id)),
       args.db.select().from(schema.playlistItems).orderBy(
         asc(schema.playlistItems.playlistId),
         asc(schema.playlistItems.itemIndex)
       ),
-      args.db.select().from(schema.blockResources).orderBy(asc(schema.blockResources.id)),
+      args.db
+        .select()
+        .from(schema.blockResources)
+        .orderBy(desc(schema.blockResources.updatedAt), desc(schema.blockResources.id)),
       args.db.select().from(schema.blockItems).orderBy(
         asc(schema.blockItems.blockId),
         asc(schema.blockItems.itemIndex)
       ),
-      args.db.select().from(schema.channelResources).orderBy(asc(schema.channelResources.id)),
+      args.db
+        .select()
+        .from(schema.channelResources)
+        .orderBy(desc(schema.channelResources.updatedAt), desc(schema.channelResources.id)),
       args.db.select().from(schema.channelBlocks).orderBy(
         asc(schema.channelBlocks.channelId),
         asc(schema.channelBlocks.blockIndex)
       ),
-      args.db.select().from(schema.profileResources).orderBy(asc(schema.profileResources.id)),
+      args.db
+        .select()
+        .from(schema.profileResources)
+        .orderBy(desc(schema.profileResources.updatedAt), desc(schema.profileResources.id)),
       args.db
         .select()
         .from(schema.profileNodeAssignments)
