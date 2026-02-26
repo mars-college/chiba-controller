@@ -375,6 +375,23 @@ function mergeLaunch(...inputs: Array<unknown>): LaunchOptions {
   return sanitizeLaunch(merged);
 }
 
+function withNodeLaunchDefaults(args: {
+  node: typeof schema.registryNodes.$inferSelect | null | undefined;
+  launch: LaunchOptions;
+}): LaunchOptions {
+  const launch = sanitizeLaunch(args.launch);
+  if (!args.node) return launch;
+  if (typeof launch.displayRotate === "number") return launch;
+  const rotate = args.node.displayRotate;
+  if (rotate === 0 || rotate === 90 || rotate === 180 || rotate === 270) {
+    return {
+      ...launch,
+      displayRotate: rotate,
+    };
+  }
+  return launch;
+}
+
 type RequestLike = {
   body?: unknown;
   query?: unknown;
@@ -654,7 +671,10 @@ function buildKioskUrl(args: {
   }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
-    params.set("displayRotate", String(args.launch.displayRotate));
+    const rotate = String(args.launch.displayRotate);
+    // Use snake_case as canonical for guide query parsing; keep camelCase for compatibility.
+    params.set("display_rotate", rotate);
+    params.set("displayRotate", rotate);
   }
   if (args.launch.hudMode) params.set("hud", args.launch.hudMode);
   if (typeof args.launch.hudSec === "number") {
@@ -1885,12 +1905,24 @@ async function loadStatus(args: {
   db: ReturnType<typeof createDb>;
   screenId: string;
   namespace: string;
+  registryId?: string;
 }) {
+  const registryId = (args.registryId ?? args.namespace).trim() || args.namespace;
   const desired = await getDesiredScreenState({
     db: args.db,
     screenId: args.screenId,
     namespace: args.namespace,
   });
+  const nodeRows = await args.db
+    .select()
+    .from(schema.registryNodes)
+    .where(
+      and(
+        eq(schema.registryNodes.registryId, registryId),
+        eq(schema.registryNodes.nodeId, args.screenId)
+      )
+    );
+  const node = nodeRows[0] ?? null;
   const runtime = await getNodeRuntimeReport({
     db: args.db,
     nodeId: args.screenId,
@@ -1919,7 +1951,10 @@ async function loadStatus(args: {
             kind: desired.targetKind,
             id: desired.targetId,
           },
-          launch: desired.launch,
+          launch: withNodeLaunchDefaults({
+            node,
+            launch: desired.launch,
+          }),
           controllerId: desired.controllerId,
           operationId: desired.operationId,
           updatedAt: desired.createdAt,
@@ -1997,7 +2032,10 @@ async function probeFleetNode(args: {
           screenId: args.node.nodeId,
           guidePort,
           target,
-          launch: desired.launch,
+          launch: withNodeLaunchDefaults({
+            node: args.node,
+            launch: desired.launch,
+          }),
         })
       : null;
 
@@ -2440,11 +2478,12 @@ async function main(): Promise<void> {
     const query = queryOf(req);
     const screenId = String(params.screenId ?? "").trim();
     const namespace = String(query.namespace ?? DEFAULT_NAMESPACE).trim() || DEFAULT_NAMESPACE;
+    const registryId = readRegistryId(req, namespace);
     if (!screenId) {
       res.status(400).json({ ok: false, error: "screen_id_required" });
       return;
     }
-    const payload = await loadStatus({ db, screenId, namespace });
+    const payload = await loadStatus({ db, screenId, namespace, registryId });
     res.json(payload);
   });
 
@@ -2454,12 +2493,23 @@ async function main(): Promise<void> {
     const screenId = String(params.screenId ?? "").trim();
     const namespace =
       String(query.namespace ?? DEFAULT_NAMESPACE).trim() || DEFAULT_NAMESPACE;
+    const registryId = readRegistryId(req, namespace);
     if (!screenId) {
       res.status(400).json({ ok: false, error: "screen_id_required" });
       return;
     }
 
     const desired = await getDesiredScreenState({ db, screenId, namespace });
+    const nodeRows = await db
+      .select()
+      .from(schema.registryNodes)
+      .where(
+        and(
+          eq(schema.registryNodes.registryId, registryId),
+          eq(schema.registryNodes.nodeId, screenId)
+        )
+      );
+    const node = nodeRows[0] ?? null;
     if (!desired) {
       res.json({
         ok: true,
@@ -2502,7 +2552,10 @@ async function main(): Promise<void> {
       desired: {
         revision: desired.revision,
         target,
-        launch: desired.launch,
+        launch: withNodeLaunchDefaults({
+          node,
+          launch: desired.launch,
+        }),
       },
       resolved: {
         items: resolved.items,
@@ -3155,6 +3208,7 @@ async function main(): Promise<void> {
     const query = queryOf(req);
     const screenId = String(query.screenId ?? "").trim();
     const namespace = String(query.namespace ?? DEFAULT_NAMESPACE).trim() || DEFAULT_NAMESPACE;
+    const registryId = readRegistryId(req, namespace);
     const waitForRaw = String(query.waitFor ?? "Activated").trim();
     const timeoutMs = Math.max(
       500,
@@ -3173,7 +3227,7 @@ async function main(): Promise<void> {
     const waitFor = waitForParsed.data as WaitCondition;
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      const status = await loadStatus({ db, screenId, namespace });
+      const status = await loadStatus({ db, screenId, namespace, registryId });
       const cond = status.conditions.find((c) => c.type === waitFor);
       if (cond?.status) {
         res.json({
@@ -3189,7 +3243,7 @@ async function main(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    const status = await loadStatus({ db, screenId, namespace });
+    const status = await loadStatus({ db, screenId, namespace, registryId });
     res.status(408).json({
       ok: false,
       error: "wait_timeout",
@@ -4341,6 +4395,7 @@ async function main(): Promise<void> {
           id: parsed.data.id,
         };
       }
+      launch = withNodeLaunchDefaults({ node, launch });
 
       if (!target) {
         results.push({
@@ -4552,11 +4607,15 @@ async function main(): Promise<void> {
           }
         : (fallbackTarget as DesiredTarget);
       const launch = mergeLaunch(desired?.launch ?? {}, overrideLaunch);
+      const launchWithDefaults = withNodeLaunchDefaults({
+        node,
+        launch,
+      });
       const url = buildKioskUrl({
         screenId: nodeId,
         guidePort: node.guidePort ?? 5173,
         target,
-        launch,
+        launch: launchWithDefaults,
       });
 
       if (dryRun) {
@@ -4586,7 +4645,7 @@ async function main(): Promise<void> {
           controllerId,
           operationId: `${controllerId}:${nodeId}:${randomUUID()}`,
           target,
-          launch,
+          launch: launchWithDefaults,
         },
       });
       const elapsed = Date.now() - started;

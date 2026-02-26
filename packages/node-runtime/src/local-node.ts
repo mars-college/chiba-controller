@@ -406,7 +406,9 @@ function buildKioskUrl(args: {
   }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
-    params.set("displayRotate", String(args.launch.displayRotate));
+    const rotate = String(args.launch.displayRotate);
+    params.set("display_rotate", rotate);
+    params.set("displayRotate", rotate);
   }
   if (args.launch.hudMode) params.set("hud", args.launch.hudMode);
   if (typeof args.launch.hudSec === "number") {
