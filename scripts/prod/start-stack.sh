@@ -301,6 +301,8 @@ case "${ACTION}" in
       compose_cmd pull
     fi
     cleanup_conflicting_named_containers
+    echo "Running DB migrations..."
+    compose_cmd run --rm db-migrate
     up_args=(up --remove-orphans)
     if [[ "${DETACH}" -eq 1 ]]; then
       up_args+=(-d)
