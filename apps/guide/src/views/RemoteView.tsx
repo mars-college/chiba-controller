@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type KeyboardEvent,
   type PointerEvent,
 } from "react";
 import { PARAM_GALLERY, PARAM_LOCK_KEYS } from "../constants/params";
@@ -25,6 +26,7 @@ export function RemoteView() {
 
   const {
     status,
+    galleryMode,
     uiScale,
     textScale,
     visibleHours,
@@ -40,11 +42,19 @@ export function RemoteView() {
     setDialBuffer,
     showAppPanel,
     showInputPanel,
+    showScreenPanel,
+    activeScreenId,
+    screenOptions,
+    screenOptionsLoading,
+    screenOptionsError,
     hasAppControls,
     hasKeyboardMouse,
     hasMicControls,
+    remoteGuideEnabled,
     remoteControlsStatus,
     remoteControls,
+    setActiveScreenId,
+    refreshScreenOptions,
     handleRemoteControl,
     setRemotePanel,
     pushDialDigit,
@@ -58,10 +68,14 @@ export function RemoteView() {
   const padRef = useRef<HTMLDivElement | null>(null);
   const padLastRef = useRef<{ x: number; y: number } | null>(null);
   const padTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const scrollPadRef = useRef<HTMLDivElement | null>(null);
+  const scrollPadLastYRef = useRef<number | null>(null);
   const keyboardInputRef = useRef<HTMLInputElement | null>(null);
   const [keyboardValue, setKeyboardValue] = useState("");
   const keyboardValueRef = useRef("");
-  const isCompactMode = showAppPanel || showInputPanel;
+  const [manualScreenId, setManualScreenId] = useState("");
+  const isCompactMode = showAppPanel || showInputPanel || showScreenPanel;
+  const hideGuideControls = !remoteGuideEnabled && (channelLocked || galleryMode);
 
   const startPad = useCallback((clientX: number, clientY: number) => {
     padLastRef.current = { x: clientX, y: clientY };
@@ -91,7 +105,7 @@ export function RemoteView() {
       if (!tap) return;
       const dt = Date.now() - tap.time;
       const dist = Math.hypot(clientX - tap.x, clientY - tap.y);
-      if (dt < 250 && dist < 8) {
+      if (dt < 450 && dist < 12) {
         send({ type: "mouse", action: "click" });
         log.debug("trackpad-click");
       }
@@ -140,6 +154,53 @@ export function RemoteView() {
     padTapRef.current = null;
   }, []);
 
+  const handleScrollPadPointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore if pointer capture unsupported
+      }
+      scrollPadLastYRef.current = event.clientY;
+      log.debug("scrollpad-pointer", { phase: "down" });
+    },
+    []
+  );
+
+  const handleScrollPadPointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const lastY = scrollPadLastYRef.current;
+      const rect = scrollPadRef.current?.getBoundingClientRect();
+      if (lastY === null || !rect || !rect.height) return;
+      const dy = (event.clientY - lastY) / rect.height;
+      scrollPadLastYRef.current = event.clientY;
+      if (Math.abs(dy) < 0.001) return;
+      send({ type: "mouse", action: "scroll", dy });
+      log.debug("scrollpad-move", { dy });
+    },
+    [send]
+  );
+
+  const handleScrollPadPointerUp = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // ignore if pointer capture unsupported
+      }
+      scrollPadLastYRef.current = null;
+      log.debug("scrollpad-pointer", { phase: "up" });
+    },
+    []
+  );
+
+  const handleScrollPadPointerCancel = useCallback(() => {
+    scrollPadLastYRef.current = null;
+  }, []);
+
 
   const handleKeyboardChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -181,12 +242,40 @@ export function RemoteView() {
     send({ type: "keyboard", action: "backspace", count: 1 });
   }, [send]);
 
+  const handleKeyboardInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        send({ type: "keyboard", action: "key", key: "Enter" });
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        send({ type: "keyboard", action: "key", key: "Escape" });
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        send({ type: "keyboard", action: "key", key: "Tab" });
+      }
+    },
+    [send]
+  );
+
+  const clearKeyboardBuffer = useCallback(() => {
+    keyboardValueRef.current = "";
+    setKeyboardValue("");
+  }, []);
+
   useEffect(() => {
     if (!showInputPanel) {
-      keyboardValueRef.current = "";
-      setKeyboardValue("");
+      clearKeyboardBuffer();
     }
-  }, [showInputPanel]);
+  }, [clearKeyboardBuffer, showInputPanel]);
+
+  useEffect(() => {
+    setManualScreenId(activeScreenId);
+  }, [activeScreenId]);
 
   return (
     <div
@@ -196,9 +285,14 @@ export function RemoteView() {
     >
       <div className="remote-body">
         <div className="remote-top">
-          <div className="remote-title">Chiba Cable</div>
+          <button
+            className="remote-title-button"
+            onClick={() => setRemotePanel("screen")}
+          >
+            Change Screen
+          </button>
           <div className={`remote-status ${status}`}>
-            {status === "open" ? "Connected" : "Connecting..."}
+            {activeScreenId || "No Screen"}
           </div>
         </div>
 
@@ -282,6 +376,76 @@ export function RemoteView() {
             >
               Close
             </button>
+          </div>
+        ) : showScreenPanel ? (
+          <div className="remote-screen-panel">
+            <div className="remote-app-title">
+              <span>Select Screen</span>
+            </div>
+            <button
+              className="remote-app-back"
+              onClick={() => setRemotePanel("remote")}
+            >
+              Back to Remote
+            </button>
+            <div className="remote-screen-current">
+              Active: {activeScreenId || "No Screen"}
+            </div>
+            <div className="remote-screen-manual">
+              <input
+                type="text"
+                className="remote-keyboard-input"
+                value={manualScreenId}
+                onChange={(event) => setManualScreenId(event.currentTarget.value)}
+                placeholder="Enter screen ID"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+              />
+              <button
+                className="remote-screen-apply"
+                disabled={!manualScreenId.trim()}
+                onClick={() => setActiveScreenId(manualScreenId)}
+              >
+                Set Screen
+              </button>
+            </div>
+            <button className="remote-screen-refresh" onClick={refreshScreenOptions}>
+              Refresh Node Registry
+            </button>
+            {screenOptionsLoading ? (
+              <div className="remote-app-status">Loading screens…</div>
+            ) : null}
+            {screenOptionsError ? (
+              <div className="remote-app-status">
+                Could not load nodes: {screenOptionsError}
+              </div>
+            ) : null}
+            <div className="remote-screen-list">
+              {screenOptions.length ? (
+                screenOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    className={`remote-screen-option ${
+                      option.id === activeScreenId ? "is-active" : ""
+                    }`}
+                    onClick={() => setActiveScreenId(option.id)}
+                  >
+                    <span className="remote-screen-option-id">{option.id}</span>
+                    <span className="remote-screen-option-label">{option.label}</span>
+                    {option.detail ? (
+                      <span className="remote-screen-option-detail">
+                        {option.detail}
+                      </span>
+                    ) : null}
+                  </button>
+                ))
+              ) : (
+                <div className="remote-god-empty">
+                  No nodes found. Add nodes in Ops to target screens.
+                </div>
+              )}
+            </div>
           </div>
         ) : showAppPanel ? (
           <div className="remote-app">
@@ -438,6 +602,8 @@ export function RemoteView() {
                 type="text"
                 value={keyboardValue}
                 onChange={handleKeyboardChange}
+                onKeyDown={handleKeyboardInputKeyDown}
+                onBlur={clearKeyboardBuffer}
                 placeholder="Type here to send keys"
                 autoComplete="off"
                 autoCapitalize="none"
@@ -448,12 +614,24 @@ export function RemoteView() {
                 <button onClick={() => handleKeyboardKey("Enter")}>Enter</button>
                 <button onClick={() => handleKeyboardKey("Escape")}>Esc</button>
               </div>
+              <div
+                className="remote-scrollpad"
+                ref={scrollPadRef}
+                onPointerDown={handleScrollPadPointerDown}
+                onPointerMove={handleScrollPadPointerMove}
+                onPointerUp={handleScrollPadPointerUp}
+                onPointerCancel={handleScrollPadPointerCancel}
+              >
+                <div className="remote-scrollpad-label">
+                  Drag up/down to scroll
+                </div>
+              </div>
             </div>
           </div>
         ) : (
           <>
             <div className="remote-controls">
-              {channelLocked ? null : (
+              {hideGuideControls ? null : (
                 <div className="rocker">
                   <button onClick={() => send({ type: "channel", dir: "up" })}>
                     CH UP
@@ -478,7 +656,7 @@ export function RemoteView() {
               </div>
             </div>
 
-            {channelLocked ? null : (
+            {hideGuideControls ? null : (
               <div className="remote-dpad">
                 <button
                   className="up"
@@ -522,7 +700,7 @@ export function RemoteView() {
             )}
 
             <div className="remote-actions">
-              {channelLocked ? null : (
+              {hideGuideControls ? null : (
                 <button onClick={() => send({ type: "guide" })}>Guide</button>
               )}
               <button onClick={() => send({ type: "info" })}>Info</button>
@@ -559,7 +737,7 @@ export function RemoteView() {
               </button>
             </div>
 
-            {channelLocked ? null : (
+            {hideGuideControls ? null : (
               <div className="remote-numpad">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
                   <button

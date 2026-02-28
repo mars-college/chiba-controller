@@ -8,6 +8,7 @@ type RemoteControlsOptions = {
   viewMode: ViewMode;
   activeRemoteAppId: string;
   send: (message: RemoteMessage) => void;
+  enabled?: boolean;
 };
 
 const log = createLogger("remote-controls");
@@ -16,10 +17,14 @@ export function useRemoteControls({
   viewMode,
   activeRemoteAppId,
   send,
+  enabled = true,
 }: RemoteControlsOptions) {
   const [remoteControls, setRemoteControls] = useState<RemoteControl[]>([]);
   const [remoteControlsStatus, setRemoteControlsStatus] =
     useState<RemoteControlsStatus>("idle");
+  const [controlDispatchAppId, setControlDispatchAppId] = useState(
+    activeRemoteAppId
+  );
 
   const mergeRemoteControls = useCallback(
     (incoming: RemoteControl[], current: RemoteControl[]) =>
@@ -36,7 +41,8 @@ export function useRemoteControls({
 
   const handleRemoteControl = useCallback(
     (controlId: string, value: number | string | boolean) => {
-      if (!activeRemoteAppId) return;
+      const dispatchAppId = (controlDispatchAppId || activeRemoteAppId).trim();
+      if (!dispatchAppId) return;
       setRemoteControls((prev) =>
         prev.map((control): RemoteControl => {
           if (control.id !== controlId) return control;
@@ -52,13 +58,13 @@ export function useRemoteControls({
           return control;
         })
       );
-      send({ type: "control", appId: activeRemoteAppId, controlId, value });
+      send({ type: "control", appId: dispatchAppId, controlId, value });
     },
-    [activeRemoteAppId, send]
+    [activeRemoteAppId, controlDispatchAppId, send]
   );
 
   useEffect(() => {
-    if (viewMode !== "remote" || !activeRemoteAppId) return;
+    if (viewMode !== "remote" || !activeRemoteAppId || !enabled) return;
     let cancelled = false;
 
     const loadControls = async () => {
@@ -72,9 +78,17 @@ export function useRemoteControls({
           return;
         }
         const data = (await res.json()) as {
+          appId?: string;
+          controlAppId?: string;
           controls?: RemoteControl[];
         };
         if (cancelled) return;
+        const nextDispatchAppId = String(
+          data.controlAppId || data.appId || activeRemoteAppId
+        ).trim();
+        if (nextDispatchAppId) {
+          setControlDispatchAppId(nextDispatchAppId);
+        }
         setRemoteControls((prev) =>
           mergeRemoteControls(data.controls ?? [], prev)
         );
@@ -86,18 +100,25 @@ export function useRemoteControls({
     };
 
     loadControls();
-    const interval = window.setInterval(loadControls, 2000);
+    const interval = window.setInterval(loadControls, 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [viewMode, activeRemoteAppId, mergeRemoteControls]);
+  }, [viewMode, activeRemoteAppId, enabled, mergeRemoteControls]);
 
   useEffect(() => {
     if (viewMode !== "remote") return;
+    if (!enabled) {
+      setRemoteControls([]);
+      setControlDispatchAppId(activeRemoteAppId);
+      setRemoteControlsStatus("idle");
+      return;
+    }
     setRemoteControls([]);
+    setControlDispatchAppId(activeRemoteAppId);
     setRemoteControlsStatus(activeRemoteAppId ? "loading" : "idle");
-  }, [viewMode, activeRemoteAppId]);
+  }, [viewMode, activeRemoteAppId, enabled]);
 
   return {
     remoteControls,

@@ -39,6 +39,21 @@ export const PARAM_REMOTE_INPUT_KEYS = [
   "remoteKeyboardMouse",
   "keyboardMouse",
 ] as const;
+export const PARAM_REMOTE_APP_CTRL_KEYS = [
+  "remoteApp",
+  "remote_app",
+  "appControls",
+] as const;
+export const PARAM_REMOTE_MIC_KEYS = [
+  "remoteMic",
+  "remote_mic",
+  "micControls",
+] as const;
+export const PARAM_REMOTE_GUIDE_KEYS = [
+  "remoteGuide",
+  "remote_guide",
+  "guideControls",
+] as const;
 
 // Player info card (HUD)
 // - `hud=always|start|never`

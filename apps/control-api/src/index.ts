@@ -108,6 +108,7 @@ type ResolvedPlaybackItem = {
   web?: {
     launchProfile?: "home_assistant_login";
     launchArgs?: Record<string, string>;
+    appControlsApi?: string;
   };
   cache: boolean;
   durationSec?: number;
@@ -253,6 +254,67 @@ const GUIDE_SLOT_COUNT = 6;
 const QR_BASE =
   "https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=0&data=";
 
+const RemoteControlSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+      type: z.literal("range"),
+      min: z.number(),
+      max: z.number(),
+      step: z.number().positive().optional(),
+      value: z.number().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+      type: z.literal("select"),
+      options: z
+        .array(
+          z
+            .object({
+              value: z.string(),
+              label: z.string(),
+            })
+            .strict()
+        )
+        .default([]),
+      value: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+      type: z.literal("toggle"),
+      value: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+      type: z.literal("button"),
+    })
+    .strict(),
+]);
+
+const RemoteControlsMessageSchema = z
+  .object({
+    type: z.literal("controls"),
+    appId: z.string().min(1),
+    controls: z.array(RemoteControlSchema).default([]),
+  })
+  .strict();
+
+const RemoteControlsResponseSchema = z
+  .object({
+    controls: z.array(RemoteControlSchema).default([]),
+  })
+  .passthrough();
+
 function mediaContentTypeForPath(filePath: string): string {
   const guessed = lookupMimeType(filePath);
   return typeof guessed === "string" && guessed ? guessed : "application/octet-stream";
@@ -271,6 +333,10 @@ const DEFAULT_BOOTSTRAP_GUIDE_BASE_URL =
   process.env.CHIBA3_BOOTSTRAP_GUIDE_BASE_URL?.trim() || "";
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_DISPLAY_MODE_TIMEOUT_MS = 5 * 60 * 1000;
+const CONTROLS_CACHE_TTL_MS = Math.max(
+  2_000,
+  Number(process.env.CHIBA3_CONTROLS_CACHE_TTL_MS ?? "30000") || 30_000
+);
 const BOOTSTRAP_OUTPUT_MAX_CHARS = 120_000;
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -299,6 +365,9 @@ const OpsApplyTargetRequestSchema = z
     qr: z.boolean().optional(),
     nosplash: z.boolean().optional(),
     remoteInput: z.boolean().optional(),
+    remoteApp: z.boolean().optional(),
+    remoteMic: z.boolean().optional(),
+    remoteGuide: z.boolean().optional(),
     hudMode: z.enum(["always", "start", "never"]).optional(),
     hudShowSec: z.number().positive().optional(),
     theme: z.string().min(1).optional(),
@@ -669,6 +738,18 @@ function buildKioskUrl(args: {
   if (typeof args.launch.remoteInput === "boolean") {
     params.set("remoteInput", args.launch.remoteInput ? "1" : "0");
   }
+  const launchRemoteApp = (args.launch as Record<string, unknown>).remoteApp;
+  if (typeof launchRemoteApp === "boolean") {
+    params.set("remoteApp", launchRemoteApp ? "1" : "0");
+  }
+  const launchRemoteMic = (args.launch as Record<string, unknown>).remoteMic;
+  if (typeof launchRemoteMic === "boolean") {
+    params.set("remoteMic", launchRemoteMic ? "1" : "0");
+  }
+  const launchRemoteGuide = (args.launch as Record<string, unknown>).remoteGuide;
+  if (typeof launchRemoteGuide === "boolean") {
+    params.set("remoteGuide", launchRemoteGuide ? "1" : "0");
+  }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
     const rotate = String(args.launch.displayRotate);
@@ -697,6 +778,146 @@ function getSourceExt(value: string): string {
     if (idx < 0) return "";
     return raw.slice(idx).toLowerCase();
   }
+}
+
+function appIdFromWebArgs(media: MediaResource): string {
+  const appIdArg = media.web?.args?.appId;
+  if (typeof appIdArg === "string" && appIdArg.trim().length > 0) {
+    return appIdArg.trim();
+  }
+  const appArg = media.web?.args?.app;
+  if (typeof appArg === "string" && appArg.trim().length > 0) {
+    return appArg.trim();
+  }
+  return "";
+}
+
+function appIdFromSourceUrl(sourceValue: string): string {
+  const raw = repairMissingScheme(sourceValue);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, "http://localhost");
+    return (
+      parsed.searchParams.get("appId")?.trim() ||
+      parsed.searchParams.get("app")?.trim() ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function mediaMatchesAppId(media: MediaResource, appId: string): boolean {
+  if (media.sourceType !== "url") return false;
+  const expected = appId.trim();
+  if (!expected) return false;
+  const fromArgs = appIdFromWebArgs(media);
+  if (fromArgs && fromArgs === expected) return true;
+  const fromUrl = appIdFromSourceUrl(media.sourceValue);
+  return fromUrl === expected;
+}
+
+function mediaIdFromControlsLookupAppId(appId: string): string {
+  const raw = appId.trim();
+  if (!raw) return "";
+  const targetMediaPrefix = "target-media-";
+  if (raw.startsWith(targetMediaPrefix) && raw.length > targetMediaPrefix.length) {
+    return raw.slice(targetMediaPrefix.length).trim();
+  }
+  return "";
+}
+
+function appIdFromControlsApi(media: MediaResource): string {
+  const raw = String(media.web?.appControlsApi ?? "").trim();
+  if (!raw) return "";
+  if (raw.includes("{appId}")) return "";
+  const sourceUrlRaw = repairMissingScheme(media.sourceValue);
+  let sourceUrl: URL | null = null;
+  try {
+    sourceUrl = sourceUrlRaw ? new URL(sourceUrlRaw) : null;
+  } catch {
+    sourceUrl = null;
+  }
+  try {
+    const parsed = new URL(raw);
+    return (
+      parsed.searchParams.get("appId")?.trim() ||
+      parsed.searchParams.get("app")?.trim() ||
+      ""
+    );
+  } catch {
+    if (!sourceUrl) return "";
+    try {
+      const parsed = raw.startsWith("/")
+        ? new URL(raw, `${sourceUrl.protocol}//${sourceUrl.host}`)
+        : new URL(raw, sourceUrl);
+      return (
+        parsed.searchParams.get("appId")?.trim() ||
+        parsed.searchParams.get("app")?.trim() ||
+        ""
+      );
+    } catch {
+      return "";
+    }
+  }
+}
+
+function controlsAppIdForMedia(media: MediaResource, requestedAppId: string): string {
+  const fromArgs = appIdFromWebArgs(media);
+  if (fromArgs) return fromArgs;
+  const fromUrl = appIdFromSourceUrl(media.sourceValue);
+  if (fromUrl) return fromUrl;
+  const fromControlsApi = appIdFromControlsApi(media);
+  if (fromControlsApi) return fromControlsApi;
+  return requestedAppId;
+}
+
+function resolveMediaControlsApiUrl(args: {
+  media: MediaResource;
+  appId: string;
+}): string | null {
+  const raw = String(args.media.web?.appControlsApi ?? "").trim();
+  if (!raw) return null;
+  const withAppId = raw.replace(/\{appId\}/g, encodeURIComponent(args.appId));
+  const sourceUrlRaw = repairMissingScheme(args.media.sourceValue);
+  let sourceUrl: URL | null = null;
+  try {
+    sourceUrl = sourceUrlRaw ? new URL(sourceUrlRaw) : null;
+  } catch {
+    sourceUrl = null;
+  }
+
+  let resolved: URL;
+  try {
+    resolved = new URL(withAppId);
+  } catch {
+    if (!sourceUrl) return null;
+    try {
+      if (withAppId.startsWith("/")) {
+        resolved = new URL(withAppId, `${sourceUrl.protocol}//${sourceUrl.host}`);
+      } else {
+        resolved = new URL(withAppId, sourceUrl);
+      }
+    } catch {
+      return null;
+    }
+  }
+  if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+  return resolved.toString();
+}
+
+function parseRemoteControlsPayload(input: unknown): z.infer<typeof RemoteControlSchema>[] | null {
+  if (Array.isArray(input)) {
+    const parsedArray = z.array(RemoteControlSchema).safeParse(input);
+    return parsedArray.success ? parsedArray.data : null;
+  }
+  if (input && typeof input === "object") {
+    const parsedObject = RemoteControlsResponseSchema.safeParse(input);
+    if (parsedObject.success) {
+      return parsedObject.data.controls;
+    }
+  }
+  return null;
 }
 
 function isMediaSource(media: MediaResource): boolean {
@@ -888,6 +1109,20 @@ function applyLaunchArgsToUrl(sourceValue: string, launchArgs: Record<string, st
     const hash = hashIndex >= 0 ? sourceValue.slice(hashIndex) : "";
     const join = base.includes("?") ? "&" : "?";
     return `${base}${join}${query}${hash}`;
+  }
+}
+
+function shouldInjectWsArg(sourceValue: string, wsUrl: string): boolean {
+  const wsTrimmed = wsUrl.trim();
+  if (!wsTrimmed) return false;
+  try {
+    const wsParsed = new URL(wsTrimmed);
+    if (wsParsed.protocol !== "ws:" && wsParsed.protocol !== "wss:") return false;
+    const sourceParsed = new URL(sourceValue);
+    if (sourceParsed.protocol === "https:" && wsParsed.protocol !== "wss:") return false;
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1237,6 +1472,7 @@ function resolveTargetMedia(args: {
   screenId: string;
   streamBaseUrl: string;
   guideBaseUrl?: string | null;
+  remoteWsUrl?: string | null;
 }): { items: ResolvedPlaybackItem[]; warnings: string[] } {
   const mediaById = new Map(args.snapshot.media.map((row) => [row.id, row]));
   const playlistById = new Map(args.snapshot.playlists.map((row) => [row.id, row]));
@@ -1275,12 +1511,33 @@ function resolveTargetMedia(args: {
         screenId: args.screenId,
         media,
       });
+      // For apps with declared controls APIs, ensure runtime web URLs get a stable
+      // app identity + websocket endpoint so live `control` messages can apply.
+      if (media.web?.appControlsApi) {
+        const controlAppId = controlsAppIdForMedia(media, media.id);
+        if (
+          controlAppId &&
+          !Object.hasOwn(launchArgs, "appId") &&
+          !Object.hasOwn(launchArgs, "app")
+        ) {
+          launchArgs.appId = controlAppId;
+        }
+        if (
+          args.remoteWsUrl &&
+          !Object.hasOwn(launchArgs, "ws") &&
+          shouldInjectWsArg(sourceValue, args.remoteWsUrl)
+        ) {
+          launchArgs.ws = args.remoteWsUrl;
+        }
+      }
       sourceValue = applyLaunchArgsToUrl(sourceValue, launchArgs);
       const launchProfile = media.web?.launchProfile;
-      if (launchProfile || Object.keys(launchArgs).length > 0) {
+      const appControlsApi = media.web?.appControlsApi;
+      if (launchProfile || Object.keys(launchArgs).length > 0 || appControlsApi) {
         web = {
           ...(launchProfile ? { launchProfile } : {}),
           ...(Object.keys(launchArgs).length > 0 ? { launchArgs } : {}),
+          ...(appControlsApi ? { appControlsApi } : {}),
         };
       }
     }
@@ -2240,6 +2497,15 @@ async function main(): Promise<void> {
   edenSyncScheduler.start();
   const wss = new WebSocketServer({ noServer: true });
   const wsMeta = new Map<WebSocket, { screenId: string; role: string; alive: boolean }>();
+  const appControlsCache = new Map<
+    string,
+    {
+      controls: z.infer<typeof RemoteControlSchema>[];
+      source: "ws" | "endpoint";
+      updatedAt: number;
+      controlAppId: string;
+    }
+  >();
 
   const wsScreenIdFromUrl = (rawUrl: string | undefined): string => {
     if (!rawUrl) return "";
@@ -2317,6 +2583,8 @@ async function main(): Promise<void> {
           role?: string;
           screenId?: string;
           screen?: string;
+          appId?: string;
+          controls?: unknown;
         };
         const meta = wsMeta.get(socket);
         if (meta) {
@@ -2330,6 +2598,20 @@ async function main(): Promise<void> {
           }
           if (parsed.type === "hello" && parsed.role) {
             meta.role = parsed.role;
+          }
+        }
+        if (parsed.type === "controls") {
+          const controlsMessage = RemoteControlsMessageSchema.safeParse(parsed);
+          if (controlsMessage.success) {
+            const appId = controlsMessage.data.appId.trim();
+            if (appId) {
+              appControlsCache.set(appId, {
+                controls: controlsMessage.data.controls,
+                source: "ws",
+                updatedAt: Date.now(),
+                controlAppId: appId,
+              });
+            }
           }
         }
       } catch {
@@ -2423,6 +2705,116 @@ async function main(): Promise<void> {
     }
     const qrUrl = `${QR_BASE}${encodeURIComponent(remoteUrl)}`;
     res.json({ baseUrl, remoteUrl, qrUrl, wsUrl });
+  });
+
+  app.get("/api/controls/:appId", async (req, res) => {
+    const params = paramsOf(req);
+    const appId = String(params.appId ?? "").trim();
+    if (!appId) {
+      res.status(400).json({ ok: false, error: "app_id_required" });
+      return;
+    }
+    const now = Date.now();
+    const cached = appControlsCache.get(appId);
+    if (cached && now - cached.updatedAt < CONTROLS_CACHE_TTL_MS) {
+      res.json({
+        ok: true,
+        appId,
+        controlAppId: cached.controlAppId,
+        controls: cached.controls,
+        source: cached.source,
+        cachedAt: cached.updatedAt,
+      });
+      return;
+    }
+
+    const snapshot = await getResourceSnapshot({ db });
+    const candidates: MediaResource[] = [];
+    const seenMediaIds = new Set<string>();
+    const addCandidate = (media: MediaResource | null | undefined) => {
+      if (!media) return;
+      if (seenMediaIds.has(media.id)) return;
+      seenMediaIds.add(media.id);
+      candidates.push(media);
+    };
+    // Support local fallback app ids generated by the guide runtime, e.g.
+    // `target-media-<mediaId>`, so app controls can resolve without explicit appId in URL.
+    const mediaIdHint = mediaIdFromControlsLookupAppId(appId);
+    if (mediaIdHint) {
+      addCandidate(snapshot.media.find((media) => media.id === mediaIdHint));
+    }
+    // Also allow direct media-id lookups.
+    addCandidate(snapshot.media.find((media) => media.id === appId));
+    // Standard appId matching via URL args/query params.
+    for (const media of snapshot.media) {
+      if (!mediaMatchesAppId(media, appId)) continue;
+      addCandidate(media);
+    }
+
+    let endpointError: string | null = null;
+    for (const media of candidates) {
+      const effectiveAppId = controlsAppIdForMedia(media, appId);
+      const endpointUrl = resolveMediaControlsApiUrl({
+        media,
+        appId: effectiveAppId,
+      });
+      if (!endpointUrl) continue;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        const response = await fetch(endpointUrl, {
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timer));
+        if (!response.ok) {
+          endpointError = `endpoint_status_${response.status}`;
+          continue;
+        }
+        const body = await response.json().catch(() => null);
+        const controls = parseRemoteControlsPayload(body);
+        if (!controls) {
+          endpointError = "endpoint_invalid_payload";
+          continue;
+        }
+        appControlsCache.set(appId, {
+          controls,
+          source: "endpoint",
+          updatedAt: Date.now(),
+          controlAppId: effectiveAppId,
+        });
+        res.json({
+          ok: true,
+          appId,
+          controlAppId: effectiveAppId,
+          controls,
+          source: "endpoint",
+          endpoint: endpointUrl,
+        });
+        return;
+      } catch (error) {
+        endpointError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (cached) {
+      res.json({
+        ok: true,
+        appId,
+        controlAppId: cached.controlAppId,
+        controls: cached.controls,
+        source: cached.source,
+        cachedAt: cached.updatedAt,
+        ...(endpointError ? { warning: `controls_endpoint_failed:${endpointError}` } : {}),
+      });
+      return;
+    }
+
+    res.status(404).json({
+      ok: false,
+      error: "controls_not_found",
+      appId,
+      ...(endpointError ? { detail: endpointError } : {}),
+    });
   });
 
   app.post("/api/v1/apply/screen-assignment", async (req, res) => {
@@ -2534,12 +2926,29 @@ async function main(): Promise<void> {
     const streamBaseUrl = readPublicApiBaseUrl(req as { headers?: Record<string, unknown> });
     const guideBaseUrl =
       normalizeGuideBaseUrl(String(query.guideBaseUrl ?? "")) ?? DEFAULT_GUIDE_BASE_URL;
+    const scheme = String(query.scheme ?? "").replace(":", "").trim() || undefined;
+    const wsBaseUrl = getRemoteBaseUrl({
+      req: req as { headers?: Record<string, unknown> },
+      port: Number(process.env.PORT ?? "8795"),
+      ...(scheme ? { scheme } : {}),
+    });
+    let remoteWsUrl: string | null = null;
+    try {
+      const parsed = new URL(wsBaseUrl);
+      parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+      parsed.pathname = "/ws";
+      parsed.searchParams.set("screenId", screenId);
+      remoteWsUrl = parsed.toString();
+    } catch {
+      remoteWsUrl = null;
+    }
     const resolved = resolveTargetMedia({
       snapshot,
       target,
       screenId,
       streamBaseUrl,
       guideBaseUrl,
+      remoteWsUrl,
     });
     const cacheable = resolved.items.filter((item) => item.cache).length;
     const mpvCount = resolved.items.filter((item) => item.renderer === "mpv").length;
@@ -4292,6 +4701,9 @@ async function main(): Promise<void> {
       qr: parsed.data.showQr ?? parsed.data.qr,
       nosplash: parsed.data.nosplash,
       remoteInput: parsed.data.remoteInput,
+      remoteApp: parsed.data.remoteApp,
+      remoteMic: parsed.data.remoteMic,
+      remoteGuide: parsed.data.remoteGuide,
       hudMode: parsed.data.hudMode,
       hudSec: parsed.data.hudShowSec,
       theme: parsed.data.theme,

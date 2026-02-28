@@ -215,9 +215,16 @@ importers:
       '@chiba-cable3/contracts':
         specifier: workspace:*
         version: link:../contracts
+      ws:
+        specifier: ^8.18.3
+        version: 8.19.0
       zod:
         specifier: ^3.24.2
         version: 3.25.76
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
 
 packages:
 

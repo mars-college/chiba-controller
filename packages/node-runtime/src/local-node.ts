@@ -125,6 +125,11 @@ const MEDIA_URL_EXTENSIONS = new Set([
   ".tiff",
 ]);
 
+const CHROMIUM_DIAG_ATTACH_TIMEOUT_MS = 10_000;
+const CHROMIUM_DIAG_RECONNECT_MS = 2_000;
+const CHROMIUM_DIAG_DEDUPE_MS = 4_000;
+const CHROMIUM_DIAG_MAX_TEXT = 500;
+
 function readArg(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   if (idx < 0) return undefined;
@@ -404,6 +409,18 @@ function buildKioskUrl(args: {
   if (typeof args.launch.remoteInput === "boolean") {
     params.set("remoteInput", args.launch.remoteInput ? "1" : "0");
   }
+  const launchRemoteApp = (args.launch as Record<string, unknown>).remoteApp;
+  if (typeof launchRemoteApp === "boolean") {
+    params.set("remoteApp", launchRemoteApp ? "1" : "0");
+  }
+  const launchRemoteMic = (args.launch as Record<string, unknown>).remoteMic;
+  if (typeof launchRemoteMic === "boolean") {
+    params.set("remoteMic", launchRemoteMic ? "1" : "0");
+  }
+  const launchRemoteGuide = (args.launch as Record<string, unknown>).remoteGuide;
+  if (typeof launchRemoteGuide === "boolean") {
+    params.set("remoteGuide", launchRemoteGuide ? "1" : "0");
+  }
   if (args.launch.theme) params.set("theme", args.launch.theme);
   if (typeof args.launch.displayRotate === "number") {
     const rotate = String(args.launch.displayRotate);
@@ -611,7 +628,11 @@ async function runInputCommand(args: {
         ? "1"
         : args.action.button === "middle"
           ? "2"
-          : "3";
+          : args.action.button === "right"
+            ? "3"
+            : args.action.button === "wheel_up"
+              ? "4"
+              : "5";
     command.push("click");
     if (args.action.repeat && args.action.repeat > 1) {
       command.push("--repeat", String(args.action.repeat));
@@ -694,6 +715,417 @@ async function waitForWebReady(args: {
     status: lastStatus,
     elapsedMs: Date.now() - startedAt,
     ...(lastError ? { error: lastError } : {}),
+  };
+}
+
+function compactLogText(raw: string, maxLen = CHROMIUM_DIAG_MAX_TEXT): string {
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLen) return compact;
+  return `${compact.slice(0, maxLen - 1)}...`;
+}
+
+function cdpRemoteObjectText(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const obj = input as Record<string, unknown>;
+  const value = obj.value;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof obj.unserializableValue === "string") return obj.unserializableValue;
+  if (typeof obj.description === "string") return obj.description;
+  return "";
+}
+
+function cdpMessageDataToText(data: unknown): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  return "";
+}
+
+type BasicWebSocketCtor = new (url: string) => {
+  readyState?: number;
+  close?: () => void;
+  send?: (data: string) => void;
+  addEventListener?: (type: string, listener: (event?: unknown) => void) => void;
+};
+
+async function resolveWebSocketCtor(): Promise<BasicWebSocketCtor | null> {
+  const globalCtor = (globalThis as { WebSocket?: unknown }).WebSocket;
+  if (typeof globalCtor === "function") {
+    return globalCtor as BasicWebSocketCtor;
+  }
+  try {
+    const wsModule = (await import("ws")) as Record<string, unknown>;
+    const ctor = wsModule.WebSocket ?? wsModule.default;
+    if (typeof ctor === "function") {
+      return ctor as BasicWebSocketCtor;
+    }
+  } catch (error) {
+    toLog("warn", "chromium_diag_ws_import_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return null;
+}
+
+async function waitForChromiumDevtoolsPort(args: {
+  profileDir: string;
+  timeoutMs: number;
+}): Promise<number | null> {
+  const startedAt = Date.now();
+  const deadline = startedAt + Math.max(200, args.timeoutMs);
+  const markerPath = path.join(args.profileDir, "DevToolsActivePort");
+  while (Date.now() <= deadline) {
+    try {
+      const raw = await fs.readFile(markerPath, "utf8");
+      const port = Number(raw.split(/\r?\n/)[0]?.trim() ?? "");
+      if (Number.isFinite(port) && port > 0) {
+        return Math.floor(port);
+      }
+    } catch {
+      // marker not ready yet
+    }
+    await sleep(100);
+  }
+  return null;
+}
+
+async function waitForChromiumPageWsUrl(args: {
+  devtoolsPort: number;
+  expectedUrl: string;
+  timeoutMs: number;
+}): Promise<string | null> {
+  const startedAt = Date.now();
+  const deadline = startedAt + Math.max(200, args.timeoutMs);
+  while (Date.now() <= deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${args.devtoolsPort}/json/list`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const body = (await res.json().catch(() => null)) as unknown;
+        if (Array.isArray(body)) {
+          let fallback: string | null = null;
+          for (const row of body) {
+            if (!row || typeof row !== "object") continue;
+            const entry = row as Record<string, unknown>;
+            if (entry.type !== "page") continue;
+            const wsUrl =
+              typeof entry.webSocketDebuggerUrl === "string"
+                ? entry.webSocketDebuggerUrl
+                : "";
+            if (!wsUrl) continue;
+            const pageUrl = typeof entry.url === "string" ? entry.url : "";
+            if (!fallback) fallback = wsUrl;
+            if (!args.expectedUrl || pageUrl === args.expectedUrl) return wsUrl;
+            if (pageUrl && args.expectedUrl && pageUrl.startsWith(args.expectedUrl)) {
+              return wsUrl;
+            }
+          }
+          if (fallback) return fallback;
+        }
+      }
+    } catch {
+      // devtools endpoint not ready yet
+    }
+    await sleep(120);
+  }
+  return null;
+}
+
+function startChromiumDiagnostics(args: {
+  nodeId: string;
+  profileDir: string;
+  expectedUrl: string;
+}): { stop: () => void } {
+  let stopped = false;
+  let wsCtor: BasicWebSocketCtor | null = null;
+  let socket: {
+    readyState?: number;
+    close?: () => void;
+    send?: (data: string) => void;
+    addEventListener?: (type: string, listener: (event?: unknown) => void) => void;
+  } | null = null;
+  let reconnectTimer: NodeJS.Timeout | null = null;
+  let messageId = 0;
+  const recent = new Map<string, number>();
+
+  const shouldEmit = (key: string): boolean => {
+    const now = Date.now();
+    const last = recent.get(key) ?? 0;
+    if (now - last < CHROMIUM_DIAG_DEDUPE_MS) return false;
+    recent.set(key, now);
+    if (recent.size > 512) {
+      for (const [entryKey, ts] of recent) {
+        if (now - ts > CHROMIUM_DIAG_DEDUPE_MS * 8) {
+          recent.delete(entryKey);
+        }
+      }
+    }
+    return true;
+  };
+
+  const sendCdp = (method: string, params?: Record<string, unknown>) => {
+    const ws = socket;
+    if (!ws || ws.readyState !== 1 || !ws.send) return;
+    messageId += 1;
+    ws.send(
+      JSON.stringify({
+        id: messageId,
+        method,
+        ...(params ? { params } : {}),
+      })
+    );
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, CHROMIUM_DIAG_RECONNECT_MS);
+  };
+
+  const handleCdpMessage = (rawText: string, devtoolsPort: number) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      return;
+    }
+    if (!parsed || typeof parsed !== "object") return;
+    const msg = parsed as Record<string, unknown>;
+    const method = typeof msg.method === "string" ? msg.method : "";
+    const params = msg.params && typeof msg.params === "object"
+      ? (msg.params as Record<string, unknown>)
+      : null;
+    if (!method || !params) return;
+
+    if (method === "Runtime.exceptionThrown") {
+      const details =
+        params.exceptionDetails && typeof params.exceptionDetails === "object"
+          ? (params.exceptionDetails as Record<string, unknown>)
+          : null;
+      if (!details) return;
+      const exception =
+        details.exception && typeof details.exception === "object"
+          ? (details.exception as Record<string, unknown>)
+          : null;
+      const stack =
+        details.stackTrace && typeof details.stackTrace === "object"
+          ? (details.stackTrace as Record<string, unknown>)
+          : null;
+      const callFrames = Array.isArray(stack?.callFrames) ? stack?.callFrames : [];
+      const topFrame =
+        callFrames.length > 0 && callFrames[0] && typeof callFrames[0] === "object"
+          ? (callFrames[0] as Record<string, unknown>)
+          : null;
+      const text = compactLogText(
+        String(
+          details.text ??
+            exception?.description ??
+            exception?.value ??
+            "Runtime exception"
+        )
+      );
+      const url = String(details.url ?? topFrame?.url ?? args.expectedUrl ?? "");
+      const lineRaw = Number(details.lineNumber ?? topFrame?.lineNumber);
+      const colRaw = Number(details.columnNumber ?? topFrame?.columnNumber);
+      const line = Number.isFinite(lineRaw) ? Math.max(0, Math.floor(lineRaw)) + 1 : null;
+      const column = Number.isFinite(colRaw) ? Math.max(0, Math.floor(colRaw)) + 1 : null;
+      const key = `exception:${text}:${url}:${line ?? ""}:${column ?? ""}`;
+      if (!shouldEmit(key)) return;
+      toLog("error", "chromium_js_exception", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+        text,
+        ...(url ? { url } : {}),
+        ...(line ? { line } : {}),
+        ...(column ? { column } : {}),
+      });
+      return;
+    }
+
+    if (method === "Runtime.consoleAPICalled") {
+      const type = typeof params.type === "string" ? params.type : "log";
+      if (!["error", "warning", "assert"].includes(type)) return;
+      const list = Array.isArray(params.args) ? params.args : [];
+      const text = compactLogText(
+        list
+          .map((item) => cdpRemoteObjectText(item))
+          .filter((value) => value.length > 0)
+          .join(" ")
+      );
+      if (!text) return;
+      const key = `console:${type}:${text}`;
+      if (!shouldEmit(key)) return;
+      toLog(type === "error" ? "error" : "warn", "chromium_console", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+        type,
+        text,
+      });
+      return;
+    }
+
+    if (method === "Log.entryAdded") {
+      const entry = params.entry && typeof params.entry === "object"
+        ? (params.entry as Record<string, unknown>)
+        : null;
+      if (!entry) return;
+      const level = typeof entry.level === "string" ? entry.level : "info";
+      if (!["warning", "error"].includes(level)) return;
+      const text = compactLogText(String(entry.text ?? ""));
+      if (!text) return;
+      const key = `log:${level}:${text}`;
+      if (!shouldEmit(key)) return;
+      toLog(level === "error" ? "error" : "warn", "chromium_log_entry", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+        level,
+        text,
+        ...(typeof entry.url === "string" && entry.url ? { url: entry.url } : {}),
+      });
+      return;
+    }
+
+    if (method === "Network.loadingFailed") {
+      const canceled = params.canceled === true;
+      if (canceled) return;
+      const errorText = compactLogText(String(params.errorText ?? ""));
+      if (!errorText) return;
+      const blockedReason =
+        typeof params.blockedReason === "string" ? params.blockedReason : "";
+      const resourceType =
+        typeof params.type === "string" ? params.type : "";
+      const requestId = typeof params.requestId === "string" ? params.requestId : "";
+      const key = `net:${requestId}:${errorText}`;
+      if (!shouldEmit(key)) return;
+      toLog("warn", "chromium_request_failed", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+        errorText,
+        ...(resourceType ? { resourceType } : {}),
+        ...(blockedReason ? { blockedReason } : {}),
+      });
+    }
+  };
+
+  const connect = async () => {
+    if (stopped) return;
+    if (!wsCtor) {
+      wsCtor = await resolveWebSocketCtor();
+      if (!wsCtor) {
+        toLog("warn", "chromium_diag_unavailable", {
+          reason: "missing_websocket_support",
+          nodeId: args.nodeId,
+        });
+        return;
+      }
+    }
+    const devtoolsPort = await waitForChromiumDevtoolsPort({
+      profileDir: args.profileDir,
+      timeoutMs: CHROMIUM_DIAG_ATTACH_TIMEOUT_MS,
+    });
+    if (!devtoolsPort) {
+      toLog("warn", "chromium_diag_attach_failed", {
+        nodeId: args.nodeId,
+        reason: "missing_devtools_port",
+      });
+      scheduleReconnect();
+      return;
+    }
+    const wsUrl = await waitForChromiumPageWsUrl({
+      devtoolsPort,
+      expectedUrl: args.expectedUrl,
+      timeoutMs: CHROMIUM_DIAG_ATTACH_TIMEOUT_MS,
+    });
+    if (!wsUrl) {
+      toLog("warn", "chromium_diag_attach_failed", {
+        nodeId: args.nodeId,
+        reason: "missing_page_target",
+        devtoolsPort,
+      });
+      scheduleReconnect();
+      return;
+    }
+    let wsInstance: {
+      readyState?: number;
+      close?: () => void;
+      send?: (data: string) => void;
+      addEventListener?: (type: string, listener: (event?: unknown) => void) => void;
+    };
+    try {
+      wsInstance = new wsCtor(wsUrl) as typeof wsInstance;
+    } catch (error) {
+      toLog("warn", "chromium_diag_attach_failed", {
+        nodeId: args.nodeId,
+        reason: "websocket_ctor_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      scheduleReconnect();
+      return;
+    }
+    socket = wsInstance;
+    wsInstance.addEventListener?.("open", () => {
+      if (stopped) return;
+      messageId = 0;
+      sendCdp("Runtime.enable");
+      sendCdp("Log.enable");
+      sendCdp("Network.enable");
+      sendCdp("Page.enable");
+      toLog("info", "chromium_diag_attached", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+        expectedUrl: args.expectedUrl,
+      });
+    });
+    wsInstance.addEventListener?.("message", (event) => {
+      if (stopped) return;
+      const rawText = cdpMessageDataToText((event as { data?: unknown })?.data);
+      if (!rawText) return;
+      handleCdpMessage(rawText, devtoolsPort);
+    });
+    wsInstance.addEventListener?.("error", () => {
+      if (stopped) return;
+      toLog("warn", "chromium_diag_socket_error", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+      });
+    });
+    wsInstance.addEventListener?.("close", () => {
+      if (stopped) return;
+      socket = null;
+      toLog("warn", "chromium_diag_socket_closed", {
+        nodeId: args.nodeId,
+        devtoolsPort,
+      });
+      scheduleReconnect();
+    });
+  };
+
+  void connect();
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (socket?.close) {
+        try {
+          socket.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+      socket = null;
+    },
   };
 }
 
@@ -888,6 +1320,7 @@ async function spawnMpv(args: {
   framedrop: string;
   maxHeight: number | null;
   ipcPath: string;
+  displayRotate: 0 | 90 | 180 | 270 | null;
 }): Promise<ChildProcess> {
   const baseArgs = [
     "--no-config",
@@ -904,6 +1337,15 @@ async function spawnMpv(args: {
   ];
   if (typeof args.maxHeight === "number" && args.maxHeight > 0) {
     baseArgs.push(`--vf=scale=-2:${args.maxHeight}`);
+  }
+  if (
+    typeof args.displayRotate === "number" &&
+    (args.displayRotate === 0 ||
+      args.displayRotate === 90 ||
+      args.displayRotate === 180 ||
+      args.displayRotate === 270)
+  ) {
+    baseArgs.push(`--video-rotate=${args.displayRotate}`);
   }
   if (args.singleSource) {
     baseArgs.push("--loop-file=inf");
@@ -936,6 +1378,7 @@ async function spawnChromium(args: {
   url: string;
   explicitBinary: string | null;
   profileDir: string | null;
+  diagnosticsEnabled: boolean;
 }): Promise<ChildProcess> {
   if (process.platform === "darwin" && !args.explicitBinary) {
     const child = spawn(args.binary, ["-a", "Google Chrome", "--args", "--kiosk", args.url], {
@@ -956,6 +1399,9 @@ async function spawnChromium(args: {
   if (args.profileDir) {
     await ensureDir(args.profileDir);
     launchArgs.push(`--user-data-dir=${args.profileDir}`);
+    if (args.diagnosticsEnabled) {
+      launchArgs.push("--remote-debugging-port=0");
+    }
   }
   launchArgs.push(args.url);
 
@@ -1493,6 +1939,10 @@ async function main(): Promise<void> {
   );
   const chromiumExplicit = readArg("--chromium-bin") ?? process.env.CHIBA3_CHROMIUM_BIN ?? null;
   const chromiumBin = chooseChromiumBinary(chromiumExplicit);
+  const chromiumDiagnosticsEnabled = parseBoolean(
+    readArg("--chromium-diagnostics") ?? process.env.CHIBA3_CHROMIUM_DIAGNOSTICS,
+    true
+  );
   const inputBinary = readArg("--input-bin") ?? process.env.CHIBA3_INPUT_BIN ?? "xdotool";
   const allowInputAnyPlatform =
     readArg("--allow-input-any-platform") === "1" ||
@@ -1560,9 +2010,20 @@ async function main(): Promise<void> {
   let mpvChild: ChildProcess | null = null;
   let chromiumChild: ChildProcess | null = null;
   let chromiumProfileDir: string | null = null;
+  let chromiumDiagnosticsStop: (() => void) | null = null;
   let chromiumSessionCounter = 0;
   const mpvIpcPath = path.join(runtimeDir, "mpv.sock");
   let playbackMetaBySource = new Map<string, ActivePlaybackMeta>();
+
+  const stopChromiumDiagnostics = () => {
+    if (!chromiumDiagnosticsStop) return;
+    try {
+      chromiumDiagnosticsStop();
+    } catch {
+      // ignore stop errors
+    }
+    chromiumDiagnosticsStop = null;
+  };
 
   const allocateChromiumProfileDir = (): string | null => {
     if (process.platform === "darwin" && !chromiumExplicit) return null;
@@ -1635,6 +2096,7 @@ async function main(): Promise<void> {
     webReadyTimeoutMs,
     webReadyPollMs,
     chromiumBin,
+    chromiumDiagnosticsEnabled,
     inputBinary,
     allowInputAnyPlatform,
     homeAssistantAutomationEnabled,
@@ -1649,6 +2111,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     if (stopped) return;
     stopped = true;
+    stopChromiumDiagnostics();
     await terminateChild(mpvChild, "mpv");
     await terminateChild(chromiumChild, "chromium");
     await cleanupProfileDir(chromiumProfileDir);
@@ -1693,6 +2156,7 @@ async function main(): Promise<void> {
         runtimeState.currentItemId = null;
         runtimeState.playback = null;
         playbackMetaBySource = new Map();
+        stopChromiumDiagnostics();
         await terminateChild(mpvChild, "mpv");
         mpvChild = null;
         await terminateChild(chromiumChild, "chromium");
@@ -1716,8 +2180,12 @@ async function main(): Promise<void> {
           activeRevision: runtimeState.activeRevision,
         });
 
+        const needsGuideSurface =
+          runtimeState.launch.mode === "guide" ||
+          runtimeState.launch.qr === true ||
+          runtimeState.launch.remoteInput === true;
         const useGuideChromium =
-          runtimeState.launch.mode === "guide" || resolved.resolved.items.length === 0;
+          needsGuideSurface || resolved.resolved.items.length === 0;
         const hasWebOnlyItems =
           resolved.resolved.items.length > 0 &&
           resolved.resolved.items.every((item) => item.renderer === "web");
@@ -1752,6 +2220,8 @@ async function main(): Promise<void> {
             url: chromiumUrl,
             explicitBinary: chromiumExplicit,
             profileDir: stagedChromiumProfileDir,
+            diagnosticsEnabled:
+              chromiumDiagnosticsEnabled && Boolean(stagedChromiumProfileDir),
           });
           chromiumChild = nextChromium;
           chromiumProfileDir = stagedChromiumProfileDir;
@@ -1766,6 +2236,14 @@ async function main(): Promise<void> {
           if (previousChromium && previousChromium !== nextChromium) {
             await terminateChild(previousChromium, "chromium");
             await cleanupProfileDir(previousChromiumProfileDir);
+          }
+          stopChromiumDiagnostics();
+          if (chromiumDiagnosticsEnabled && stagedChromiumProfileDir) {
+            chromiumDiagnosticsStop = startChromiumDiagnostics({
+              nodeId,
+              profileDir: stagedChromiumProfileDir,
+              expectedUrl: chromiumUrl,
+            }).stop;
           }
           runtimeState.backend = "chromium";
           runtimeState.phase = "ready";
@@ -1790,6 +2268,7 @@ async function main(): Promise<void> {
           });
           if (activateDelayMs > 0) await sleep(activateDelayMs);
         } else {
+          stopChromiumDiagnostics();
           const playableEntries = await buildCachedSources({
             items: resolved.resolved.items,
             cacheDir,
@@ -1828,6 +2307,7 @@ async function main(): Promise<void> {
             playableSources.length === 1 ? (playableSources[0] ?? null) : null;
           const expectedSource = single ?? playableSources[0] ?? null;
           await fs.rm(mpvIpcPath, { force: true }).catch(() => undefined);
+          const launchDisplayRotate = runtimeState.launch.displayRotate;
           // Start new mpv first; keep prior fullscreen backend alive during handover.
           const nextMpv = await spawnMpv({
             binary: mpvBin,
@@ -1838,6 +2318,13 @@ async function main(): Promise<void> {
             framedrop: mpvFramedrop,
             maxHeight: mpvMaxHeight,
             ipcPath: mpvIpcPath,
+            displayRotate:
+              launchDisplayRotate === 0 ||
+              launchDisplayRotate === 90 ||
+              launchDisplayRotate === 180 ||
+              launchDisplayRotate === 270
+                ? launchDisplayRotate
+                : null,
           });
           mpvChild = nextMpv;
           const ready = await waitForMpvReady({

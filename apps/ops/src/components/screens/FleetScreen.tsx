@@ -148,6 +148,12 @@ export type FleetScreenVm = {
   setOptNosplash: (value: "inherit" | "on" | "off") => void;
   optRemoteInput: "inherit" | "on" | "off";
   setOptRemoteInput: (value: "inherit" | "on" | "off") => void;
+  optRemoteApp: "inherit" | "on" | "off";
+  setOptRemoteApp: (value: "inherit" | "on" | "off") => void;
+  optRemoteMic: "inherit" | "on" | "off";
+  setOptRemoteMic: (value: "inherit" | "on" | "off") => void;
+  optRemoteGuide: "inherit" | "on" | "off";
+  setOptRemoteGuide: (value: "inherit" | "on" | "off") => void;
   optHud: "inherit" | "always" | "start" | "never";
   setOptHud: (value: "inherit" | "always" | "start" | "never") => void;
   optHudSec: number | "";
@@ -260,6 +266,12 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     setOptNosplash,
     optRemoteInput,
     setOptRemoteInput,
+    optRemoteApp,
+    setOptRemoteApp,
+    optRemoteMic,
+    setOptRemoteMic,
+    optRemoteGuide,
+    setOptRemoteGuide,
     optHud,
     setOptHud,
     optHudSec,
@@ -467,6 +479,22 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     .split("/")
     .filter(Boolean)
     .pop();
+  const runtimeCurrentTargetLabel =
+    nodeRuntimeStatus?.status.currentTarget?.kind &&
+    nodeRuntimeStatus?.status.currentTarget?.id
+      ? `${nodeRuntimeStatus.status.currentTarget.kind}:${nodeRuntimeStatus.status.currentTarget.id}`
+      : null;
+  const runtimeNowPlayingLabel =
+    nodeRuntimeStatus?.status.playback?.title ||
+    workspacePlaybackMedia?.title ||
+    nodeRuntimeStatus?.status.playback?.mediaId ||
+    nodeRuntimeStatus?.status.currentItemId ||
+    runtimeCurrentTargetLabel ||
+    "No active media";
+  const runtimeProgressUnavailableMessage =
+    nodeRuntimeStatus?.status.backend === "chromium"
+      ? "Playback telemetry unavailable while Chromium backend is active."
+      : "Playback progress unavailable for this target.";
 
   return (
     <Tabs.Panel value="fleet" pt="md">
@@ -639,11 +667,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                   </Badge>
                                 </Group>
                                 <Text fw={700} lineClamp={1}>
-                                  {nodeRuntimeStatus.status.playback?.title ||
-                                    workspacePlaybackMedia?.title ||
-                                    nodeRuntimeStatus.status.playback?.mediaId ||
-                                    nodeRuntimeStatus.status.currentItemId ||
-                                    "No active media"}
+                                  {runtimeNowPlayingLabel}
                                 </Text>
                                 <Text size="sm" c="dimmed" lineClamp={1}>
                                   {nodeRuntimeStatus.status.playback?.artist ||
@@ -674,7 +698,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                   </>
                                 ) : (
                                   <Text size="xs" c="dimmed">
-                                    Playback progress unavailable for this target.
+                                    {runtimeProgressUnavailableMessage}
                                   </Text>
                                 )}
                               </Stack>
@@ -811,6 +835,12 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     setOptNosplash={setOptNosplash}
                     optRemoteInput={optRemoteInput}
                     setOptRemoteInput={setOptRemoteInput}
+                    optRemoteApp={optRemoteApp}
+                    setOptRemoteApp={setOptRemoteApp}
+                    optRemoteMic={optRemoteMic}
+                    setOptRemoteMic={setOptRemoteMic}
+                    optRemoteGuide={optRemoteGuide}
+                    setOptRemoteGuide={setOptRemoteGuide}
                     optHud={optHud}
                     setOptHud={setOptHud}
                     optHudSec={optHudSec}
@@ -1073,11 +1103,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                               {nodeRuntimeBusy ? <Badge variant="light">refreshing</Badge> : null}
                             </Group>
                             <Text fw={700}>
-                              {nodeRuntimeStatus.status.playback?.title ||
-                                workspacePlaybackMedia?.title ||
-                                nodeRuntimeStatus.status.playback?.mediaId ||
-                                nodeRuntimeStatus.status.currentItemId ||
-                                "No active media"}
+                              {runtimeNowPlayingLabel}
                             </Text>
                             <Text size="sm" c="dimmed">
                               {nodeRuntimeStatus.status.playback?.artist ||
@@ -1100,7 +1126,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                               </>
                             ) : (
                               <Text size="xs" c="dimmed">
-                                Playback progress unavailable for this target.
+                                {runtimeProgressUnavailableMessage}
                               </Text>
                             )}
                           </Stack>

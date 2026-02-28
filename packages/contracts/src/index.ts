@@ -42,6 +42,9 @@ export const LaunchOptionsSchema = z
     qr: z.boolean().optional(),
     nosplash: z.boolean().optional(),
     remoteInput: z.boolean().optional(),
+    remoteApp: z.boolean().optional(),
+    remoteMic: z.boolean().optional(),
+    remoteGuide: z.boolean().optional(),
     hudMode: HudModeSchema.optional(),
     hudSec: z.number().positive().optional(),
     theme: z.string().min(1).optional(),
@@ -187,6 +190,7 @@ export const MediaResourceSchema = z
           )
           .default({}),
         launchProfile: z.enum(["home_assistant_login"]).optional(),
+        appControlsApi: z.string().url().optional(),
       })
       .strict()
       .optional(),
@@ -616,7 +620,9 @@ export const NodeRuntimeInputActionSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("mouse_click"),
-      button: z.enum(["left", "middle", "right"]).default("left"),
+      button: z
+        .enum(["left", "middle", "right", "wheel_up", "wheel_down"])
+        .default("left"),
       repeat: z.number().int().positive().max(20).optional(),
     })
     .strict(),

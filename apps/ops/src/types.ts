@@ -286,6 +286,9 @@ export type OpsApplyTargetRequest = {
   playlist?: boolean
   nosplash?: boolean
   remoteInput?: boolean
+  remoteApp?: boolean
+  remoteMic?: boolean
+  remoteGuide?: boolean
   hudMode?: 'always' | 'start' | 'never'
   hudShowSec?: number
   theme?: string
@@ -311,6 +314,9 @@ export type DesiredScreenAssignment = {
     qr?: boolean
     nosplash?: boolean
     remoteInput?: boolean
+    remoteApp?: boolean
+    remoteMic?: boolean
+    remoteGuide?: boolean
     hudMode?: 'always' | 'start' | 'never'
     hudSec?: number
     theme?: string

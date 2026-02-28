@@ -435,6 +435,7 @@ test("deterministic apply -> prefetch -> loop playback for playlist images", asy
         launch: {
           mode: "gallery",
           nosplash: true,
+          displayRotate: 90,
         },
       }),
     });
@@ -485,6 +486,7 @@ test("deterministic apply -> prefetch -> loop playback for playlist images", asy
     assert.ok(mpvArgs.includes(`--image-display-duration=${imageDurationSec}`));
     assert.ok(mpvArgs.includes(`--playlist=${playlistFilePath}`));
     assert.ok(mpvArgs.includes("--loop-playlist=inf"));
+    assert.ok(mpvArgs.includes("--video-rotate=90"));
 
     const statusRes = await fetch(`http://127.0.0.1:${nodePort}/status`);
     assert.equal(statusRes.status, 200);

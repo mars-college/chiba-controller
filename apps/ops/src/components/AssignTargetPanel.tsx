@@ -35,6 +35,12 @@ type AssignTargetPanelProps = {
   setOptNosplash: (value: "inherit" | "on" | "off") => void;
   optRemoteInput: "inherit" | "on" | "off";
   setOptRemoteInput: (value: "inherit" | "on" | "off") => void;
+  optRemoteApp: "inherit" | "on" | "off";
+  setOptRemoteApp: (value: "inherit" | "on" | "off") => void;
+  optRemoteMic: "inherit" | "on" | "off";
+  setOptRemoteMic: (value: "inherit" | "on" | "off") => void;
+  optRemoteGuide: "inherit" | "on" | "off";
+  setOptRemoteGuide: (value: "inherit" | "on" | "off") => void;
   optHud: "inherit" | "always" | "start" | "never";
   setOptHud: (value: "inherit" | "always" | "start" | "never") => void;
   optHudSec: number | "";
@@ -68,6 +74,12 @@ export function AssignTargetPanel({
   setOptNosplash,
   optRemoteInput,
   setOptRemoteInput,
+  optRemoteApp,
+  setOptRemoteApp,
+  optRemoteMic,
+  setOptRemoteMic,
+  optRemoteGuide,
+  setOptRemoteGuide,
   optHud,
   setOptHud,
   optHudSec,
@@ -89,6 +101,9 @@ export function AssignTargetPanel({
     optPlaylist !== "inherit" ||
     optNosplash !== "inherit" ||
     optRemoteInput !== "inherit" ||
+    optRemoteApp !== "inherit" ||
+    optRemoteMic !== "inherit" ||
+    optRemoteGuide !== "inherit" ||
     optHud !== "inherit" ||
     (typeof optHudSec === "number" && Number.isFinite(optHudSec)) ||
     optTheme.trim().length > 0 ||
@@ -220,6 +235,60 @@ export function AssignTargetPanel({
                     setOptRemoteInput((v as "inherit" | "on" | "off") || "inherit")
                   }
                 />
+                <Select
+                  label="Remote app controls"
+                  description="Force-enable remote app control panel."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={optRemoteApp}
+                  onChange={(v) =>
+                    setOptRemoteApp((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Remote mic controls"
+                  description="Force-enable remote mic push-to-talk controls."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={optRemoteMic}
+                  onChange={(v) =>
+                    setOptRemoteMic((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Remote guide controls"
+                  description="Allow D-pad/channel controls even in gallery/lock mode."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={optRemoteGuide}
+                  onChange={(v) =>
+                    setOptRemoteGuide((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Launch rotate"
+                  description="Rotation override for this apply."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "0", label: "0" },
+                    { value: "90", label: "90" },
+                    { value: "180", label: "180" },
+                    { value: "270", label: "270" },
+                  ]}
+                  value={optRotate}
+                  onChange={(v) =>
+                    setOptRotate((v as "inherit" | "0" | "90" | "180" | "270") || "inherit")
+                  }
+                />
               </SimpleGrid>
             </Accordion.Panel>
           </Accordion.Item>
@@ -265,25 +334,6 @@ export function AssignTargetPanel({
             </Accordion.Panel>
           </Accordion.Item>
 
-          <Accordion.Item value="display">
-            <Accordion.Control>Display</Accordion.Control>
-            <Accordion.Panel>
-              <Select
-                label="Rotation"
-                data={[
-                  { value: "inherit", label: "inherit" },
-                  { value: "0", label: "0" },
-                  { value: "90", label: "90" },
-                  { value: "180", label: "180" },
-                  { value: "270", label: "270" },
-                ]}
-                value={optRotate}
-                onChange={(v) =>
-                  setOptRotate((v as "inherit" | "0" | "90" | "180" | "270") || "inherit")
-                }
-              />
-            </Accordion.Panel>
-          </Accordion.Item>
         </Accordion>
 
         <Group justify="space-between" wrap="wrap">

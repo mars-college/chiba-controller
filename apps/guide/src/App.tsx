@@ -49,7 +49,10 @@ import {
   PARAM_MUTE_KEYS,
   PARAM_NO_SPLASH,
   PARAM_QR_KEYS,
+  PARAM_REMOTE_APP_CTRL_KEYS,
+  PARAM_REMOTE_GUIDE_KEYS,
   PARAM_REMOTE_INPUT_KEYS,
+  PARAM_REMOTE_MIC_KEYS,
   PARAM_REMOTE_APP_KEYS,
   PARAM_REMOTE_HOST,
   PARAM_REMOTE_HTTPS,
@@ -77,7 +80,7 @@ import {
   getFirstParam,
   parseBooleanParam,
 } from "./lib/queryParams";
-import { buildQrUrl, buildRemoteUrls } from "./lib/remote";
+import { buildQrUrl, buildRemoteUrls, getWsUrl } from "./lib/remote";
 import {
   loadAudioSettings,
   loadDisplaySettings,
@@ -126,6 +129,12 @@ type RemoteCursorState = {
   pressed: boolean;
 };
 
+type RemoteScreenOption = {
+  id: string;
+  label: string;
+  detail?: string;
+};
+
 type RuntimeTargetKind = "media" | "playlist" | "block" | "channel";
 type RuntimeTarget = { kind: RuntimeTargetKind; id: string };
 type CatalogPayload = {
@@ -141,6 +150,13 @@ type CacheStatusPayload = {
   ok?: boolean;
   cached?: number;
   total?: number;
+};
+
+type RemoteScreenDerivedState = {
+  remoteInput: boolean | null;
+  remoteApp: boolean | null;
+  remoteMic: boolean | null;
+  appId: string;
 };
 
 function readOptionalString(value: unknown): string | undefined {
@@ -206,6 +222,32 @@ function normalizeTargetId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function parseRemoteScreenOptions(value: unknown): RemoteScreenOption[] {
+  if (!value || typeof value !== "object") return [];
+  const rows = Array.isArray((value as { nodes?: unknown }).nodes)
+    ? ((value as { nodes?: unknown }).nodes as unknown[])
+    : [];
+  const out: RemoteScreenOption[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const candidate = row as Record<string, unknown>;
+    const id = String(candidate.nodeId ?? "").trim();
+    if (!id) continue;
+    const nodeName = String(candidate.nodeName ?? "").trim();
+    const host = String(candidate.host ?? "").trim();
+    const ip = String(candidate.ip ?? "").trim();
+    const detailParts = [nodeName, host, ip].filter((part) => part.length > 0);
+    const detail = detailParts.length > 0 ? detailParts.join(" · ") : undefined;
+    out.push({
+      id,
+      label: nodeName || host || id,
+      ...(detail ? { detail } : {}),
+    });
+  }
+  out.sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  return out;
+}
+
 function sourceToPlayableUrl(source: { type: "path" | "url"; value: string; cache?: boolean }): string {
   if (source.type === "path") {
     const pathValue = encodeURIComponent(source.value);
@@ -259,9 +301,103 @@ function isLocalPlayableUrl(url: string | null | undefined): boolean {
   );
 }
 
+function hasQueryParam(url: string, key: string): boolean {
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.searchParams.has(key);
+  } catch {
+    return false;
+  }
+}
+
+function applyLaunchArgsToUrl(url: string, launchArgs: Record<string, string>): string {
+  const entries = Object.entries(launchArgs).filter(([, value]) => value.trim().length > 0);
+  if (!entries.length) return url;
+  try {
+    const parsed = new URL(url, window.location.href);
+    for (const [key, value] of entries) {
+      if (!parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, value);
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function appIdFromControlsApi(rawValue: string): string {
+  const raw = rawValue.trim();
+  if (!raw || raw.includes("{appId}")) return "";
+  try {
+    const parsed = new URL(raw, window.location.href);
+    return (
+      parsed.searchParams.get("appId")?.trim() ||
+      parsed.searchParams.get("app")?.trim() ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function shouldInjectWsArg(sourceUrl: string, wsUrl: string): boolean {
+  const wsTrimmed = wsUrl.trim();
+  if (!wsTrimmed) return false;
+  try {
+    const wsParsed = new URL(wsTrimmed, window.location.href);
+    if (wsParsed.protocol !== "ws:" && wsParsed.protocol !== "wss:") return false;
+    const sourceParsed = new URL(sourceUrl, window.location.href);
+    if (sourceParsed.protocol === "https:" && wsParsed.protocol !== "wss:") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveRuntimeMediaLaunchArgs(args: {
+  media: Record<string, unknown>;
+  sourceUrl: string;
+  fallbackWsUrl: string;
+}): Record<string, string> {
+  const launchArgs: Record<string, string> = {};
+  const web = args.media.web;
+  if (web && typeof web === "object") {
+    const rawArgs = (web as { args?: unknown }).args;
+    if (rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)) {
+      for (const [key, rawValue] of Object.entries(rawArgs as Record<string, unknown>)) {
+        if (rawValue === null || rawValue === undefined) continue;
+        const value = String(rawValue).trim();
+        if (!value) continue;
+        launchArgs[key] = value;
+      }
+    }
+    const appControlsApi = String((web as { appControlsApi?: unknown }).appControlsApi ?? "").trim();
+    const appIdFromApi = appIdFromControlsApi(appControlsApi);
+    const hasSourceAppId = hasQueryParam(args.sourceUrl, "appId") || hasQueryParam(args.sourceUrl, "app");
+    const hasLaunchAppId = Boolean(launchArgs.appId || launchArgs.app);
+    if (!hasSourceAppId && !hasLaunchAppId && appIdFromApi) {
+      launchArgs.appId = appIdFromApi;
+    }
+    const hasSourceWs = hasQueryParam(args.sourceUrl, "ws");
+    const hasLaunchWs = Boolean(launchArgs.ws);
+    if (
+      !hasSourceWs &&
+      !hasLaunchWs &&
+      appControlsApi &&
+      args.fallbackWsUrl &&
+      shouldInjectWsArg(args.sourceUrl, args.fallbackWsUrl)
+    ) {
+      launchArgs.ws = args.fallbackWsUrl;
+    }
+  }
+  return launchArgs;
+}
+
 function buildTargetPrograms(args: {
   target: RuntimeTarget;
   catalog: CatalogPayload["catalog"];
+  fallbackWsUrl?: string;
 }): ProgramSlot[] {
   const mediaRows = Array.isArray(args.catalog?.media) ? args.catalog?.media : [];
   const playlistRows = Array.isArray(args.catalog?.playlists) ? args.catalog?.playlists : [];
@@ -421,7 +557,15 @@ function buildTargetPrograms(args: {
       const media = mediaById.get(args.target.id);
       const source = normalizeSource((media as any)?.source);
       if (!source) return [];
-      const url = sourceToPlayableUrl(source);
+      let url = sourceToPlayableUrl(source);
+      if (source.type === "url" && media && typeof media === "object") {
+        const launchArgs = resolveRuntimeMediaLaunchArgs({
+          media: media as Record<string, unknown>,
+          sourceUrl: url,
+          fallbackWsUrl: args.fallbackWsUrl ?? "",
+        });
+        url = applyLaunchArgsToUrl(url, launchArgs);
+      }
       const explicitDurationSec = parsePositiveSeconds(
         (media as any)?.duration_sec ?? (media as any)?.durationSec
       );
@@ -482,6 +626,7 @@ function App() {
   const screenParam = getFirstParam(params, PARAM_SCREEN_KEYS);
   const embedDebugParam = params.get(PARAM_EMBED_DEBUG);
   const galleryParam = params.get(PARAM_GALLERY);
+  const modeParam = (params.get("mode") ?? "").trim().toLowerCase();
   const pinnedChannelParam = getFirstParam(params, PARAM_GALLERY_CHANNEL_KEYS);
   const rotateParam = getFirstParam(params, PARAM_ROTATE_KEYS);
   const targetKindParam = getFirstParam(params, PARAM_TARGET_KIND_KEYS);
@@ -489,13 +634,21 @@ function App() {
   const lockParam = getFirstParam(params, PARAM_LOCK_KEYS);
   const qrParam = getFirstParam(params, PARAM_QR_KEYS);
   const remoteInputParam = getFirstParam(params, PARAM_REMOTE_INPUT_KEYS);
+  const remoteAppParam = getFirstParam(params, PARAM_REMOTE_APP_CTRL_KEYS);
+  const remoteMicParam = getFirstParam(params, PARAM_REMOTE_MIC_KEYS);
+  const remoteGuideParam = getFirstParam(params, PARAM_REMOTE_GUIDE_KEYS);
   const hudModeParam = params.get(PARAM_HUD_MODE);
   const hudSecParam = getFirstParam(params, PARAM_HUD_SEC_KEYS);
   const galleryParamParsed = parseBooleanParam(galleryParam);
+  const modeGalleryParsed =
+    modeParam === "gallery" ? true : modeParam === "guide" ? false : null;
   const playlistParamParsed = parseBooleanParam(params.get(PARAM_PLAYLIST));
   const lockParamParsed = parseBooleanParam(lockParam);
   const qrParamParsed = parseBooleanParam(qrParam);
   const remoteInputParamParsed = parseBooleanParam(remoteInputParam);
+  const remoteAppParamParsed = parseBooleanParam(remoteAppParam);
+  const remoteMicParamParsed = parseBooleanParam(remoteMicParam);
+  const remoteGuideParamParsed = parseBooleanParam(remoteGuideParam);
   const galleryEnabled = galleryParamParsed === true;
   const playlistEnabled = playlistParamParsed === true;
 
@@ -531,6 +684,8 @@ function App() {
   const galleryEnabledEffective =
     galleryParamParsed !== null
       ? galleryParamParsed
+      : modeGalleryParsed !== null
+        ? modeGalleryParsed
       : kioskState?.mode === "gallery"
         ? true
         : kioskState?.mode === "guide"
@@ -591,8 +746,26 @@ function App() {
       : typeof kioskState?.remoteInput === "boolean"
         ? kioskState.remoteInput
         : false;
-  // Default to hiding the Remote QR in gallery/kiosk installs unless explicitly enabled.
-  const qrAllowed = qrForced === null ? (galleryEnabledEffective ? false : true) : qrForced;
+  const remoteAppEnabled =
+    remoteAppParamParsed !== null
+      ? remoteAppParamParsed
+      : typeof kioskState?.remoteApp === "boolean"
+        ? kioskState.remoteApp
+        : false;
+  const remoteMicEnabled =
+    remoteMicParamParsed !== null
+      ? remoteMicParamParsed
+      : typeof kioskState?.remoteMic === "boolean"
+        ? kioskState.remoteMic
+        : false;
+  const remoteGuideEnabled =
+    remoteGuideParamParsed !== null
+      ? remoteGuideParamParsed
+      : typeof kioskState?.remoteGuide === "boolean"
+        ? kioskState.remoteGuide
+        : false;
+  // Show kiosk QR by default; explicit `qr=0` still force-hides it.
+  const qrAllowed = qrForced === null ? true : qrForced;
   const qrLockedOff = qrAllowed === false;
   const displayRotate = useMemo(() => {
     const fromParam = parseRotateValue(rotateParam);
@@ -750,6 +923,7 @@ function App() {
   const [indexData, setIndexData] = useState<GuideIndex>(() =>
     ensureSystemChannels(fallbackIndex)
   );
+  const runtimeWsUrl = useMemo(() => getWsUrl(), []);
   const slotCount = indexData.timeSlots.length;
   const isPortrait = viewportSize.height >= viewportSize.width;
   const visibleHours = useMemo(() => {
@@ -772,6 +946,7 @@ function App() {
     const programs = buildTargetPrograms({
       target: runtimeTarget,
       catalog: catalogData,
+      fallbackWsUrl: runtimeWsUrl,
     });
     if (!programs.length) return null;
     const schedule: ProgramSlot[] = [];
@@ -809,17 +984,8 @@ function App() {
   }, [indexData.channels, syntheticTargetChannel]);
   const channels = useMemo(
     () =>
-      allChannels.filter((channel) => {
-        if (
-          runtimeTarget?.kind === "media" &&
-          syntheticTargetChannelId &&
-          channel.id === syntheticTargetChannelId
-        ) {
-          return false;
-        }
-        return !isHiddenChannel(channel);
-      }),
-    [allChannels, runtimeTarget?.kind, syntheticTargetChannelId]
+      allChannels.filter((channel) => !isHiddenChannel(channel)),
+    [allChannels]
   );
   const activeArtItems = useMemo(() => {
     const targetId = (channelId ?? "").trim();
@@ -890,9 +1056,24 @@ function App() {
   const [remoteRegistrations, setRemoteRegistrations] = useState<
     RemoteRegistration[]
   >([]);
-  const [remotePanel, setRemotePanel] = useState<"remote" | "app" | "input">(
-    "remote"
-  );
+  const [remotePanel, setRemotePanel] = useState<
+    "remote" | "app" | "input" | "screen"
+  >("remote");
+  const [remoteScreenOptionsRaw, setRemoteScreenOptionsRaw] = useState<
+    RemoteScreenOption[]
+  >([]);
+  const [remoteScreenOptionsLoading, setRemoteScreenOptionsLoading] =
+    useState(false);
+  const [remoteScreenOptionsError, setRemoteScreenOptionsError] = useState<
+    string | null
+  >(null);
+  const [remoteScreenDerivedState, setRemoteScreenDerivedState] =
+    useState<RemoteScreenDerivedState>({
+      remoteInput: null,
+      remoteApp: null,
+      remoteMic: null,
+      appId: "",
+    });
   const [remoteCursor, setRemoteCursor] = useState<RemoteCursorState>({
     x: 0.5,
     y: 0.5,
@@ -964,6 +1145,7 @@ function App() {
   const remoteCursorRafRef = useRef<number | null>(null);
   const remoteCursorHideRef = useRef<number | null>(null);
   const remoteCursorPressRef = useRef<number | null>(null);
+  const remoteScrollCarryRef = useRef(0);
   const remotePointerTargetRef = useRef<{
     target: HTMLElement | null;
     doc: Document | null;
@@ -1200,26 +1382,65 @@ function App() {
   const activeAppId = useMemo(() => getAppIdFromUrl(playerUrl), [playerUrl]);
   const activeProgramRemoteControls = useMemo<RemoteRegistration[]>(() => {
     if (!playerOpen) return [];
-    const baseControls = selectedProgram?.remoteControls ?? [];
-    if (!remoteInputEnabled) return baseControls;
+    const controls = new Set<RemoteRegistration>(
+      selectedProgram?.remoteControls ?? []
+    );
     const programKind = selectedProgramUrl
       ? getMediaKind(selectedProgramUrl)
       : null;
-    if (programKind !== "iframe") return baseControls;
-    if (baseControls.includes("keyboard_mouse")) return baseControls;
-    return [...baseControls, "keyboard_mouse"];
-  }, [playerOpen, remoteInputEnabled, selectedProgram, selectedProgramUrl]);
+    if (remoteInputEnabled && programKind === "iframe") {
+      controls.add("keyboard_mouse");
+    }
+    if (remoteAppEnabled) controls.add("app");
+    if (remoteMicEnabled) controls.add("mic");
+    return Array.from(controls);
+  }, [
+    playerOpen,
+    remoteInputEnabled,
+    remoteAppEnabled,
+    remoteMicEnabled,
+    selectedProgram,
+    selectedProgramUrl,
+  ]);
+  const remoteInputEnabledFromScreen =
+    viewMode === "remote" && remoteScreenDerivedState.remoteInput !== null
+      ? remoteScreenDerivedState.remoteInput
+      : remoteInputEnabled;
+  const remoteAppEnabledFromScreen =
+    viewMode === "remote" && remoteScreenDerivedState.remoteApp !== null
+      ? remoteScreenDerivedState.remoteApp
+      : remoteAppEnabled;
+  const remoteMicEnabledFromScreen =
+    viewMode === "remote" && remoteScreenDerivedState.remoteMic !== null
+      ? remoteScreenDerivedState.remoteMic
+      : remoteMicEnabled;
+  const remoteModeControls = useMemo<RemoteRegistration[]>(() => {
+    const controls = new Set<RemoteRegistration>(remoteRegistrations);
+    if (remoteInputEnabledFromScreen) controls.add("keyboard_mouse");
+    if (remoteAppEnabledFromScreen) controls.add("app");
+    if (remoteMicEnabledFromScreen) controls.add("mic");
+    return Array.from(controls);
+  }, [
+    remoteRegistrations,
+    remoteInputEnabledFromScreen,
+    remoteAppEnabledFromScreen,
+    remoteMicEnabledFromScreen,
+  ]);
   const effectiveRemoteControls =
-    viewMode === "remote" ? remoteRegistrations : activeProgramRemoteControls;
+    viewMode === "remote" ? remoteModeControls : activeProgramRemoteControls;
   const effectiveRemoteAppId =
     viewMode === "remote"
-      ? requestedRemoteAppId || activeRemoteAppId
+      ? requestedRemoteAppId || activeRemoteAppId || remoteScreenDerivedState.appId
       : activeAppId;
   const hasKeyboardMouse = effectiveRemoteControls.includes("keyboard_mouse");
   const hasMicControls = effectiveRemoteControls.includes("mic");
   const hasAppControls =
-    Boolean(effectiveRemoteAppId) &&
-    (effectiveRemoteControls.includes("app") || Boolean(requestedRemoteAppId));
+    effectiveRemoteControls.includes("app") ||
+    Boolean(requestedRemoteAppId) ||
+    Boolean(effectiveRemoteAppId);
+  const appControlsFallbackId =
+    effectiveRemoteAppId ||
+    (runtimeTarget ? `target-${runtimeTarget.kind}-${runtimeTarget.id}` : "");
   const playerKind = useMemo(() => {
     if (!playerUrl) return null;
     const fromUrl = getMediaKind(playerUrl);
@@ -2309,16 +2530,25 @@ function App() {
     if (!position) return;
     const info = resolvePointerTarget(position.clientX, position.clientY);
     if (!info || !info.target) return;
+    const requiresNativeClickPassthrough =
+      info.target instanceof HTMLIFrameElement;
     if (info.target instanceof HTMLElement) {
       info.target.focus({ preventScroll: true });
     }
     remotePointerTargetRef.current = { target: info.target, doc: info.doc };
-    dispatchMouseEvent(info, "mousemove");
-    dispatchMouseEvent(info, "mousedown");
-    dispatchMouseEvent(info, "mouseup");
-    dispatchMouseEvent(info, "click");
+    if (!requiresNativeClickPassthrough) {
+      dispatchMouseEvent(info, "mousemove");
+      dispatchMouseEvent(info, "mousedown");
+      dispatchMouseEvent(info, "mouseup");
+      dispatchMouseEvent(info, "click");
+    }
     pressRemoteCursor(true);
     scheduleRemoteCursorHide();
+    return {
+      clientX: position.clientX,
+      clientY: position.clientY,
+      requiresNativeClickPassthrough,
+    };
   }, [
     dispatchMouseEvent,
     getCursorClientPosition,
@@ -2326,6 +2556,120 @@ function App() {
     resolvePointerTarget,
     scheduleRemoteCursorHide,
   ]);
+
+  const sendNativeRemoteClick = useCallback(
+    async (clientX: number, clientY: number) => {
+      const nodeId = (screenId ?? "").trim();
+      if (!nodeId) return;
+      if (!remoteInputEnabled) return;
+      const x = Math.max(0, Math.round(clientX));
+      const y = Math.max(0, Math.round(clientY));
+      const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
+      try {
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: {
+              kind: "mouse_move",
+              x,
+              y,
+            },
+          }),
+        });
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: {
+              kind: "mouse_click",
+              button: "left",
+            },
+          }),
+        });
+      } catch (error) {
+        log.warn("remote-native-click-failed", error);
+      }
+    },
+    [remoteInputEnabled, screenId]
+  );
+
+  const sendNativeRemoteKeyboard = useCallback(
+    async (msg: Extract<RemoteMessage, { type: "keyboard" }>) => {
+      const nodeId = (screenId ?? "").trim();
+      if (!nodeId) return;
+      if (!remoteInputEnabled) return;
+      const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
+      const postInput = async (action: Record<string, unknown>) =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+      try {
+        if (msg.action === "text") {
+          if (!msg.text) return;
+          await postInput({ kind: "text", text: msg.text });
+          return;
+        }
+        if (msg.action === "backspace") {
+          const repeat = Math.max(1, Math.min(20, msg.count ?? 1));
+          await postInput({
+            kind: "key",
+            key: "BackSpace",
+            ...(repeat > 1 ? { repeat } : {}),
+          });
+          return;
+        }
+        const key =
+          msg.key === "Enter"
+            ? "Return"
+            : msg.key === "Escape"
+              ? "Escape"
+              : "Tab";
+        await postInput({ kind: "key", key });
+      } catch (error) {
+        log.warn("remote-native-keyboard-failed", error);
+      }
+    },
+    [remoteInputEnabled, screenId]
+  );
+
+  const sendNativeRemoteScroll = useCallback(
+    async (dy: number) => {
+      const nodeId = (screenId ?? "").trim();
+      if (!nodeId) return;
+      if (!remoteInputEnabled) return;
+      const nextCarry = remoteScrollCarryRef.current + dy;
+      const stepSize = 0.06;
+      const stepCount = Math.floor(Math.abs(nextCarry) / stepSize);
+      if (stepCount < 1) {
+        remoteScrollCarryRef.current = nextCarry;
+        return;
+      }
+      const direction = nextCarry > 0 ? "wheel_down" : "wheel_up";
+      const repeat = Math.max(1, Math.min(20, stepCount));
+      remoteScrollCarryRef.current =
+        nextCarry - Math.sign(nextCarry) * stepCount * stepSize;
+      const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
+      try {
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: {
+              kind: "mouse_click",
+              button: direction,
+              repeat,
+            },
+          }),
+        });
+      } catch (error) {
+        log.warn("remote-native-scroll-failed", error);
+      }
+    },
+    [remoteInputEnabled, screenId]
+  );
 
   const getKeyboardTarget = useCallback(() => {
     const last = remotePointerTargetRef.current;
@@ -2470,11 +2814,21 @@ function App() {
       }
       if (msg.action === "click") {
         if (!playerOpen || !hasKeyboardMouse) return;
-        clickRemotePointer();
+        const clickResult = clickRemotePointer();
+        if (clickResult?.requiresNativeClickPassthrough) {
+          void sendNativeRemoteClick(clickResult.clientX, clickResult.clientY);
+        }
+        return;
+      }
+      if (msg.action === "scroll") {
+        if (!playerOpen || !hasKeyboardMouse) return;
+        void sendNativeRemoteScroll(msg.dy);
       }
     },
     [
       clickRemotePointer,
+      sendNativeRemoteClick,
+      sendNativeRemoteScroll,
       moveRemoteCursor,
       viewMode,
       playerOpen,
@@ -2494,7 +2848,22 @@ function App() {
       });
       if (!playerOpen || !hasKeyboardMouse) return;
       const targetInfo = getKeyboardTarget();
-      if (!targetInfo?.target || !targetInfo.doc) return;
+      if (!targetInfo?.target || !targetInfo.doc) {
+        void sendNativeRemoteKeyboard(msg);
+        return;
+      }
+      const isTextEditableTarget =
+        targetInfo.target instanceof HTMLInputElement ||
+        targetInfo.target instanceof HTMLTextAreaElement ||
+        targetInfo.target.isContentEditable;
+      if (
+        targetInfo.target instanceof HTMLIFrameElement ||
+        ((msg.action === "text" || msg.action === "backspace") &&
+          !isTextEditableTarget)
+      ) {
+        void sendNativeRemoteKeyboard(msg);
+        return;
+      }
       if (msg.action === "text") {
         applyRemoteText(targetInfo.target, targetInfo.doc, msg.text);
         return;
@@ -2514,6 +2883,7 @@ function App() {
       getKeyboardTarget,
       hasKeyboardMouse,
       playerOpen,
+      sendNativeRemoteKeyboard,
       viewMode,
     ]
   );
@@ -2710,20 +3080,157 @@ function App() {
     { role: viewMode === "remote" ? "remote" : "guide" }
   );
 
-  const appControlsAppId = hasAppControls ? effectiveRemoteAppId : "";
+  const appControlsAppId = hasAppControls
+    ? appControlsFallbackId || "app"
+    : "";
+  const sendRemoteScoped = useCallback(
+    (message: RemoteMessage) => {
+      const sid = (screenId ?? "").trim();
+      if (viewMode === "remote" && sid) {
+        send({
+          ...(message as Record<string, unknown>),
+          screenId: sid,
+        } as RemoteMessage);
+        return;
+      }
+      send(message);
+    },
+    [screenId, send, viewMode]
+  );
   const { remoteControls, remoteControlsStatus, handleRemoteControl } =
     useRemoteControls({
       viewMode,
       activeRemoteAppId: appControlsAppId ?? "",
-      send,
+      send: sendRemoteScoped,
+      enabled: remotePanel === "app" && hasAppControls,
     });
 
   const handleDisplayChange = useCallback(
     (payload: DisplayTuningPayload) => {
       applyDisplaySettings(payload);
-      send({ type: "display", ...payload });
+      sendRemoteScoped({ type: "display", ...payload });
     },
-    [applyDisplaySettings, send]
+    [applyDisplaySettings, sendRemoteScoped]
+  );
+
+  const refreshRemoteScreenOptions = useCallback(async () => {
+    setRemoteScreenOptionsLoading(true);
+    setRemoteScreenOptionsError(null);
+    try {
+      const response = await fetch("/api/ops/nodes");
+      if (!response.ok) {
+        throw new Error(`nodes_status_${response.status}`);
+      }
+      const payload = (await response.json()) as unknown;
+      setRemoteScreenOptionsRaw(parseRemoteScreenOptions(payload));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRemoteScreenOptionsError(message);
+    } finally {
+      setRemoteScreenOptionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "remote") return;
+    if (remoteScreenOptionsRaw.length > 0) return;
+    void refreshRemoteScreenOptions();
+  }, [refreshRemoteScreenOptions, remoteScreenOptionsRaw.length, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "remote") {
+      setRemoteScreenDerivedState({
+        remoteInput: null,
+        remoteApp: null,
+        remoteMic: null,
+        appId: "",
+      });
+      return;
+    }
+    const sid = (screenId ?? "").trim();
+    if (!sid) {
+      setRemoteScreenDerivedState({
+        remoteInput: null,
+        remoteApp: null,
+        remoteMic: null,
+        appId: "",
+      });
+      return;
+    }
+    let cancelled = false;
+    const updateFromAssignment = async () => {
+      try {
+        const response = await fetch(
+          `/api/v1/screen-assignment/${encodeURIComponent(sid)}`
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          desired?: {
+            launch?: Record<string, unknown> | null;
+            target?: { kind?: unknown; id?: unknown } | null;
+          } | null;
+        };
+        if (cancelled) return;
+        const launch =
+          payload.desired?.launch && typeof payload.desired.launch === "object"
+            ? payload.desired.launch
+            : null;
+        const target =
+          payload.desired?.target && typeof payload.desired.target === "object"
+            ? payload.desired.target
+            : null;
+        const targetKind =
+          typeof target?.kind === "string"
+            ? target.kind.trim().toLowerCase()
+            : "";
+        const targetId =
+          typeof target?.id === "string" ? target.id.trim() : "";
+        const appId =
+          targetKind === "media" && targetId ? `target-media-${targetId}` : "";
+        setRemoteScreenDerivedState({
+          remoteInput:
+            typeof launch?.remoteInput === "boolean" ? launch.remoteInput : null,
+          remoteApp:
+            typeof launch?.remoteApp === "boolean" ? launch.remoteApp : null,
+          remoteMic:
+            typeof launch?.remoteMic === "boolean" ? launch.remoteMic : null,
+          appId,
+        });
+        if (!requestedRemoteAppId && appId) {
+          setActiveRemoteAppId((prev) => (prev.trim() ? prev : appId));
+        }
+      } catch {
+        // best-effort; remote stays on websocket-derived state
+      }
+    };
+    void updateFromAssignment();
+    const timer = window.setInterval(updateFromAssignment, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [requestedRemoteAppId, screenId, viewMode]);
+
+  const setActiveRemoteScreenId = useCallback(
+    (nextScreenId: string) => {
+      const normalized = nextScreenId.trim();
+      if (!normalized) return;
+      setScreenId(normalized);
+      saveScreenId(normalized);
+      setRemotePanel("remote");
+      try {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("screenId", normalized);
+        window.history.replaceState({}, "", nextUrl.toString());
+      } catch {
+        // ignore URL sync failures
+      }
+      send({
+        type: "index",
+        screenId: normalized,
+      } as RemoteMessage);
+    },
+    [send]
   );
 
   useEffect(() => {
@@ -2751,6 +3258,7 @@ function App() {
 
   useEffect(() => {
     if (!playerOpen) {
+      remoteScrollCarryRef.current = 0;
       remotePointerTargetRef.current = null;
       commitRemoteCursor({
         ...remoteCursorRef.current,
@@ -3424,6 +3932,9 @@ function App() {
       } else if (channelLocked) {
         remoteUrl = appendQueryParam(remoteUrl, "lock", "1");
       }
+      if (remoteGuideEnabled) {
+        remoteUrl = appendQueryParam(remoteUrl, "remoteGuide", "1");
+      }
       const qrUrl = remoteUrl ? buildQrUrl(remoteUrl) : (data.qrUrl as string);
       setRemoteOverride({
         baseUrl: data.baseUrl as string,
@@ -3469,7 +3980,7 @@ function App() {
     return () => {
       alive = false;
     };
-  }, [channelLocked, galleryEnabledEffective, screenId]);
+  }, [channelLocked, galleryEnabledEffective, remoteGuideEnabled, screenId]);
   const fallbackRemote = buildRemoteUrls({
     hostOverride,
     forceHttps,
@@ -3485,18 +3996,33 @@ function App() {
   } else if (channelLocked) {
     fallbackRemoteUrl = appendQueryParam(fallbackRemoteUrl, "lock", "1");
   }
+  if (remoteGuideEnabled) {
+    fallbackRemoteUrl = appendQueryParam(fallbackRemoteUrl, "remoteGuide", "1");
+  }
   const fallbackQrUrl = buildQrUrl(fallbackRemoteUrl);
   const qrImageUrl = remoteOverride?.qrUrl ?? fallbackQrUrl;
 
   useEffect(() => {
     if (viewMode !== "guide") return;
-    const nextAppId = playerOpen ? activeAppId : null;
+    const fallbackMediaAppId =
+      runtimeTarget?.kind === "media" && runtimeTarget.id
+        ? `target-media-${runtimeTarget.id}`
+        : null;
+    const nextAppId = playerOpen ? activeAppId ?? fallbackMediaAppId : null;
     const nextControls = playerOpen ? activeProgramRemoteControls : [];
     const nextKey = `${nextAppId ?? ""}|${nextControls.join(",")}`;
     if (lastAppMessageRef.current === nextKey) return;
     lastAppMessageRef.current = nextKey;
     send({ type: "app", appId: nextAppId, remoteControls: nextControls });
-  }, [viewMode, playerOpen, activeAppId, activeProgramRemoteControls, send]);
+  }, [
+    viewMode,
+    playerOpen,
+    activeAppId,
+    activeProgramRemoteControls,
+    runtimeTarget?.kind,
+    runtimeTarget?.id,
+    send,
+  ]);
 
   useEffect(() => {
     const bounds = getScrollBounds();
@@ -3509,8 +4035,24 @@ function App() {
       innerHeight: bounds?.innerHeight ?? null,
     });
   }, [channels.length, visibleRows, uiScale, getScrollBounds]);
+  const remoteScreenOptions = useMemo(() => {
+    const selected = (screenId ?? "").trim();
+    if (!selected) return remoteScreenOptionsRaw;
+    if (remoteScreenOptionsRaw.some((option) => option.id === selected)) {
+      return remoteScreenOptionsRaw;
+    }
+    return [
+      {
+        id: selected,
+        label: selected,
+        detail: "Saved screen",
+      },
+      ...remoteScreenOptionsRaw,
+    ];
+  }, [remoteScreenOptionsRaw, screenId]);
   const showAppPanel = hasAppControls && remotePanel === "app";
   const showInputPanel = hasKeyboardMouse && remotePanel === "input";
+  const showScreenPanel = remotePanel === "screen";
   const hasSpecialControls = hasAppControls || hasKeyboardMouse;
   const showGodPanel = remoteGodmodeOpen;
   const micStatusLabel = micError
@@ -3552,6 +4094,7 @@ function App() {
   useEffect(() => {
     setRemoteViewState({
       status,
+      galleryMode: galleryEnabledEffective,
       uiScale,
       textScale,
       visibleHours,
@@ -3562,9 +4105,15 @@ function App() {
       godmodeQuery,
       showAppPanel,
       showInputPanel,
+      showScreenPanel,
+      activeScreenId: (screenId ?? "").trim(),
+      screenOptions: remoteScreenOptions,
+      screenOptionsLoading: remoteScreenOptionsLoading,
+      screenOptionsError: remoteScreenOptionsError,
       hasAppControls,
       hasKeyboardMouse,
       hasMicControls,
+      remoteGuideEnabled,
       hasSpecialControls,
       remoteControlsStatus,
       remoteControls,
@@ -3578,6 +4127,7 @@ function App() {
     });
   }, [
     status,
+    galleryEnabledEffective,
     uiScale,
     textScale,
     visibleHours,
@@ -3588,9 +4138,15 @@ function App() {
     godmodeQuery,
     showAppPanel,
     showInputPanel,
+    showScreenPanel,
+    screenId,
+    remoteScreenOptions,
+    remoteScreenOptionsLoading,
+    remoteScreenOptionsError,
     hasAppControls,
     hasKeyboardMouse,
     hasMicControls,
+    remoteGuideEnabled,
     hasSpecialControls,
     remoteControlsStatus,
     remoteControls,
@@ -3607,7 +4163,9 @@ function App() {
   useEffect(() => {
     setRemoteViewHandlers({
       onDisplayChange: handleDisplayChange,
-      send,
+      send: sendRemoteScoped,
+      setActiveScreenId: setActiveRemoteScreenId,
+      refreshScreenOptions: refreshRemoteScreenOptions,
       setRemoteGodmodeOpen,
       setGodmodeQuery,
       setDialBuffer,
@@ -3618,7 +4176,9 @@ function App() {
     });
   }, [
     handleDisplayChange,
-    send,
+    sendRemoteScoped,
+    setActiveRemoteScreenId,
+    refreshRemoteScreenOptions,
     setRemoteGodmodeOpen,
     setGodmodeQuery,
     setDialBuffer,

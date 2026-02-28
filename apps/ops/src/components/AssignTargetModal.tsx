@@ -40,6 +40,14 @@ type Props = {
   setOptPlaylist: (value: "inherit" | "on" | "off") => void;
   optNosplash: "inherit" | "on" | "off";
   setOptNosplash: (value: "inherit" | "on" | "off") => void;
+  optRemoteInput: "inherit" | "on" | "off";
+  setOptRemoteInput: (value: "inherit" | "on" | "off") => void;
+  optRemoteApp: "inherit" | "on" | "off";
+  setOptRemoteApp: (value: "inherit" | "on" | "off") => void;
+  optRemoteMic: "inherit" | "on" | "off";
+  setOptRemoteMic: (value: "inherit" | "on" | "off") => void;
+  optRemoteGuide: "inherit" | "on" | "off";
+  setOptRemoteGuide: (value: "inherit" | "on" | "off") => void;
   optHud: "inherit" | "always" | "start" | "never";
   setOptHud: (value: "inherit" | "always" | "start" | "never") => void;
   optHudSec: number | "";
@@ -55,6 +63,24 @@ type Props = {
 };
 
 export function AssignTargetModal(props: Props) {
+  const hasLaunchOverrides =
+    props.optMode !== "inherit" ||
+    props.optLock !== "inherit" ||
+    props.optQr !== "inherit" ||
+    props.optPlaylist !== "inherit" ||
+    props.optNosplash !== "inherit" ||
+    props.optRemoteInput !== "inherit" ||
+    props.optRemoteApp !== "inherit" ||
+    props.optRemoteMic !== "inherit" ||
+    props.optRemoteGuide !== "inherit" ||
+    props.optHud !== "inherit" ||
+    (typeof props.optHudSec === "number" && Number.isFinite(props.optHudSec)) ||
+    props.optTheme.trim().length > 0 ||
+    props.optRotate !== "inherit";
+  const canApply =
+    props.selectedNodeCount > 0 &&
+    (props.applyId.trim().length > 0 || hasLaunchOverrides);
+
   return (
     <Modal
       opened={props.opened}
@@ -186,6 +212,73 @@ export function AssignTargetModal(props: Props) {
                     props.setOptNosplash((v as "inherit" | "on" | "off") || "inherit")
                   }
                 />
+                <Select
+                  label="Remote web input"
+                  description="Enable phone keyboard/trackpad passthrough for web media."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={props.optRemoteInput}
+                  onChange={(v) =>
+                    props.setOptRemoteInput((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Remote app controls"
+                  description="Force-enable remote app control panel."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={props.optRemoteApp}
+                  onChange={(v) =>
+                    props.setOptRemoteApp((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Remote mic controls"
+                  description="Force-enable remote mic push-to-talk controls."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={props.optRemoteMic}
+                  onChange={(v) =>
+                    props.setOptRemoteMic((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Remote guide controls"
+                  description="Allow D-pad/channel controls even in gallery/lock mode."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "on", label: "on" },
+                    { value: "off", label: "off" },
+                  ]}
+                  value={props.optRemoteGuide}
+                  onChange={(v) =>
+                    props.setOptRemoteGuide((v as "inherit" | "on" | "off") || "inherit")
+                  }
+                />
+                <Select
+                  label="Launch rotate"
+                  description="Rotation override for this apply."
+                  data={[
+                    { value: "inherit", label: "inherit" },
+                    { value: "0", label: "0" },
+                    { value: "90", label: "90" },
+                    { value: "180", label: "180" },
+                    { value: "270", label: "270" },
+                  ]}
+                  value={props.optRotate}
+                  onChange={(v) =>
+                    props.setOptRotate((v as "inherit" | "0" | "90" | "180" | "270") || "inherit")
+                  }
+                />
               </SimpleGrid>
             </Accordion.Panel>
           </Accordion.Item>
@@ -228,25 +321,6 @@ export function AssignTargetModal(props: Props) {
             </Accordion.Panel>
           </Accordion.Item>
 
-          <Accordion.Item value="display">
-            <Accordion.Control>Display</Accordion.Control>
-            <Accordion.Panel>
-              <Select
-                label="Rotation"
-                data={[
-                  { value: "inherit", label: "inherit" },
-                  { value: "0", label: "0" },
-                  { value: "90", label: "90" },
-                  { value: "180", label: "180" },
-                  { value: "270", label: "270" },
-                ]}
-                value={props.optRotate}
-                onChange={(v) =>
-                  props.setOptRotate((v as "inherit" | "0" | "90" | "180" | "270") || "inherit")
-                }
-              />
-            </Accordion.Panel>
-          </Accordion.Item>
         </Accordion>
 
         <Group justify="space-between" wrap="wrap">
@@ -260,7 +334,7 @@ export function AssignTargetModal(props: Props) {
             <Button
               leftSection={<IconAdjustments size={16} />}
               onClick={() => void props.runApply()}
-              disabled={!props.applyId.trim() || props.selectedNodeCount === 0}
+              disabled={!canApply}
             >
               Apply to selected
             </Button>

@@ -167,14 +167,28 @@ function hasMeaningfulValue(entry: WebLaunchArgEntry): boolean {
 export function buildWebLaunchConfigFromEntries(args: {
   entries: WebLaunchArgEntry[];
   launchProfile: "none" | "home_assistant_login";
+  appControlsApi?: string;
 }): { config: Media["web"] | undefined; error: string | null } {
   const launchProfile =
     args.launchProfile === "home_assistant_login"
       ? "home_assistant_login"
       : undefined;
+  const appControlsApiRaw = String(args.appControlsApi ?? "").trim();
+  const appControlsApi = appControlsApiRaw.length > 0 ? appControlsApiRaw : undefined;
+  if (appControlsApi) {
+    try {
+      // Validate early so ops shows an actionable inline error before importResources.
+      new URL(appControlsApi);
+    } catch {
+      return {
+        config: undefined,
+        error: "App controls API endpoint must be a valid absolute URL.",
+      };
+    }
+  }
 
   const entries = args.entries;
-  if (entries.length === 0 && !launchProfile) {
+  if (entries.length === 0 && !launchProfile && !appControlsApi) {
     return { config: undefined, error: null };
   }
 
@@ -318,7 +332,7 @@ export function buildWebLaunchConfigFromEntries(args: {
     };
   }
 
-  if (Object.keys(webArgs).length === 0 && !launchProfile) {
+  if (Object.keys(webArgs).length === 0 && !launchProfile && !appControlsApi) {
     return { config: undefined, error: null };
   }
 
@@ -326,6 +340,7 @@ export function buildWebLaunchConfigFromEntries(args: {
     config: {
       args: webArgs,
       ...(launchProfile ? { launchProfile } : {}),
+      ...(appControlsApi ? { appControlsApi } : {}),
     },
     error: null,
   };

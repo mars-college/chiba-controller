@@ -310,6 +310,9 @@ export function useOpsAppModel() {
   const [optPlaylist, setOptPlaylist] = useState<OptionBool>("inherit");
   const [optNosplash, setOptNosplash] = useState<OptionBool>("inherit");
   const [optRemoteInput, setOptRemoteInput] = useState<OptionBool>("inherit");
+  const [optRemoteApp, setOptRemoteApp] = useState<OptionBool>("inherit");
+  const [optRemoteMic, setOptRemoteMic] = useState<OptionBool>("inherit");
+  const [optRemoteGuide, setOptRemoteGuide] = useState<OptionBool>("inherit");
   const [optHud, setOptHud] = useState<OptionHud>("inherit");
   const [optHudSec, setOptHudSec] = useState<number | "">("");
   const [optTheme, setOptTheme] = useState("");
@@ -1185,6 +1188,9 @@ export function useOpsAppModel() {
       playlist?: OptionBool;
       nosplash?: OptionBool;
       remoteInput?: OptionBool;
+      remoteApp?: OptionBool;
+      remoteMic?: OptionBool;
+      remoteGuide?: OptionBool;
       hud?: OptionHud;
       hudSec?: number | "";
       theme?: string;
@@ -1200,6 +1206,9 @@ export function useOpsAppModel() {
         playlist: toOptionBool(args.playlist ?? "inherit"),
         nosplash: toOptionBool(args.nosplash ?? "inherit"),
         remoteInput: toOptionBool(args.remoteInput ?? "inherit"),
+        remoteApp: toOptionBool(args.remoteApp ?? "inherit"),
+        remoteMic: toOptionBool(args.remoteMic ?? "inherit"),
+        remoteGuide: toOptionBool(args.remoteGuide ?? "inherit"),
         hudMode: args.hud === "inherit" || !args.hud ? undefined : args.hud,
         hudShowSec:
           typeof args.hudSec === "number" && Number.isFinite(args.hudSec)
@@ -1253,6 +1262,9 @@ export function useOpsAppModel() {
       optPlaylist !== "inherit" ||
       optNosplash !== "inherit" ||
       optRemoteInput !== "inherit" ||
+      optRemoteApp !== "inherit" ||
+      optRemoteMic !== "inherit" ||
+      optRemoteGuide !== "inherit" ||
       optHud !== "inherit" ||
       (typeof optHudSec === "number" && Number.isFinite(optHudSec)) ||
       optTheme.trim().length > 0 ||
@@ -1361,6 +1373,9 @@ export function useOpsAppModel() {
           playlist: optPlaylist,
           nosplash: optNosplash,
           remoteInput: optRemoteInput,
+          remoteApp: optRemoteApp,
+          remoteMic: optRemoteMic,
+          remoteGuide: optRemoteGuide,
           hud: optHud,
           hudSec: optHudSec,
           theme: optTheme,
@@ -1416,6 +1431,9 @@ export function useOpsAppModel() {
               playlist: optPlaylist,
               nosplash: optNosplash,
               remoteInput: optRemoteInput,
+              remoteApp: optRemoteApp,
+              remoteMic: optRemoteMic,
+              remoteGuide: optRemoteGuide,
               hud: optHud,
               hudSec: optHudSec,
               theme: optTheme,
@@ -1474,6 +1492,9 @@ export function useOpsAppModel() {
     optMode,
     optNosplash,
     optRemoteInput,
+    optRemoteApp,
+    optRemoteMic,
+    optRemoteGuide,
     optPlaylist,
     optQr,
     optRotate,
@@ -3570,6 +3591,12 @@ export function useOpsAppModel() {
     setOptNosplash,
     optRemoteInput,
     setOptRemoteInput,
+    optRemoteApp,
+    setOptRemoteApp,
+    optRemoteMic,
+    setOptRemoteMic,
+    optRemoteGuide,
+    setOptRemoteGuide,
     optHud,
     setOptHud,
     optHudSec,
@@ -4087,6 +4114,12 @@ export function useOpsAppModel() {
     setOptNosplash,
     optRemoteInput,
     setOptRemoteInput,
+    optRemoteApp,
+    setOptRemoteApp,
+    optRemoteMic,
+    setOptRemoteMic,
+    optRemoteGuide,
+    setOptRemoteGuide,
     optHud,
     setOptHud,
     optHudSec,

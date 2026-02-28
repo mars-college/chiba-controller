@@ -72,6 +72,7 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
   const [webLaunchProfileDraft, setWebLaunchProfileDraft] = useState<
     "none" | "home_assistant_login"
   >("none");
+  const [webAppControlsApiDraft, setWebAppControlsApiDraft] = useState("");
   const [webLaunchArgsEntriesDraft, setWebLaunchArgsEntriesDraft] = useState<
     WebLaunchArgEntry[]
   >([]);
@@ -87,6 +88,7 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
         ? "home_assistant_login"
         : "none"
     );
+    setWebAppControlsApiDraft(web?.appControlsApi || "");
     setWebLaunchArgsEntriesDraft(webLaunchArgEntriesFromWebConfig(web));
     setWebInitialSignature(webLaunchConfigSignature(web));
   }, [selectedMediaDetail]);
@@ -96,8 +98,9 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
       buildWebLaunchConfigFromEntries({
         entries: webLaunchArgsEntriesDraft,
         launchProfile: webLaunchProfileDraft,
+        appControlsApi: webAppControlsApiDraft,
       }),
-    [webLaunchArgsEntriesDraft, webLaunchProfileDraft]
+    [webAppControlsApiDraft, webLaunchArgsEntriesDraft, webLaunchProfileDraft]
   );
   const webDraftSignature = useMemo(
     () => webLaunchConfigSignature(parsedWebDraft.config),
@@ -281,6 +284,15 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
                               : "none"
                           )
                         }
+                      />
+                      <TextInput
+                        label="App controls API endpoint"
+                        placeholder="https://example.com/api/app-controls?appId=bnw-slop"
+                        value={webAppControlsApiDraft}
+                        onChange={(event) =>
+                          setWebAppControlsApiDraft(event.currentTarget.value)
+                        }
+                        description="Optional JSON endpoint for remote app controls. Returns { controls: [...] }."
                       />
                       <WebLaunchArgsEditor
                         entries={webLaunchArgsEntriesDraft}

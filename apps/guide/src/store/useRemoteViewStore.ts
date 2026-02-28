@@ -23,10 +23,17 @@ type GodmodeItem = {
   channel: GuideChannel;
 };
 
-type RemotePanel = "remote" | "app" | "input";
+type RemoteScreenOption = {
+  id: string;
+  label: string;
+  detail?: string;
+};
+
+type RemotePanel = "remote" | "app" | "input" | "screen";
 
 type RemoteViewData = {
   status: RemoteStatus;
+  galleryMode: boolean;
   uiScale: number;
   textScale: number;
   visibleHours: number;
@@ -37,10 +44,16 @@ type RemoteViewData = {
   godmodeQuery: string;
   showAppPanel: boolean;
   showInputPanel: boolean;
+  showScreenPanel: boolean;
   hasAppControls: boolean;
   hasKeyboardMouse: boolean;
   hasMicControls: boolean;
+  remoteGuideEnabled: boolean;
   hasSpecialControls: boolean;
+  activeScreenId: string;
+  screenOptions: RemoteScreenOption[];
+  screenOptionsLoading: boolean;
+  screenOptionsError: string | null;
   remoteControlsStatus: RemoteControlsStatus;
   remoteControls: RemoteControl[];
   showDebug: boolean;
@@ -59,6 +72,8 @@ type RemoteViewHandlers = {
   setGodmodeQuery: (value: string) => void;
   setDialBuffer: (value: string) => void;
   setRemotePanel: (panel: RemotePanel) => void;
+  setActiveScreenId: (screenId: string) => void;
+  refreshScreenOptions: () => void;
   pushDialDigit: (digit: number) => void;
   handleRemoteControl: (controlId: string, value: number | string | boolean) => void;
   onMicToggle: () => void;
@@ -74,6 +89,7 @@ const noop = () => {};
 const noopBool = (_value: boolean) => {};
 const noopString = (_value: string) => {};
 const noopPanel = (_panel: RemotePanel) => {};
+const noopScreen = (_screenId: string) => {};
 const noopDigit = (_digit: number) => {};
 const noopControl = (_id: string, _value: number | string | boolean) => {};
 const noopDisplay = (_payload: DisplayTuningPayload) => {};
@@ -81,6 +97,7 @@ const noopSend = (_message: RemoteMessage) => {};
 
 export const useRemoteViewStore = create<RemoteViewStore>((set) => ({
   status: "connecting",
+  galleryMode: false,
   uiScale: UI_SCALE_DEFAULT,
   textScale: TEXT_SCALE_DEFAULT,
   visibleHours: LANDSCAPE_VISIBLE_HOURS,
@@ -91,10 +108,16 @@ export const useRemoteViewStore = create<RemoteViewStore>((set) => ({
   godmodeQuery: "",
   showAppPanel: false,
   showInputPanel: false,
+  showScreenPanel: false,
   hasAppControls: false,
   hasKeyboardMouse: false,
   hasMicControls: false,
+  remoteGuideEnabled: false,
   hasSpecialControls: false,
+  activeScreenId: "",
+  screenOptions: [],
+  screenOptionsLoading: false,
+  screenOptionsError: null,
   remoteControlsStatus: "idle",
   remoteControls: [],
   showDebug: false,
@@ -110,6 +133,8 @@ export const useRemoteViewStore = create<RemoteViewStore>((set) => ({
   setGodmodeQuery: noopString,
   setDialBuffer: noopString,
   setRemotePanel: noopPanel,
+  setActiveScreenId: noopScreen,
+  refreshScreenOptions: noop,
   pushDialDigit: noopDigit,
   handleRemoteControl: noopControl,
   onMicToggle: noop,

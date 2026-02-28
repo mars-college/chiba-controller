@@ -162,7 +162,8 @@ export function NodeEditorModal(props: Props) {
                 max={65535}
               />
               <Select
-                label="Display rotate"
+                label="Runtime default rotate"
+                description="Default launch rotation when apply payload does not override it."
                 data={[
                   { value: "", label: "inherit/default" },
                   { value: "0", label: "0" },
