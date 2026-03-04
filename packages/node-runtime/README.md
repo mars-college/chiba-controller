@@ -20,7 +20,7 @@ Useful runtime knobs:
 - `CHIBA3_INPUT_ALLOW_ANY_PLATFORM=1`: dev/test override for non-Linux hosts.
 
 Node-local passthrough endpoint:
-- `POST /api/input` with typed payload (`key`, `text`, `mouse_move`, `mouse_click`).
+- `POST /api/input` with typed payload (`key`, `text`, `mouse_move`, `mouse_click`, `mouse_button`).
 - Requires active Chromium backend.
 
 ## Deterministic Integration Proof

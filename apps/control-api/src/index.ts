@@ -83,6 +83,7 @@ import {
 import { parseEdenCollectionInput } from "./ingest/service.js";
 import { normalizeOpsApplyLaunch } from "./launch-policy.js";
 import { buildConnectivitySummary, toRegistryToml } from "./nodes-utils.js";
+import { registerDeviceController } from "./device-controller.js";
 
 declare module "fastify" {
   interface FastifyReply {
@@ -2495,6 +2496,7 @@ async function main(): Promise<void> {
   });
   await edenSyncScheduler.hydrate();
   edenSyncScheduler.start();
+  const deviceController = await registerDeviceController({ app, db });
   const wss = new WebSocketServer({ noServer: true });
   const wsMeta = new Map<WebSocket, { screenId: string; role: string; alive: boolean }>();
   const appControlsCache = new Map<
@@ -5122,6 +5124,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     clearInterval(wsHeartbeatTimer);
     edenSyncScheduler.stop();
+    deviceController.stop();
     for (const client of wss.clients) {
       try {
         client.close();

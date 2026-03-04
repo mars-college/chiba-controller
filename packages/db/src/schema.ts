@@ -252,3 +252,73 @@ export const profileNodeAssignments = pgTable(
     pk: primaryKey({ columns: [table.profileId, table.nodeId] }),
   })
 );
+
+export const lights = pgTable("lights", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  ipAddress: text("ip_address").notNull(),
+  port: integer("port").notNull(),
+  deviceId: text("device_id").unique(),
+  sku: text("sku"),
+  deviceType: text("device_type"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const lightState = pgTable("light_state", {
+  lightId: text("light_id")
+    .primaryKey()
+    .references(() => lights.id, { onDelete: "cascade" }),
+  power: boolean("power").notNull(),
+  hue: integer("hue").notNull(),
+  saturation: integer("saturation").notNull(),
+  brightness: integer("brightness").notNull(),
+  kelvin: integer("kelvin"),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const lightPresets = pgTable("light_presets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  isPredefined: boolean("is_predefined").notNull(),
+  settings: jsonb("settings").$type<unknown[]>().notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const lightSchedules = pgTable("light_schedules", {
+  lightId: text("light_id")
+    .primaryKey()
+    .references(() => lights.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull(),
+  breakpoints: jsonb("breakpoints").$type<unknown[]>().notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const plugs = pgTable("plugs", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  ipAddress: text("ip_address").notNull(),
+  host: text("host").notNull(),
+  deviceId: text("device_id").unique(),
+  model: text("model"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const plugState = pgTable("plug_state", {
+  plugId: text("plug_id")
+    .primaryKey()
+    .references(() => plugs.id, { onDelete: "cascade" }),
+  power: boolean("power").notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const plugSchedules = pgTable("plug_schedules", {
+  plugId: text("plug_id")
+    .primaryKey()
+    .references(() => plugs.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull(),
+  breakpoints: jsonb("breakpoints").$type<unknown[]>().notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});

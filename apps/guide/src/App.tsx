@@ -129,6 +129,11 @@ type RemoteCursorState = {
   pressed: boolean;
 };
 
+type RemotePointerPressState = {
+  active: boolean;
+  nativePassthrough: boolean;
+};
+
 type RemoteScreenOption = {
   id: string;
   label: string;
@@ -1150,6 +1155,11 @@ function App() {
     target: HTMLElement | null;
     doc: Document | null;
   } | null>(null);
+  const remotePointerPressStateRef = useRef<RemotePointerPressState>({
+    active: false,
+    nativePassthrough: false,
+  });
+  const remoteNativeInputQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     playerUrlRef.current = playerUrl;
@@ -2486,7 +2496,10 @@ function App() {
         clientX: number;
         clientY: number;
       },
-      type: "mousemove" | "mousedown" | "mouseup" | "click"
+      type: "mousemove" | "mousedown" | "mouseup" | "click",
+      options?: {
+        buttons?: number;
+      }
     ) => {
       const view = info.doc.defaultView ?? window;
       const event = new view.MouseEvent(type, {
@@ -2495,7 +2508,9 @@ function App() {
         clientX: info.clientX,
         clientY: info.clientY,
         view,
-        buttons: type === "mousedown" || type === "click" ? 1 : 0,
+        buttons:
+          options?.buttons ??
+          (type === "mousedown" || type === "click" ? 1 : 0),
       });
       info.target.dispatchEvent(event);
     },
@@ -2557,55 +2572,101 @@ function App() {
     scheduleRemoteCursorHide,
   ]);
 
-  const sendNativeRemoteClick = useCallback(
-    async (clientX: number, clientY: number) => {
+  const enqueueNativeRemoteActions = useCallback(
+    async (actions: Array<Record<string, unknown>>) => {
       const nodeId = (screenId ?? "").trim();
-      if (!nodeId) return;
-      if (!remoteInputEnabled) return;
-      const x = Math.max(0, Math.round(clientX));
-      const y = Math.max(0, Math.round(clientY));
+      if (!nodeId || !remoteInputEnabled || actions.length < 1) return;
       const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
-      try {
-        await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: {
-              kind: "mouse_move",
-              x,
-              y,
-            },
-          }),
-        });
-        await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: {
-              kind: "mouse_click",
-              button: "left",
-            },
-          }),
-        });
-      } catch (error) {
-        log.warn("remote-native-click-failed", error);
-      }
+      const run = async () => {
+        for (const action of actions) {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action }),
+          });
+          if (!res.ok) {
+            throw new Error(`node_input_http_${res.status}`);
+          }
+        }
+      };
+      const base = remoteNativeInputQueueRef.current.catch(() => undefined);
+      const queued = base.then(run);
+      remoteNativeInputQueueRef.current = queued.catch(() => undefined);
+      await queued;
     },
     [remoteInputEnabled, screenId]
   );
 
+  const sendNativeRemoteClick = useCallback(
+    async (clientX: number, clientY: number) => {
+      const x = Math.max(0, Math.round(clientX));
+      const y = Math.max(0, Math.round(clientY));
+      try {
+        await enqueueNativeRemoteActions([
+          {
+            kind: "mouse_move",
+            x,
+            y,
+          },
+          {
+            kind: "mouse_click",
+            button: "left",
+          },
+        ]);
+      } catch (error) {
+        log.warn("remote-native-click-failed", error);
+      }
+    },
+    [enqueueNativeRemoteActions]
+  );
+
+  const sendNativeRemoteMove = useCallback(
+    async (clientX: number, clientY: number) => {
+      const x = Math.max(0, Math.round(clientX));
+      const y = Math.max(0, Math.round(clientY));
+      try {
+        await enqueueNativeRemoteActions([
+          {
+            kind: "mouse_move",
+            x,
+            y,
+          },
+        ]);
+      } catch (error) {
+        log.warn("remote-native-move-failed", error);
+      }
+    },
+    [enqueueNativeRemoteActions]
+  );
+
+  const sendNativeRemoteButton = useCallback(
+    async (args: { clientX: number; clientY: number; state: "down" | "up" }) => {
+      const x = Math.max(0, Math.round(args.clientX));
+      const y = Math.max(0, Math.round(args.clientY));
+      try {
+        await enqueueNativeRemoteActions([
+          {
+            kind: "mouse_move",
+            x,
+            y,
+          },
+          {
+            kind: "mouse_button",
+            button: "left",
+            state: args.state,
+          },
+        ]);
+      } catch (error) {
+        log.warn("remote-native-button-failed", error);
+      }
+    },
+    [enqueueNativeRemoteActions]
+  );
+
   const sendNativeRemoteKeyboard = useCallback(
     async (msg: Extract<RemoteMessage, { type: "keyboard" }>) => {
-      const nodeId = (screenId ?? "").trim();
-      if (!nodeId) return;
-      if (!remoteInputEnabled) return;
-      const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
       const postInput = async (action: Record<string, unknown>) =>
-        fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action }),
-        });
+        enqueueNativeRemoteActions([action]);
       try {
         if (msg.action === "text") {
           if (!msg.text) return;
@@ -2632,14 +2693,11 @@ function App() {
         log.warn("remote-native-keyboard-failed", error);
       }
     },
-    [remoteInputEnabled, screenId]
+    [enqueueNativeRemoteActions]
   );
 
   const sendNativeRemoteScroll = useCallback(
     async (dy: number) => {
-      const nodeId = (screenId ?? "").trim();
-      if (!nodeId) return;
-      if (!remoteInputEnabled) return;
       const nextCarry = remoteScrollCarryRef.current + dy;
       const stepSize = 0.06;
       const stepCount = Math.floor(Math.abs(nextCarry) / stepSize);
@@ -2651,25 +2709,148 @@ function App() {
       const repeat = Math.max(1, Math.min(20, stepCount));
       remoteScrollCarryRef.current =
         nextCarry - Math.sign(nextCarry) * stepCount * stepSize;
-      const endpoint = `/api/ops/nodes/${encodeURIComponent(nodeId)}/input`;
       try {
-        await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: {
-              kind: "mouse_click",
-              button: direction,
-              repeat,
-            },
-          }),
-        });
+        await enqueueNativeRemoteActions([
+          {
+            kind: "mouse_click",
+            button: direction,
+            repeat,
+          },
+        ]);
       } catch (error) {
         log.warn("remote-native-scroll-failed", error);
       }
     },
-    [remoteInputEnabled, screenId]
+    [enqueueNativeRemoteActions]
   );
+
+  const startRemotePointerPress = useCallback(() => {
+    if (remotePointerPressStateRef.current.active) return;
+    const position = getCursorClientPosition();
+    if (!position) return;
+    const info = resolvePointerTarget(position.clientX, position.clientY);
+    if (!info || !info.target) return;
+    const nativePassthrough = info.target instanceof HTMLIFrameElement;
+    if (info.target instanceof HTMLElement) {
+      info.target.focus({ preventScroll: true });
+    }
+    remotePointerTargetRef.current = { target: info.target, doc: info.doc };
+    remotePointerPressStateRef.current = { active: true, nativePassthrough };
+    if (!nativePassthrough) {
+      dispatchMouseEvent(info, "mousemove");
+      dispatchMouseEvent(info, "mousedown", { buttons: 1 });
+    } else {
+      void sendNativeRemoteButton({
+        clientX: position.clientX,
+        clientY: position.clientY,
+        state: "down",
+      });
+    }
+    if (remoteCursorPressRef.current !== null) {
+      window.clearTimeout(remoteCursorPressRef.current);
+      remoteCursorPressRef.current = null;
+    }
+    commitRemoteCursor({
+      ...remoteCursorRef.current,
+      pressed: true,
+      visible: true,
+    });
+    scheduleRemoteCursorHide();
+  }, [
+    commitRemoteCursor,
+    dispatchMouseEvent,
+    getCursorClientPosition,
+    resolvePointerTarget,
+    scheduleRemoteCursorHide,
+    sendNativeRemoteButton,
+  ]);
+
+  const moveRemotePointerWhilePressed = useCallback(() => {
+    const pressState = remotePointerPressStateRef.current;
+    if (!pressState.active) return;
+    const position = getCursorClientPosition();
+    if (!position) return;
+    if (pressState.nativePassthrough) {
+      void sendNativeRemoteMove(position.clientX, position.clientY);
+      return;
+    }
+    const info = resolvePointerTarget(position.clientX, position.clientY);
+    if (!info || !info.target) return;
+    remotePointerTargetRef.current = { target: info.target, doc: info.doc };
+    dispatchMouseEvent(info, "mousemove", { buttons: 1 });
+  }, [
+    dispatchMouseEvent,
+    getCursorClientPosition,
+    resolvePointerTarget,
+    sendNativeRemoteMove,
+  ]);
+
+  const releaseRemotePointerPress = useCallback(() => {
+    const pressState = remotePointerPressStateRef.current;
+    if (!pressState.active) return;
+    const position = getCursorClientPosition();
+    const info = position
+      ? resolvePointerTarget(position.clientX, position.clientY)
+      : null;
+    if (pressState.nativePassthrough) {
+      if (position) {
+        void sendNativeRemoteButton({
+          clientX: position.clientX,
+          clientY: position.clientY,
+          state: "up",
+        });
+      } else {
+        void enqueueNativeRemoteActions([
+          {
+            kind: "mouse_button",
+            button: "left",
+            state: "up",
+          },
+        ]).catch((error) => {
+          log.warn("remote-native-button-failed", error);
+        });
+      }
+    } else {
+      const fallback =
+        info && info.target
+          ? info
+          : remotePointerTargetRef.current?.target &&
+              remotePointerTargetRef.current.doc
+            ? {
+                target: remotePointerTargetRef.current.target,
+                doc: remotePointerTargetRef.current.doc,
+                clientX: position?.clientX ?? 0,
+                clientY: position?.clientY ?? 0,
+              }
+            : null;
+      if (fallback) {
+        dispatchMouseEvent(fallback, "mousemove", { buttons: 1 });
+        dispatchMouseEvent(fallback, "mouseup");
+      }
+    }
+    remotePointerPressStateRef.current = {
+      active: false,
+      nativePassthrough: false,
+    };
+    if (remoteCursorPressRef.current !== null) {
+      window.clearTimeout(remoteCursorPressRef.current);
+      remoteCursorPressRef.current = null;
+    }
+    commitRemoteCursor({
+      ...remoteCursorRef.current,
+      pressed: false,
+      visible: true,
+    });
+    scheduleRemoteCursorHide();
+  }, [
+    commitRemoteCursor,
+    dispatchMouseEvent,
+    enqueueNativeRemoteActions,
+    getCursorClientPosition,
+    resolvePointerTarget,
+    scheduleRemoteCursorHide,
+    sendNativeRemoteButton,
+  ]);
 
   const getKeyboardTarget = useCallback(() => {
     const last = remotePointerTargetRef.current;
@@ -2811,9 +2992,30 @@ function App() {
       }
       if (msg.action === "move") {
         moveRemoteCursor(msg.dx, msg.dy);
+        if (
+          playerOpen &&
+          hasKeyboardMouse &&
+          remotePointerPressStateRef.current.active
+        ) {
+          moveRemotePointerWhilePressed();
+        }
+        return;
+      }
+      if (msg.action === "down") {
+        if (!playerOpen || !hasKeyboardMouse) return;
+        startRemotePointerPress();
+        return;
+      }
+      if (msg.action === "up") {
+        if (!playerOpen || !hasKeyboardMouse) return;
+        releaseRemotePointerPress();
+        return;
       }
       if (msg.action === "click") {
         if (!playerOpen || !hasKeyboardMouse) return;
+        if (remotePointerPressStateRef.current.active) {
+          releaseRemotePointerPress();
+        }
         const clickResult = clickRemotePointer();
         if (clickResult?.requiresNativeClickPassthrough) {
           void sendNativeRemoteClick(clickResult.clientX, clickResult.clientY);
@@ -2827,8 +3029,11 @@ function App() {
     },
     [
       clickRemotePointer,
+      moveRemotePointerWhilePressed,
       sendNativeRemoteClick,
       sendNativeRemoteScroll,
+      startRemotePointerPress,
+      releaseRemotePointerPress,
       moveRemoteCursor,
       viewMode,
       playerOpen,
@@ -3257,16 +3462,30 @@ function App() {
   }, [hasMicControls, micEnabled, stopRemoteMic, viewMode]);
 
   useEffect(() => {
+    if (viewMode === "guide" && hasKeyboardMouse) return;
+    if (!remotePointerPressStateRef.current.active) return;
+    releaseRemotePointerPress();
+    remotePointerTargetRef.current = null;
+  }, [hasKeyboardMouse, releaseRemotePointerPress, viewMode]);
+
+  useEffect(() => {
     if (!playerOpen) {
+      if (remotePointerPressStateRef.current.active) {
+        releaseRemotePointerPress();
+      }
       remoteScrollCarryRef.current = 0;
       remotePointerTargetRef.current = null;
+      remotePointerPressStateRef.current = {
+        active: false,
+        nativePassthrough: false,
+      };
       commitRemoteCursor({
         ...remoteCursorRef.current,
         visible: false,
         pressed: false,
       });
     }
-  }, [commitRemoteCursor, playerOpen]);
+  }, [commitRemoteCursor, playerOpen, releaseRemotePointerPress]);
 
   useEffect(() => {
     return () => {

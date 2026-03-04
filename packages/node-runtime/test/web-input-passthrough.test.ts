@@ -278,9 +278,53 @@ exit 0
     assert.equal(inputJson.command[0], inputBinPath);
     assert.ok(inputJson.command.includes("key"));
 
+    const mouseDownRes = await fetch(`http://127.0.0.1:${nodePort}/api/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: { kind: "mouse_button", button: "left", state: "down" },
+      }),
+    });
+    const mouseDownRaw = await mouseDownRes.text();
+    assert.equal(mouseDownRes.status, 200, mouseDownRaw);
+    const mouseDownJson = JSON.parse(mouseDownRaw) as {
+      ok: boolean;
+      command: string[];
+      action: { kind: string; state?: string };
+      code: number;
+    };
+    assert.equal(mouseDownJson.ok, true);
+    assert.equal(mouseDownJson.action.kind, "mouse_button");
+    assert.equal(mouseDownJson.action.state, "down");
+    assert.equal(mouseDownJson.code, 0);
+    assert.ok(mouseDownJson.command.includes("mousedown"));
+
+    const mouseUpRes = await fetch(`http://127.0.0.1:${nodePort}/api/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: { kind: "mouse_button", button: "left", state: "up" },
+      }),
+    });
+    const mouseUpRaw = await mouseUpRes.text();
+    assert.equal(mouseUpRes.status, 200, mouseUpRaw);
+    const mouseUpJson = JSON.parse(mouseUpRaw) as {
+      ok: boolean;
+      command: string[];
+      action: { kind: string; state?: string };
+      code: number;
+    };
+    assert.equal(mouseUpJson.ok, true);
+    assert.equal(mouseUpJson.action.kind, "mouse_button");
+    assert.equal(mouseUpJson.action.state, "up");
+    assert.equal(mouseUpJson.code, 0);
+    assert.ok(mouseUpJson.command.includes("mouseup"));
+
     const inputLogRaw = await fs.readFile(inputLog, "utf8");
     assert.ok(inputLogRaw.includes("key"));
     assert.ok(inputLogRaw.includes("space"));
+    assert.ok(inputLogRaw.includes("mousedown"));
+    assert.ok(inputLogRaw.includes("mouseup"));
 
     const chromiumLogRaw = await fs.readFile(chromiumLog, "utf8");
     assert.ok(chromiumLogRaw.includes("--kiosk"));

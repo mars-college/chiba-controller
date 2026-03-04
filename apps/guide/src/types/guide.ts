@@ -177,6 +177,8 @@ export type RemoteMessage =
   | { type: "index" }
   | { type: "mouse"; action: "move"; dx: number; dy: number }
   | { type: "mouse"; action: "click" }
+  | { type: "mouse"; action: "down" }
+  | { type: "mouse"; action: "up" }
   | { type: "mouse"; action: "scroll"; dy: number }
   | {
       type: "keyboard";

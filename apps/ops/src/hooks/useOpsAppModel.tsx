@@ -781,6 +781,8 @@ export function useOpsAppModel() {
             ? "text"
             : action.kind === "mouse_move"
             ? "mouse_move"
+            : action.kind === "mouse_button"
+            ? `mouse_button:${action.state}:${action.button || "left"}`
             : `mouse_click:${action.button || "left"}`;
         setNodeInputLastAction(actionLabel);
         if (result.code !== 0) {

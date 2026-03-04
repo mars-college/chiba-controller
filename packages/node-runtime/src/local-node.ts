@@ -622,6 +622,14 @@ async function runInputCommand(args: {
     command.push("type", "--delay", "0", args.action.text);
   } else if (args.action.kind === "mouse_move") {
     command.push("mousemove", String(args.action.x), String(args.action.y));
+  } else if (args.action.kind === "mouse_button") {
+    const button =
+      args.action.button === "left"
+        ? "1"
+        : args.action.button === "middle"
+          ? "2"
+          : "3";
+    command.push(args.action.state === "down" ? "mousedown" : "mouseup", button);
   } else {
     const button =
       args.action.button === "left"

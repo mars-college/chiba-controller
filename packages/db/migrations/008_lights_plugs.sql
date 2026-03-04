@@ -1,0 +1,61 @@
+CREATE TABLE IF NOT EXISTS lights (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  ip_address TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 4003,
+  device_id TEXT UNIQUE,
+  sku TEXT,
+  device_type TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS light_state (
+  light_id TEXT PRIMARY KEY REFERENCES lights(id) ON DELETE CASCADE,
+  power BOOLEAN NOT NULL DEFAULT FALSE,
+  hue INTEGER NOT NULL DEFAULT 0,
+  saturation INTEGER NOT NULL DEFAULT 100,
+  brightness INTEGER NOT NULL DEFAULT 100,
+  kelvin INTEGER,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS light_presets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  is_predefined BOOLEAN NOT NULL DEFAULT FALSE,
+  settings JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS light_schedules (
+  light_id TEXT PRIMARY KEY REFERENCES lights(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  breakpoints JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plugs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  ip_address TEXT NOT NULL,
+  host TEXT NOT NULL,
+  device_id TEXT UNIQUE,
+  model TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plug_state (
+  plug_id TEXT PRIMARY KEY REFERENCES plugs(id) ON DELETE CASCADE,
+  power BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plug_schedules (
+  plug_id TEXT PRIMARY KEY REFERENCES plugs(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  breakpoints JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at BIGINT NOT NULL
+);

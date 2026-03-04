@@ -16,6 +16,10 @@ import { getFirstParam, parseBooleanParam } from "../lib/queryParams";
 import { useRemoteViewStore } from "../store/useRemoteViewStore";
 
 const log = createLogger("remote-view");
+const TRACKPAD_TAP_MAX_MS = 450;
+const TRACKPAD_TAP_MAX_DIST_PX = 12;
+const TRACKPAD_HOLD_MS = 220;
+const TRACKPAD_HOLD_MOVE_TOLERANCE_PX = 14;
 
 export function RemoteView() {
   const params = useRef(new URLSearchParams(window.location.search)).current;
@@ -68,6 +72,8 @@ export function RemoteView() {
   const padRef = useRef<HTMLDivElement | null>(null);
   const padLastRef = useRef<{ x: number; y: number } | null>(null);
   const padTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const padHoldTimerRef = useRef<number | null>(null);
+  const padDragActiveRef = useRef(false);
   const scrollPadRef = useRef<HTMLDivElement | null>(null);
   const scrollPadLastYRef = useRef<number | null>(null);
   const keyboardInputRef = useRef<HTMLInputElement | null>(null);
@@ -77,16 +83,48 @@ export function RemoteView() {
   const isCompactMode = showAppPanel || showInputPanel || showScreenPanel;
   const hideGuideControls = !remoteGuideEnabled && (channelLocked || galleryMode);
 
-  const startPad = useCallback((clientX: number, clientY: number) => {
-    padLastRef.current = { x: clientX, y: clientY };
-    padTapRef.current = { x: clientX, y: clientY, time: Date.now() };
+  const clearPadHoldTimer = useCallback(() => {
+    if (padHoldTimerRef.current !== null) {
+      window.clearTimeout(padHoldTimerRef.current);
+      padHoldTimerRef.current = null;
+    }
   }, []);
+
+  const startPad = useCallback(
+    (clientX: number, clientY: number) => {
+      clearPadHoldTimer();
+      padDragActiveRef.current = false;
+      padLastRef.current = { x: clientX, y: clientY };
+      padTapRef.current = { x: clientX, y: clientY, time: Date.now() };
+      padHoldTimerRef.current = window.setTimeout(() => {
+        const tap = padTapRef.current;
+        const last = padLastRef.current;
+        if (!tap || !last) return;
+        const dist = Math.hypot(last.x - tap.x, last.y - tap.y);
+        if (dist > TRACKPAD_HOLD_MOVE_TOLERANCE_PX) return;
+        padDragActiveRef.current = true;
+        send({ type: "mouse", action: "down" });
+        log.debug("trackpad-drag", { phase: "start" });
+      }, TRACKPAD_HOLD_MS);
+    },
+    [clearPadHoldTimer, send]
+  );
 
   const movePad = useCallback(
     (clientX: number, clientY: number) => {
       const last = padLastRef.current;
       const rect = padRef.current?.getBoundingClientRect();
       if (!last || !rect || !rect.width || !rect.height) return;
+      const tap = padTapRef.current;
+      if (
+        tap &&
+        !padDragActiveRef.current &&
+        padHoldTimerRef.current !== null &&
+        Math.hypot(clientX - tap.x, clientY - tap.y) >
+          TRACKPAD_HOLD_MOVE_TOLERANCE_PX
+      ) {
+        clearPadHoldTimer();
+      }
       const dx = (clientX - last.x) / rect.width;
       const dy = (clientY - last.y) / rect.height;
       padLastRef.current = { x: clientX, y: clientY };
@@ -94,23 +132,31 @@ export function RemoteView() {
       send({ type: "mouse", action: "move", dx, dy });
       log.debug("trackpad-move", { dx, dy });
     },
-    [send]
+    [clearPadHoldTimer, send]
   );
 
   const endPad = useCallback(
     (clientX: number, clientY: number) => {
+      clearPadHoldTimer();
       const tap = padTapRef.current;
+      const isDrag = padDragActiveRef.current;
       padLastRef.current = null;
       padTapRef.current = null;
+      padDragActiveRef.current = false;
+      if (isDrag) {
+        send({ type: "mouse", action: "up" });
+        log.debug("trackpad-drag", { phase: "end" });
+        return;
+      }
       if (!tap) return;
       const dt = Date.now() - tap.time;
       const dist = Math.hypot(clientX - tap.x, clientY - tap.y);
-      if (dt < 450 && dist < 12) {
+      if (dt < TRACKPAD_TAP_MAX_MS && dist < TRACKPAD_TAP_MAX_DIST_PX) {
         send({ type: "mouse", action: "click" });
         log.debug("trackpad-click");
       }
     },
-    [send]
+    [clearPadHoldTimer, send]
   );
 
   const handlePadPointerDown = useCallback(
@@ -150,9 +196,14 @@ export function RemoteView() {
   );
 
   const handlePadPointerCancel = useCallback(() => {
+    clearPadHoldTimer();
+    if (padDragActiveRef.current) {
+      send({ type: "mouse", action: "up" });
+    }
+    padDragActiveRef.current = false;
     padLastRef.current = null;
     padTapRef.current = null;
-  }, []);
+  }, [clearPadHoldTimer, send]);
 
   const handleScrollPadPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
@@ -272,6 +323,13 @@ export function RemoteView() {
       clearKeyboardBuffer();
     }
   }, [clearKeyboardBuffer, showInputPanel]);
+
+  useEffect(
+    () => () => {
+      clearPadHoldTimer();
+    },
+    [clearPadHoldTimer]
+  );
 
   useEffect(() => {
     setManualScreenId(activeScreenId);
@@ -592,7 +650,7 @@ export function RemoteView() {
               onPointerCancel={handlePadPointerCancel}
             >
               <div className="remote-trackpad-label">
-                Drag to move · Tap to click
+                Drag to move cursor · Tap to click · Hold + drag to drag
               </div>
             </div>
             <div className="remote-keyboard">

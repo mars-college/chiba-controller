@@ -626,6 +626,13 @@ export const NodeRuntimeInputActionSchema = z.discriminatedUnion("kind", [
       repeat: z.number().int().positive().max(20).optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("mouse_button"),
+      button: z.enum(["left", "middle", "right"]).default("left"),
+      state: z.enum(["down", "up"]),
+    })
+    .strict(),
 ]);
 export type NodeRuntimeInputAction = z.infer<typeof NodeRuntimeInputActionSchema>;
 
