@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Card,
   Group,
@@ -68,7 +67,7 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
                           <Stack>
                             <Title order={5}>Media Index</Title>
                             <Card withBorder p="sm">
-                              <ScrollArea h={560}>
+                              <ScrollArea>
                                 <Table
                                   striped
                                   highlightOnHover
@@ -155,7 +154,7 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
                               </Button>
                             </Group>
                             <Card withBorder p="sm">
-                              <ScrollArea h={560}>
+                              <ScrollArea>
                                 <Table
                                   striped
                                   highlightOnHover
@@ -169,7 +168,7 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
                                       <Table.Th>Artist</Table.Th>
                                       <Table.Th>Description</Table.Th>
                                       <Table.Th>Items</Table.Th>
-                                      <Table.Th w={96}>Actions</Table.Th>
+                                      <Table.Th w={176}>Actions</Table.Th>
                                     </Table.Tr>
                                   </Table.Thead>
                                   <Table.Tbody>
@@ -201,29 +200,31 @@ export function MediaPlaylistTablesView({ vm }: { vm: MediaPlaylistTablesVm }) {
                                         </Table.Td>
                                         <Table.Td>{row.mediaIds.length}</Table.Td>
                                         <Table.Td>
-                                          <Group gap={6}>
-                                            <ActionIcon
-                                              color="blue"
+                                          <Group gap={6} wrap="nowrap">
+                                            <Button
+                                              size="xs"
                                               variant="light"
+                                              color="blue"
+                                              leftSection={<IconPencil size={14} />}
                                               onClick={(event) => {
                                                 event.stopPropagation();
                                                 openPlaylistEditorRoute(row.id);
                                               }}
-                                              title="Open playlist editor"
                                             >
-                                              <IconPencil size={14} />
-                                            </ActionIcon>
-                                            <ActionIcon
-                                              color="red"
+                                              Edit
+                                            </Button>
+                                            <Button
+                                              size="xs"
                                               variant="light"
+                                              color="red"
+                                              leftSection={<IconTrash size={14} />}
                                               onClick={(event) => {
                                                 event.stopPropagation();
                                                 void deletePlaylistDraft(row.id);
                                               }}
-                                              title="Delete playlist"
                                             >
-                                              <IconTrash size={14} />
-                                            </ActionIcon>
+                                              Delete
+                                            </Button>
                                           </Group>
                                         </Table.Td>
                                       </Table.Tr>

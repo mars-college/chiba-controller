@@ -118,6 +118,17 @@ import {
 } from "../lib/webLaunchArgs";
 
 const BOOTSTRAP_LOG_MAX_CHARS = 120_000;
+const UPLOAD_TITLE_MAX_LENGTH = 256;
+
+function defaultUploadTitle(filename: string): string {
+  const trimmed = filename.trim();
+  if (!trimmed) return "Untitled";
+  const dot = trimmed.lastIndexOf(".");
+  const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
+  const normalized = base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const candidate = normalized || base || trimmed;
+  return candidate.slice(0, UPLOAD_TITLE_MAX_LENGTH);
+}
 
 function appendLogChunk(current: string, chunk: string): string {
   if (!chunk) return current;
@@ -276,6 +287,7 @@ export function useOpsAppModel() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [youtubeTitle, setYoutubeTitle] = useState("");
   const [youtubeArtist, setYoutubeArtist] = useState("");
+  const [youtubeDescription, setYoutubeDescription] = useState("");
   const [webUrl, setWebUrl] = useState("");
   const [webTitle, setWebTitle] = useState("");
   const [webArtist, setWebArtist] = useState("");
@@ -289,7 +301,14 @@ export function useOpsAppModel() {
   >([]);
   const [edenInput, setEdenInput] = useState("");
   const [edenCreatePlaylist, setEdenCreatePlaylist] = useState(false);
+  const [edenArtist, setEdenArtist] = useState("");
+  const [edenDescription, setEdenDescription] = useState("");
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadTitleOverrides, setUploadTitleOverrides] = useState<string[]>([]);
+  const [uploadArtistOverrides, setUploadArtistOverrides] = useState<string[]>([]);
+  const [uploadDescriptionOverrides, setUploadDescriptionOverrides] = useState<
+    string[]
+  >([]);
   const [uploadArtist, setUploadArtist] = useState("");
   const [uploadDescription, setUploadDescription] = useState("");
   const [uploadCreatePlaylist, setUploadCreatePlaylist] = useState(false);
@@ -706,6 +725,12 @@ export function useOpsAppModel() {
 
   const clearSelection = useCallback(() => setSelectedNodeIds([]), []);
 
+  useEffect(() => {
+    if (mainTab !== "fleet") {
+      setSelectedNodeIds([]);
+      setLastTick(null);
+    }
+  }, [mainTab]);
   const openNodeWorkspace = useCallback(() => {
     if (selectedNodeIds.length === 0) return;
     if (
@@ -1040,6 +1065,32 @@ export function useOpsAppModel() {
   }, [
     refreshNodeRuntime,
     refreshNodeStash,
+    workspaceSingleNodeId,
+  ]);
+
+  useEffect(() => {
+    const nodeId = workspaceSingleNodeId.trim();
+    if (!nodeId) return;
+    const status = nodeRuntimeStatus?.status;
+    if (!status) return;
+    const cacheReady =
+      typeof status.cacheReady === "number" && Number.isFinite(status.cacheReady)
+        ? Math.max(0, Math.floor(status.cacheReady))
+        : 0;
+    const cacheTotal =
+      typeof status.cacheTotal === "number" && Number.isFinite(status.cacheTotal)
+        ? Math.max(0, Math.floor(status.cacheTotal))
+        : 0;
+    const phase = typeof status.phase === "string" ? status.phase.toLowerCase() : "";
+    const shouldPoll = phase === "warming" || (cacheTotal > 0 && cacheReady < cacheTotal);
+    if (!shouldPoll) return;
+    const intervalId = window.setInterval(() => {
+      void refreshNodeRuntime(nodeId, true);
+    }, 1800);
+    return () => window.clearInterval(intervalId);
+  }, [
+    nodeRuntimeStatus?.status,
+    refreshNodeRuntime,
     workspaceSingleNodeId,
   ]);
 
@@ -1844,6 +1895,7 @@ export function useOpsAppModel() {
         url: youtubeUrl.trim(),
         title: youtubeTitle.trim() || undefined,
         artist: youtubeArtist.trim() || undefined,
+        description: youtubeDescription.trim() || undefined,
       });
       upsertIngestJob(result.job, { notifyTransitions: true });
       startPollingJob(result.job.id);
@@ -1867,6 +1919,7 @@ export function useOpsAppModel() {
     startPollingJob,
     upsertIngestJob,
     youtubeArtist,
+    youtubeDescription,
     youtubeTitle,
     youtubeUrl,
   ]);
@@ -1885,6 +1938,10 @@ export function useOpsAppModel() {
       const result = await startEdenIngestJob({
         input: edenInput.trim(),
         ...(edenCreatePlaylist ? { playlist: true } : {}),
+        ...(edenArtist.trim() ? { artist: edenArtist.trim() } : {}),
+        ...(edenDescription.trim()
+          ? { description: edenDescription.trim() }
+          : {}),
       });
       upsertIngestJob(result.job, { notifyTransitions: true });
       startPollingJob(result.job.id);
@@ -1905,6 +1962,8 @@ export function useOpsAppModel() {
     }
   }, [
     edenCreatePlaylist,
+    edenArtist,
+    edenDescription,
     edenInput,
     routeToMediaLibraryAfterQueue,
     startPollingJob,
@@ -2026,10 +2085,28 @@ export function useOpsAppModel() {
     try {
       setIngestBusy(true);
       const formData = new FormData();
+      const nonArchiveFiles = uploadFiles.filter(
+        (file) => !file.name.toLowerCase().endsWith(".zip")
+      );
       for (const file of uploadFiles) {
         const lower = file.name.toLowerCase();
         if (lower.endsWith(".zip")) formData.append("archive", file);
         else formData.append("files", file);
+      }
+      if (nonArchiveFiles.length > 0) {
+        const perFileTitles = nonArchiveFiles.map((file, index) => {
+          const raw = uploadTitleOverrides[index] ?? defaultUploadTitle(file.name);
+          return raw.trim() || defaultUploadTitle(file.name);
+        });
+        formData.append("fileTitles", JSON.stringify(perFileTitles));
+        const perFileArtists = nonArchiveFiles.map(
+          (_, index) => uploadArtistOverrides[index]?.trim() || ""
+        );
+        const perFileDescriptions = nonArchiveFiles.map(
+          (_, index) => uploadDescriptionOverrides[index]?.trim() || ""
+        );
+        formData.append("fileArtists", JSON.stringify(perFileArtists));
+        formData.append("fileDescriptions", JSON.stringify(perFileDescriptions));
       }
       if (uploadArtist.trim()) formData.append("artist", uploadArtist.trim());
       if (uploadDescription.trim())
@@ -2049,6 +2126,9 @@ export function useOpsAppModel() {
         message: `job:${result.job.id}`,
       });
       setUploadFiles([]);
+      setUploadTitleOverrides([]);
+      setUploadArtistOverrides([]);
+      setUploadDescriptionOverrides([]);
       setUploadArtist("");
       setUploadDescription("");
       setUploadCreatePlaylist(false);
@@ -2072,6 +2152,9 @@ export function useOpsAppModel() {
     uploadCreatePlaylist,
     uploadDescription,
     uploadFiles,
+    uploadArtistOverrides,
+    uploadTitleOverrides,
+    uploadDescriptionOverrides,
     uploadPlaylistTitle,
   ]);
 
@@ -2806,6 +2889,102 @@ export function useOpsAppModel() {
     [refreshDraftsAfterIngest, serverMedia]
   );
 
+  const saveManyMediaMetadata = useCallback(
+    async (args: { ids: string[]; artist?: string; description?: string }) => {
+      const ids = Array.from(new Set(args.ids.map((id) => id.trim()).filter(Boolean)));
+      if (ids.length === 0) return;
+
+      const applyArtist = typeof args.artist === "string";
+      const applyDescription = typeof args.description === "string";
+      if (!applyArtist && !applyDescription) return;
+
+      const selectedRows = serverMedia.filter((row) => ids.includes(row.id));
+      if (selectedRows.length === 0) {
+        throw new Error("no_media_selected_for_batch_update");
+      }
+
+      setMediaSaveBusy(true);
+      try {
+        await importResources({
+          media: selectedRows.map((row) => ({
+            ...row,
+            artist: applyArtist
+              ? args.artist?.trim() || undefined
+              : row.artist,
+            description: applyDescription
+              ? args.description?.trim() || undefined
+              : row.description,
+          })),
+          playlists: [],
+          blocks: [],
+          channels: [],
+          profiles: [],
+        });
+        await refreshDraftsAfterIngest();
+        notifications.show({
+          color: "teal",
+          title: "Media updated",
+          message: `${selectedRows.length} item${selectedRows.length === 1 ? "" : "s"}`,
+        });
+      } finally {
+        setMediaSaveBusy(false);
+      }
+    },
+    [refreshDraftsAfterIngest, serverMedia]
+  );
+
+  const deleteManyMediaItems = useCallback(
+    async (idsInput: string[]) => {
+      const ids = Array.from(
+        new Set(idsInput.map((id) => id.trim()).filter(Boolean))
+      );
+      if (ids.length === 0) return;
+
+      const ok = window.confirm(
+        `Delete ${ids.length} media item${ids.length === 1 ? "" : "s"}? This also prunes references from playlists, blocks, channels, and profiles.`
+      );
+      if (!ok) return;
+
+      setMediaDeleteBusy(true);
+      let deleted = 0;
+      const failed: string[] = [];
+      try {
+        for (const mediaId of ids) {
+          try {
+            const result = await deleteMedia(mediaId);
+            if (result.deleted) deleted += 1;
+            else failed.push(mediaId);
+          } catch {
+            failed.push(mediaId);
+          }
+        }
+        if (ids.includes(selectedServerMediaId || "")) {
+          setSelectedServerMediaId(null);
+        }
+        setMediaDetailId(null);
+        setBuilderTab("media");
+        await refreshDraftsAfterIngest();
+        if (deleted > 0) {
+          notifications.show({
+            color: "teal",
+            title: "Media deleted",
+            message: `${deleted} item${deleted === 1 ? "" : "s"} removed`,
+          });
+        }
+        if (failed.length > 0) {
+          notifications.show({
+            color: "red",
+            title: "Some deletes failed",
+            message: failed.slice(0, 3).join(", "),
+          });
+        }
+      } finally {
+        setMediaDeleteBusy(false);
+      }
+    },
+    [refreshDraftsAfterIngest, selectedServerMediaId]
+  );
+
   const deletePlaylistDraft = useCallback(
     async (playlistId: string): Promise<boolean> => {
       const ok = window.confirm(`Delete playlist "${playlistId}"?`);
@@ -3141,38 +3320,108 @@ export function useOpsAppModel() {
     [profileRowsFiltered, profileTablePage]
   );
 
-  const onUploadDrop = useCallback((files: File[]) => {
-    const zipFiles = files.filter((file) =>
-      file.name.toLowerCase().endsWith(".zip")
-    );
-    const mediaFiles = files.filter(
-      (file) => !file.name.toLowerCase().endsWith(".zip")
-    );
-    if (zipFiles.length > 1) {
-      setUploadDropError("Only one zip archive is allowed.");
-      return;
-    }
-    if (zipFiles.length === 1 && mediaFiles.length > 0) {
-      setUploadDropError(
-        "Upload either one zip archive or up to 20 media files, not both."
+  const onUploadDrop = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      const nextFiles = [...uploadFiles, ...files];
+      const zipFiles = nextFiles.filter((file) =>
+        file.name.toLowerCase().endsWith(".zip")
       );
-      return;
-    }
-    if (mediaFiles.length > 20) {
-      setUploadDropError("You can upload up to 20 media files at once.");
-      return;
-    }
-    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > 2 * 1024 * 1024 * 1024) {
-      setUploadDropError("Uploads are limited to 2GB total.");
-      return;
-    }
-    setUploadDropError(null);
-    setUploadFiles(files);
+      const mediaFiles = nextFiles.filter(
+        (file) => !file.name.toLowerCase().endsWith(".zip")
+      );
+      if (zipFiles.length > 1) {
+        setUploadDropError("Only one zip archive is allowed.");
+        return;
+      }
+      if (zipFiles.length === 1 && mediaFiles.length > 0) {
+        setUploadDropError(
+          "Upload either one zip archive or up to 20 media files, not both."
+        );
+        return;
+      }
+      if (mediaFiles.length > 20) {
+        setUploadDropError("You can upload up to 20 media files at once.");
+        return;
+      }
+      const totalBytes = nextFiles.reduce((sum, file) => sum + file.size, 0);
+      if (totalBytes > 2 * 1024 * 1024 * 1024) {
+        setUploadDropError("Uploads are limited to 2GB total.");
+        return;
+      }
+      setUploadDropError(null);
+      setUploadFiles(nextFiles);
+      setUploadTitleOverrides([
+        ...uploadFiles.map((file, index) => {
+          const existing = uploadTitleOverrides[index]?.trim();
+          return existing && existing.length > 0
+            ? existing
+            : defaultUploadTitle(file.name);
+        }),
+        ...files.map((file) => defaultUploadTitle(file.name)),
+      ]);
+      setUploadArtistOverrides([
+        ...uploadFiles.map((_, index) => uploadArtistOverrides[index] ?? ""),
+        ...files.map(() => ""),
+      ]);
+      setUploadDescriptionOverrides([
+        ...uploadFiles.map(
+          (_, index) => uploadDescriptionOverrides[index] ?? ""
+        ),
+        ...files.map(() => ""),
+      ]);
+    },
+    [
+      uploadArtistOverrides,
+      uploadDescriptionOverrides,
+      uploadFiles,
+      uploadTitleOverrides,
+    ]
+  );
+
+  const setUploadTitleOverrideAtIndex = useCallback((index: number, value: string) => {
+    setUploadTitleOverrides((prev) => {
+      const next = [...prev];
+      next[index] = value.slice(0, UPLOAD_TITLE_MAX_LENGTH);
+      return next;
+    });
   }, []);
+
+  const setUploadTitleForAll = useCallback(
+    (value: string) => {
+      const nextValue = value.slice(0, UPLOAD_TITLE_MAX_LENGTH);
+      setUploadTitleOverrides(uploadFiles.map(() => nextValue));
+    },
+    [uploadFiles]
+  );
+
+  const setUploadArtistOverrideAtIndex = useCallback(
+    (index: number, value: string) => {
+      setUploadArtistOverrides((prev) => {
+        const next = [...prev];
+        next[index] = value.slice(0, 256);
+        return next;
+      });
+    },
+    []
+  );
+
+  const setUploadDescriptionOverrideAtIndex = useCallback(
+    (index: number, value: string) => {
+      setUploadDescriptionOverrides((prev) => {
+        const next = [...prev];
+        next[index] = value.slice(0, 4000);
+        return next;
+      });
+    },
+    []
+  );
 
   const removeUploadFileAtIndex = useCallback((index: number) => {
     setUploadFiles((prev) => prev.filter((_, i) => i !== index));
+    setUploadTitleOverrides((prev) => prev.filter((_, i) => i !== index));
+    setUploadArtistOverrides((prev) => prev.filter((_, i) => i !== index));
+    setUploadDescriptionOverrides((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const uploadPreviewItems = useMemo<UploadPreviewItem[]>(
@@ -3645,6 +3894,8 @@ export function useOpsAppModel() {
     setYoutubeTitle,
     youtubeArtist,
     setYoutubeArtist,
+    youtubeDescription,
+    setYoutubeDescription,
     webUrl,
     setWebUrl,
     webTitle,
@@ -3665,10 +3916,21 @@ export function useOpsAppModel() {
     setEdenInput,
     edenCreatePlaylist,
     setEdenCreatePlaylist,
+    edenArtist,
+    setEdenArtist,
+    edenDescription,
+    setEdenDescription,
     getUploadRootProps,
     getUploadInputProps,
     isUploadDragActive,
     uploadFiles,
+    uploadTitleOverrides,
+    setUploadTitleOverrideAtIndex,
+    setUploadTitleForAll,
+    uploadArtistOverrides,
+    setUploadArtistOverrideAtIndex,
+    uploadDescriptionOverrides,
+    setUploadDescriptionOverrideAtIndex,
     uploadArtist,
     setUploadArtist,
     uploadDescription,
@@ -3717,6 +3979,10 @@ export function useOpsAppModel() {
     setBuilderTab,
     openQuickSend,
     deleteMediaItem,
+    deleteManyMediaItems,
+    saveManyMediaMetadata,
+    mediaSaveBusy,
+    mediaDeleteBusy,
     playlistCount: playlistRowsFiltered.length,
     playlistTotalCount: draftStore.playlists.length,
     mergedMediaById,

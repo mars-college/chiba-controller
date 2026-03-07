@@ -14,7 +14,7 @@ export type BuilderMode =
   | "channel"
   | "profile";
 
-export type MainTab = "fleet" | "builder";
+export type MainTab = "fleet" | "builder" | "devices";
 export type FleetView = "table" | "workspace";
 export type MediaLibrarySection =
   | "media"

@@ -1,4 +1,10 @@
-import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import {
+  useEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import {
   ActionIcon,
   Badge,
@@ -119,11 +125,20 @@ export type FleetScreenVm = {
   nodeDisplayModeResult: OpsNodeDisplayModeResponse | null;
   nodeStashFilterQuery: string;
   setNodeStashFilterQuery: (query: string) => void;
-  nodeStashSort: "name" | "size_desc" | "size_asc" | "updated_desc" | "updated_asc";
+  nodeStashSort:
+    | "name"
+    | "size_desc"
+    | "size_asc"
+    | "updated_desc"
+    | "updated_asc";
   setNodeStashSort: (
     sort: "name" | "size_desc" | "size_asc" | "updated_desc" | "updated_asc"
   ) => void;
-  filteredNodeStashItems: Array<{ fileName: string; sizeBytes: number; updatedAtMs: number }>;
+  filteredNodeStashItems: Array<{
+    fileName: string;
+    sizeBytes: number;
+    updatedAtMs: number;
+  }>;
   nodeEditorOpen: boolean;
   setNodeEditorOpen: (open: boolean) => void;
   editingNodeId: string | null;
@@ -303,7 +318,9 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     mergedPlaylists,
   } = vm;
 
-  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("overview");
+  const [workspacePanel, setWorkspacePanel] =
+    useState<WorkspacePanel>("overview");
+  const [mobileSelectionMode, setMobileSelectionMode] = useState(false);
 
   useEffect(() => {
     if (nodeEditorOpen) setWorkspacePanel("edit");
@@ -321,6 +338,12 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     }
   }, [fleetView, setAssignTargetOpen, setNodeEditorOpen]);
 
+  useEffect(() => {
+    if (!isMobile && mobileSelectionMode) {
+      setMobileSelectionMode(false);
+    }
+  }, [isMobile, mobileSelectionMode]);
+
   const openRowWorkspace = (nodeId: string) => {
     setSelectedNodeIds([nodeId]);
     setFleetView("workspace");
@@ -334,10 +357,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
         const parsed = new URL(raw);
         const host = parsed.hostname.replace(/^www\./i, "").trim();
         const leaf = decodeURIComponent(
-          parsed.pathname
-            .split("/")
-            .filter(Boolean)
-            .pop() || ""
+          parsed.pathname.split("/").filter(Boolean).pop() || ""
         ).trim();
         if (host && leaf) return `${host}/${leaf}`;
         if (host) return host;
@@ -345,11 +365,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
         // no-op
       }
     }
-    const leaf = raw
-      .split(/[\\/]/)
-      .filter(Boolean)
-      .pop()
-      ?.trim();
+    const leaf = raw.split(/[\\/]/).filter(Boolean).pop()?.trim();
     return leaf || raw;
   };
 
@@ -434,6 +450,159 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     return "res ?";
   };
 
+  const nodeMetaLabel = (row: FleetPiHealth) => {
+    const parts = [
+      row.nodeName?.trim() || "",
+      (row.host || row.ip || "").trim(),
+    ].filter(Boolean);
+    return parts.join(" • ") || "Unnamed node";
+  };
+
+  const nodeHostLabel = (row: FleetPiHealth) => {
+    const parts = [(row.host || "").trim(), (row.ip || "").trim()].filter(
+      Boolean
+    );
+    return parts.join(" • ") || "host unavailable";
+  };
+
+  const versionsCompactLabel = (row: FleetPiHealth) =>
+    `n ${row.chibaNode.version ?? "?"} · c ${row.cableServer?.version ?? "?"}`;
+
+  const lastCheckedLabel = (row: FleetPiHealth) => {
+    if (row.connectivity?.status === "progressing") return "checking...";
+    return `${Math.max(
+      0,
+      Math.round((Date.now() - row.lastCheckedAt) / 1000)
+    )}s ago`;
+  };
+
+  const renderConnectivitySignals = (row: FleetPiHealth) => {
+    const signals = [
+      { label: "DNS", ok: row.dnsOk },
+      { label: "SSH", ok: row.tcp.ssh22.ok },
+      { label: "APP", ok: row.http.nodeStatus.ok },
+      { label: "API", ok: row.http.cableVersion.ok },
+    ];
+    return (
+      <Group gap={4} wrap="wrap" className="ops-fleet-signal-strip">
+        {signals.map((signal) => (
+          <Text
+            key={`${row.id}-${signal.label}`}
+            component="span"
+            className={`ops-fleet-signal-pill ${
+              signal.ok ? "is-up" : "is-down"
+            }`}
+          >
+            {signal.label}
+          </Text>
+        ))}
+      </Group>
+    );
+  };
+
+  const renderRuntimeSummary = (
+    row: FleetPiHealth,
+    variant: "mobile" | "table"
+  ) => {
+    const runtime = resolveRuntimeCard(row.chibaNode.kioskUrl ?? null);
+    const cacheProgress = toCacheProgress({
+      cacheReady: row.chibaNode.runtime?.cacheReady,
+      cacheTotal: row.chibaNode.runtime?.cacheTotal,
+      phase: row.chibaNode.runtime?.phase,
+    });
+    const cacheDownloadProgress = cacheProgress?.active ? cacheProgress : null;
+    const thumbWidth = variant === "mobile" ? 64 : 76;
+    const thumbHeight = variant === "mobile" ? 40 : 46;
+    const subtitle = runtime.subtitle?.trim() || versionsCompactLabel(row);
+
+    if (variant === "mobile") {
+      return (
+        <Group
+          wrap="nowrap"
+          align="center"
+          gap="xs"
+          className="ops-fleet-runtime-row"
+        >
+          {runtime.thumbnailUrl ? (
+            <Image
+              src={runtime.thumbnailUrl}
+              alt={runtime.label}
+              w={thumbWidth}
+              h={thumbHeight}
+              radius="sm"
+              fit="cover"
+            />
+          ) : null}
+          <Stack gap={1} style={{ minWidth: 0, flex: 1 }}>
+            <Text size="sm" fw={600} lineClamp={1} title={runtime.label}>
+              {runtime.label}
+            </Text>
+            {subtitle ? (
+              <Text size="xs" c="dimmed" lineClamp={1} title={subtitle}>
+                {subtitle}
+              </Text>
+            ) : null}
+          </Stack>
+        </Group>
+      );
+    }
+
+    return (
+      <Stack gap={6} className="ops-fleet-runtime-summary">
+        <Group
+          wrap="nowrap"
+          align="flex-start"
+          gap="xs"
+          className="ops-fleet-runtime-row"
+        >
+          {runtime.thumbnailUrl ? (
+            <Image
+              src={runtime.thumbnailUrl}
+              alt={runtime.label}
+              w={thumbWidth}
+              h={thumbHeight}
+              radius="sm"
+              fit="cover"
+            />
+          ) : null}
+          <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+            <Group gap={6} wrap="wrap">
+              <Badge size="xs" variant="light">
+                {runtime.kind}
+              </Badge>
+            </Group>
+            <Text size="sm" fw={600} lineClamp={1} title={runtime.label}>
+              {runtime.label}
+            </Text>
+            <Text size="xs" c="dimmed" lineClamp={1} title={subtitle}>
+              {subtitle}
+            </Text>
+          </Stack>
+        </Group>
+        {cacheDownloadProgress ? (
+          <Group gap={8} wrap="nowrap" align="center">
+            <Progress
+              size="xs"
+              radius="xl"
+              value={cacheDownloadProgress.percent}
+              color="blue"
+              striped
+              animated
+              className="ops-fleet-runtime-progress"
+            />
+            <Text
+              size="xs"
+              c="dimmed"
+              className="ops-fleet-runtime-progress-label"
+            >
+              {cacheDownloadProgress.ready}/{cacheDownloadProgress.total}
+            </Text>
+          </Group>
+        ) : null}
+      </Stack>
+    );
+  };
+
   const openEditPanel = () => {
     if (selectedNodeIds.length === 1 && nodeWorkspaceFocus) {
       openEditNodeEditor(nodeWorkspaceFocus.id);
@@ -495,11 +664,51 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     nodeRuntimeStatus?.status.backend === "chromium"
       ? "Playback telemetry unavailable while Chromium backend is active."
       : "Playback progress unavailable for this target.";
+  const toCacheProgress = (args: {
+    cacheReady?: unknown;
+    cacheTotal?: unknown;
+    phase?: unknown;
+  }) => {
+    const total =
+      typeof args.cacheTotal === "number" && Number.isFinite(args.cacheTotal)
+        ? Math.max(0, Math.floor(args.cacheTotal))
+        : 0;
+    if (total <= 0) return null;
+    const readyRaw =
+      typeof args.cacheReady === "number" && Number.isFinite(args.cacheReady)
+        ? Math.floor(args.cacheReady)
+        : 0;
+    const ready = Math.max(0, Math.min(total, readyRaw));
+    const phase =
+      typeof args.phase === "string" ? args.phase.toLowerCase() : "";
+    const active = phase === "warming" || ready < total;
+    const percent = Math.max(0, Math.min(100, (ready / total) * 100));
+    return {
+      ready,
+      total,
+      phase,
+      active,
+      percent,
+    };
+  };
+  const runtimeCacheProgress = toCacheProgress({
+    cacheReady: nodeRuntimeStatus?.status.cacheReady,
+    cacheTotal: nodeRuntimeStatus?.status.cacheTotal,
+    phase: nodeRuntimeStatus?.status.phase,
+  });
+  const runtimeCacheDownloadProgress = runtimeCacheProgress?.active
+    ? runtimeCacheProgress
+    : null;
 
   return (
     <Tabs.Panel value="fleet" pt="md">
       {fleetView === "workspace" ? (
-        <Paper withBorder radius="md" p="md">
+        <Paper
+          withBorder={!isMobile}
+          radius={isMobile ? 0 : "md"}
+          p={isMobile ? "xs" : "md"}
+          className="ops-fleet-panel"
+        >
           <Stack gap="md">
             <Group justify="space-between" align="center" wrap="wrap">
               <Stack gap={4}>
@@ -519,14 +728,14 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     ...(workspacePanel === "assign"
                       ? [{ label: "Assign Target" }]
                       : workspacePanel === "control"
-                        ? [{ label: "Control App/Web" }]
+                      ? [{ label: "Control App/Web" }]
                       : workspacePanel === "edit"
-                        ? [{ label: editingNodeId ? "Edit Node" : "Add Node" }]
-                        : workspacePanel === "stash"
-                          ? [{ label: "Media Stash" }]
-                          : workspacePanel === "runtime"
-                            ? [{ label: "Runtime" }]
-                            : []),
+                      ? [{ label: editingNodeId ? "Edit Node" : "Add Node" }]
+                      : workspacePanel === "stash"
+                      ? [{ label: "Media Stash" }]
+                      : workspacePanel === "runtime"
+                      ? [{ label: "Runtime" }]
+                      : []),
                   ]}
                 />
               </Stack>
@@ -539,10 +748,14 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                   <Stack gap="xs">
                     <Text fw={700}>No nodes selected</Text>
                     <Text size="sm" c="dimmed">
-                      Select one or more nodes from Node Ops to edit details or apply state.
+                      Select one or more nodes from Node Ops to edit details or
+                      apply state.
                     </Text>
                     <Group>
-                      <Button variant="light" onClick={() => setFleetView("table")}>
+                      <Button
+                        variant="light"
+                        onClick={() => setFleetView("table")}
+                      >
                         Open node list
                       </Button>
                       <Button
@@ -587,28 +800,50 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             {nodeWorkspaceFocus.nodeName || "Unnamed node"}
                           </Text>
                         </div>
-                        <Badge variant="light">{nodeWorkspaceFocus.registryId || activeRegistryId}</Badge>
+                        <Badge variant="light">
+                          {nodeWorkspaceFocus.registryId || activeRegistryId}
+                        </Badge>
                       </Group>
                       <Text size="xs" ff="monospace">
                         {nodeWorkspaceFocus.host || "—"}{" "}
-                        {nodeWorkspaceFocus.ip ? `• ${nodeWorkspaceFocus.ip}` : ""}
+                        {nodeWorkspaceFocus.ip
+                          ? `• ${nodeWorkspaceFocus.ip}`
+                          : ""}
                       </Text>
                       <Group gap={6}>
                         {statusBadge(nodeWorkspaceFocus.dnsOk, "DNS", "DNS")}
-                        {statusBadge(nodeWorkspaceFocus.tcp.ssh22.ok, "SSH", "SSH")}
-                        {statusBadge(nodeWorkspaceFocus.http.nodeStatus.ok, "Node", "Node")}
-                        {statusBadge(nodeWorkspaceFocus.http.cableVersion.ok, "Cable", "Cable")}
+                        {statusBadge(
+                          nodeWorkspaceFocus.tcp.ssh22.ok,
+                          "SSH",
+                          "SSH"
+                        )}
+                        {statusBadge(
+                          nodeWorkspaceFocus.http.nodeStatus.ok,
+                          "Node",
+                          "Node"
+                        )}
+                        {statusBadge(
+                          nodeWorkspaceFocus.http.cableVersion.ok,
+                          "Cable",
+                          "Cable"
+                        )}
                       </Group>
                       <Paper withBorder p="sm" radius="md">
                         <Stack gap="xs">
-                          <Group justify="space-between" align="center" wrap="wrap">
+                          <Group
+                            justify="space-between"
+                            align="center"
+                            wrap="wrap"
+                          >
                             <Text fw={600}>Now Playing</Text>
                             <Button
                               size="xs"
                               variant="light"
                               leftSection={<IconRefresh size={12} />}
                               loading={nodeRuntimeBusy}
-                              onClick={() => void refreshNodeRuntime(nodeWorkspaceFocus.id)}
+                              onClick={() =>
+                                void refreshNodeRuntime(nodeWorkspaceFocus.id)
+                              }
                             >
                               Refresh
                             </Button>
@@ -626,7 +861,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                 {workspacePlaybackMedia?.thumbnailUrl ? (
                                   <Image
                                     src={workspacePlaybackMedia.thumbnailUrl}
-                                    alt={workspacePlaybackMedia.title || workspacePlaybackMedia.id}
+                                    alt={
+                                      workspacePlaybackMedia.title ||
+                                      workspacePlaybackMedia.id
+                                    }
                                     radius="sm"
                                     h={112}
                                     fit="cover"
@@ -636,7 +874,11 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                   mediaPreviewSource(workspacePlaybackMedia) ? (
                                   <video
                                     key={`workspace-inline-video-preview-${workspacePlaybackMedia.id}`}
-                                    src={mediaPreviewSource(workspacePlaybackMedia) || undefined}
+                                    src={
+                                      mediaPreviewSource(
+                                        workspacePlaybackMedia
+                                      ) || undefined
+                                    }
                                     muted
                                     playsInline
                                     autoPlay
@@ -663,7 +905,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                     {nodeRuntimeStatus.status.backend}
                                   </Badge>
                                   <Badge variant="light">
-                                    {nodeRuntimeStatus.status.playback?.state || "unknown"}
+                                    {nodeRuntimeStatus.status.playback?.state ||
+                                      "unknown"}
                                   </Badge>
                                 </Group>
                                 <Text fw={700} lineClamp={1}>
@@ -674,25 +917,28 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                     workspacePlaybackMedia?.artist ||
                                     "unknown artist"}
                                 </Text>
-                                {typeof nodeRuntimeStatus.status.playback?.progressPercent ===
-                                "number" ? (
+                                {typeof nodeRuntimeStatus.status.playback
+                                  ?.progressPercent === "number" ? (
                                   <>
                                     <Progress
                                       value={Math.max(
                                         0,
                                         Math.min(
                                           100,
-                                          nodeRuntimeStatus.status.playback.progressPercent
+                                          nodeRuntimeStatus.status.playback
+                                            .progressPercent
                                         )
                                       )}
                                     />
                                     <Text size="xs" c="dimmed">
                                       {formatDurationSec(
-                                        nodeRuntimeStatus.status.playback.positionSec ?? null
+                                        nodeRuntimeStatus.status.playback
+                                          .positionSec ?? null
                                       )}{" "}
                                       /{" "}
                                       {formatDurationSec(
-                                        nodeRuntimeStatus.status.playback.durationSec ?? null
+                                        nodeRuntimeStatus.status.playback
+                                          .durationSec ?? null
                                       )}
                                     </Text>
                                   </>
@@ -701,6 +947,22 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                     {runtimeProgressUnavailableMessage}
                                   </Text>
                                 )}
+                                {runtimeCacheDownloadProgress ? (
+                                  <>
+                                    <Progress
+                                      value={runtimeCacheDownloadProgress.percent}
+                                      color="blue"
+                                      striped
+                                      animated
+                                    />
+                                    <Text size="xs" c="dimmed">
+                                      Cache {runtimeCacheDownloadProgress.ready}/
+                                      {runtimeCacheDownloadProgress.total} (
+                                      {Math.round(runtimeCacheDownloadProgress.percent)}
+                                      %) downloading
+                                    </Text>
+                                  </>
+                                ) : null}
                               </Stack>
                             </SimpleGrid>
                           ) : (
@@ -711,7 +973,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                         </Stack>
                       </Paper>
                       <Stack gap="xs">
-                        <Button leftSection={<IconPencil size={14} />} onClick={openEditPanel}>
+                        <Button
+                          leftSection={<IconPencil size={14} />}
+                          onClick={openEditPanel}
+                        >
                           Edit Node Details
                         </Button>
                         <Button
@@ -759,16 +1024,29 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                 ) : workspacePanel === "overview" ? (
                   <Card withBorder p="md">
                     <Stack gap="sm">
-                      <Text fw={700}>Selected Nodes ({selectedNodeRows.length})</Text>
+                      <Text fw={700}>
+                        Selected Nodes ({selectedNodeRows.length})
+                      </Text>
                       <ScrollArea h={260}>
                         <Stack gap="xs">
                           {selectedNodeRows.map((row) => (
-                            <Card key={`workspace-node-${row.id}`} withBorder p="xs">
-                              <Group justify="space-between" align="flex-start" wrap="nowrap">
+                            <Card
+                              key={`workspace-node-${row.id}`}
+                              withBorder
+                              p="xs"
+                            >
+                              <Group
+                                justify="space-between"
+                                align="flex-start"
+                                wrap="nowrap"
+                              >
                                 <div>
                                   <Text fw={600}>{row.id}</Text>
                                   <Text size="xs" c="dimmed">
-                                    {row.nodeName || row.host || row.ip || "node"}
+                                    {row.nodeName ||
+                                      row.host ||
+                                      row.ip ||
+                                      "node"}
                                   </Text>
                                 </div>
                                 <Badge
@@ -857,7 +1135,8 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                   />
                 ) : null}
 
-                {workspacePanel === "control" && selectedNodeIds.length === 1 ? (
+                {workspacePanel === "control" &&
+                selectedNodeIds.length === 1 ? (
                   <NodeControlPanel
                     selectedNodeCount={selectedNodeIds.length}
                     nodeId={selectedNodeIds[0]}
@@ -877,9 +1156,11 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                     displayModeResult={nodeDisplayModeResult}
                     defaultRegistryId={activeRegistryId}
                     defaultNamespace={activeRegistryId}
-                    defaultNodeHost={
-                      (nodeWorkspaceFocus?.ip || nodeWorkspaceFocus?.host || "").trim()
-                    }
+                    defaultNodeHost={(
+                      nodeWorkspaceFocus?.ip ||
+                      nodeWorkspaceFocus?.host ||
+                      ""
+                    ).trim()}
                     onClose={closeWorkspacePanels}
                     breadcrumbs={[]}
                   />
@@ -910,7 +1191,9 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             variant="light"
                             leftSection={<IconTrash size={14} />}
                             loading={nodeStashClearing}
-                            disabled={!nodeStash || nodeStash.cache.fileCount === 0}
+                            disabled={
+                              !nodeStash || nodeStash.cache.fileCount === 0
+                            }
                             onClick={() => void clearNodeStash()}
                           >
                             Clear Stash
@@ -922,11 +1205,16 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconSearch size={14} />}
                           placeholder="Filter stash files"
                           value={nodeStashFilterQuery}
-                          onChange={(event) => setNodeStashFilterQuery(event.currentTarget.value)}
+                          onChange={(event) =>
+                            setNodeStashFilterQuery(event.currentTarget.value)
+                          }
                         />
                         <Select
                           data={[
-                            { value: "updated_desc", label: "Updated (newest)" },
+                            {
+                              value: "updated_desc",
+                              label: "Updated (newest)",
+                            },
                             { value: "updated_asc", label: "Updated (oldest)" },
                             { value: "size_desc", label: "Size (largest)" },
                             { value: "size_asc", label: "Size (smallest)" },
@@ -945,18 +1233,29 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           }
                         />
                       </SimpleGrid>
-                      {nodeStashError ? <Text c="red">{nodeStashError}</Text> : null}
+                      {nodeStashError ? (
+                        <Text c="red">{nodeStashError}</Text>
+                      ) : null}
                       {nodeStashBusy && !nodeStash ? (
                         <SectionLoader label="Loading node stash..." />
                       ) : nodeStash ? (
                         <>
                           <Group gap="xs">
-                            <Badge variant="light">{nodeStash.cache.fileCount} files</Badge>
-                            <Badge variant="light">{formatBytes(nodeStash.cache.bytes)}</Badge>
+                            <Badge variant="light">
+                              {nodeStash.cache.fileCount} files
+                            </Badge>
+                            <Badge variant="light">
+                              {formatBytes(nodeStash.cache.bytes)}
+                            </Badge>
                           </Group>
                           {filteredNodeStashItems.length > 0 ? (
                             <ScrollArea h={260}>
-                              <Table striped highlightOnHover withTableBorder withColumnBorders>
+                              <Table
+                                striped
+                                highlightOnHover
+                                withTableBorder
+                                withColumnBorders
+                              >
                                 <Table.Thead>
                                   <Table.Tr>
                                     <Table.Th>File</Table.Th>
@@ -972,12 +1271,15 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                           <Text size="xs" ff="monospace">
                                             {file.fileName}
                                           </Text>
-                                          {runtimePlaybackFileName === file.fileName &&
+                                          {runtimePlaybackFileName ===
+                                            file.fileName &&
                                           workspacePlaybackMedia ? (
                                             <Group gap={8} wrap="nowrap">
                                               {workspacePlaybackMedia.thumbnailUrl ? (
                                                 <Image
-                                                  src={workspacePlaybackMedia.thumbnailUrl}
+                                                  src={
+                                                    workspacePlaybackMedia.thumbnailUrl
+                                                  }
                                                   alt={
                                                     workspacePlaybackMedia.title ||
                                                     workspacePlaybackMedia.id
@@ -988,7 +1290,11 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                                   radius="sm"
                                                 />
                                               ) : null}
-                                              <Text size="xs" c="dimmed" lineClamp={1}>
+                                              <Text
+                                                size="xs"
+                                                c="dimmed"
+                                                lineClamp={1}
+                                              >
                                                 {workspacePlaybackMedia.title ||
                                                   workspacePlaybackMedia.id}
                                               </Text>
@@ -996,10 +1302,14 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                           ) : null}
                                         </Stack>
                                       </Table.Td>
-                                      <Table.Td>{formatBytes(file.sizeBytes)}</Table.Td>
+                                      <Table.Td>
+                                        {formatBytes(file.sizeBytes)}
+                                      </Table.Td>
                                       <Table.Td>
                                         <Text size="xs" c="dimmed">
-                                          {new Date(file.updatedAtMs).toLocaleString()}
+                                          {new Date(
+                                            file.updatedAtMs
+                                          ).toLocaleString()}
                                         </Text>
                                       </Table.Td>
                                     </Table.Tr>
@@ -1063,7 +1373,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             {workspacePlaybackMedia?.thumbnailUrl ? (
                               <Image
                                 src={workspacePlaybackMedia.thumbnailUrl}
-                                alt={workspacePlaybackMedia.title || workspacePlaybackMedia.id}
+                                alt={
+                                  workspacePlaybackMedia.title ||
+                                  workspacePlaybackMedia.id
+                                }
                                 radius="sm"
                                 h={140}
                                 fit="cover"
@@ -1073,7 +1386,10 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                               mediaPreviewSource(workspacePlaybackMedia) ? (
                               <video
                                 key={`workspace-video-preview-${workspacePlaybackMedia.id}`}
-                                src={mediaPreviewSource(workspacePlaybackMedia) || undefined}
+                                src={
+                                  mediaPreviewSource(workspacePlaybackMedia) ||
+                                  undefined
+                                }
                                 muted
                                 playsInline
                                 autoPlay
@@ -1096,32 +1412,46 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           </Card>
                           <Stack gap={6}>
                             <Group gap={8} wrap="wrap">
-                              <Badge variant="light">{nodeRuntimeStatus.status.backend}</Badge>
                               <Badge variant="light">
-                                {nodeRuntimeStatus.status.playback?.state || "unknown"}
+                                {nodeRuntimeStatus.status.backend}
                               </Badge>
-                              {nodeRuntimeBusy ? <Badge variant="light">refreshing</Badge> : null}
+                              <Badge variant="light">
+                                {nodeRuntimeStatus.status.playback?.state ||
+                                  "unknown"}
+                              </Badge>
+                              {nodeRuntimeBusy ? (
+                                <Badge variant="light">refreshing</Badge>
+                              ) : null}
                             </Group>
-                            <Text fw={700}>
-                              {runtimeNowPlayingLabel}
-                            </Text>
+                            <Text fw={700}>{runtimeNowPlayingLabel}</Text>
                             <Text size="sm" c="dimmed">
                               {nodeRuntimeStatus.status.playback?.artist ||
                                 workspacePlaybackMedia?.artist ||
                                 "unknown artist"}
                             </Text>
-                            {typeof nodeRuntimeStatus.status.playback?.progressPercent ===
-                            "number" ? (
+                            {typeof nodeRuntimeStatus.status.playback
+                              ?.progressPercent === "number" ? (
                               <>
                                 <Progress
                                   value={Math.max(
                                     0,
-                                    Math.min(100, nodeRuntimeStatus.status.playback.progressPercent)
+                                    Math.min(
+                                      100,
+                                      nodeRuntimeStatus.status.playback
+                                        .progressPercent
+                                    )
                                   )}
                                 />
                                 <Text size="xs" c="dimmed">
-                                  {formatDurationSec(nodeRuntimeStatus.status.playback.positionSec ?? null)} /{" "}
-                                  {formatDurationSec(nodeRuntimeStatus.status.playback.durationSec ?? null)}
+                                  {formatDurationSec(
+                                    nodeRuntimeStatus.status.playback
+                                      .positionSec ?? null
+                                  )}{" "}
+                                  /{" "}
+                                  {formatDurationSec(
+                                    nodeRuntimeStatus.status.playback
+                                      .durationSec ?? null
+                                  )}
                                 </Text>
                               </>
                             ) : (
@@ -1129,6 +1459,22 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                 {runtimeProgressUnavailableMessage}
                               </Text>
                             )}
+                            {runtimeCacheDownloadProgress ? (
+                              <>
+                                <Progress
+                                  value={runtimeCacheDownloadProgress.percent}
+                                  color="blue"
+                                  striped
+                                  animated
+                                />
+                                <Text size="xs" c="dimmed">
+                                  Cache {runtimeCacheDownloadProgress.ready}/
+                                  {runtimeCacheDownloadProgress.total} (
+                                  {Math.round(runtimeCacheDownloadProgress.percent)}
+                                  %) downloading
+                                </Text>
+                              </>
+                            ) : null}
                           </Stack>
                         </SimpleGrid>
                       ) : (
@@ -1148,9 +1494,6 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
           <Stack gap="xs" mb="sm">
             <div>
               <Title order={4}>Connected Nodes</Title>
-              <Text size="sm" c="dimmed">
-                Live status, runtime target, connectivity, and versions.
-              </Text>
             </div>
             <TextInput
               leftSection={<IconSearch size={16} />}
@@ -1159,42 +1502,101 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
               onChange={(e) => setSearch(e.currentTarget.value)}
               w={isMobile ? "100%" : 260}
             />
-            <Group wrap="wrap">
-              <Button size={isMobile ? "xs" : "sm"} variant="light" onClick={selectVisible}>
-                Select Visible
-              </Button>
-              <Button
-                size={isMobile ? "xs" : "sm"}
-                variant="light"
-                color="gray"
-                onClick={clearSelection}
-              >
-                Clear
-              </Button>
-              <Button
-                size={isMobile ? "xs" : "sm"}
-                variant="light"
-                leftSection={<IconPencil size={16} />}
-                onClick={() => {
-                  openNodeWorkspace();
-                  if (isMobile) setControlOpen(false);
-                }}
-                disabled={selectedNodeIds.length === 0}
-              >
-                {`Edit ${selectedNodeIds.length} ${selectedNodeIds.length === 1 ? "node" : "nodes"}`}
-              </Button>
-              <Button
-                size={isMobile ? "xs" : "sm"}
-                variant="light"
-                leftSection={<IconSquareRoundedPlus size={16} />}
-                onClick={() => {
-                  openCreateNodeEditor();
-                  setFleetView("workspace");
-                }}
-              >
-                Add Node
-              </Button>
-            </Group>
+            {isMobile ? (
+              <Group wrap="wrap">
+                <Button
+                  size="xs"
+                  variant={mobileSelectionMode ? "filled" : "light"}
+                  onClick={() => {
+                    setMobileSelectionMode((prev) => {
+                      const next = !prev;
+                      if (!next) clearSelection();
+                      return next;
+                    });
+                  }}
+                >
+                  {mobileSelectionMode ? "Done" : "Select"}
+                </Button>
+                {mobileSelectionMode ? (
+                  <>
+                    <Button size="xs" variant="light" onClick={selectVisible}>
+                      Select Visible
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="gray"
+                      onClick={clearSelection}
+                    >
+                      Clear
+                    </Button>
+                  </>
+                ) : null}
+                {mobileSelectionMode && selectedNodeIds.length > 0 ? (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    leftSection={<IconPencil size={14} />}
+                    onClick={() => {
+                      openNodeWorkspace();
+                      setControlOpen(false);
+                    }}
+                  >
+                    {`Edit (${selectedNodeIds.length})`}
+                  </Button>
+                ) : null}
+                <Button
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconSquareRoundedPlus size={14} />}
+                  onClick={() => {
+                    openCreateNodeEditor();
+                    setFleetView("workspace");
+                  }}
+                >
+                  Add
+                </Button>
+              </Group>
+            ) : (
+              <Group wrap="wrap">
+                <Button size="sm" variant="light" onClick={selectVisible}>
+                  Select Visible
+                </Button>
+                <Button
+                  size="sm"
+                  variant="light"
+                  color="gray"
+                  onClick={clearSelection}
+                >
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  variant="light"
+                  leftSection={<IconPencil size={16} />}
+                  onClick={() => {
+                    openNodeWorkspace();
+                    if (isMobile) setControlOpen(false);
+                  }}
+                  disabled={selectedNodeIds.length === 0}
+                >
+                  {`Edit ${selectedNodeIds.length} ${
+                    selectedNodeIds.length === 1 ? "node" : "nodes"
+                  }`}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="light"
+                  leftSection={<IconSquareRoundedPlus size={16} />}
+                  onClick={() => {
+                    openCreateNodeEditor();
+                    setFleetView("workspace");
+                  }}
+                >
+                  Add Node
+                </Button>
+              </Group>
+            )}
           </Stack>
 
           {loadingFleet && filteredRows.length === 0 ? (
@@ -1206,123 +1608,115 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                   key={row.id}
                   withBorder
                   p="sm"
+                  className="ops-fleet-mobile-card"
                   style={{ cursor: "pointer" }}
-                  onClick={() => openRowWorkspace(row.id)}
+                  onClick={() => {
+                    if (mobileSelectionMode) {
+                      toggleNodeSelection(
+                        row.id,
+                        !selectedNodeIds.includes(row.id)
+                      );
+                      return;
+                    }
+                    openRowWorkspace(row.id);
+                  }}
                 >
                   <Stack gap="xs">
-                    <Group justify="space-between" wrap="nowrap">
+                    <Group
+                      justify="space-between"
+                      wrap="nowrap"
+                      align="flex-start"
+                    >
                       <Group gap="xs" wrap="nowrap">
-                        <Checkbox
-                          checked={selectedNodeIds.includes(row.id)}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(e) => toggleNodeSelection(row.id, e.currentTarget.checked)}
-                        />
-                        <Stack gap={0}>
-                          <Text fw={700}>{row.id}</Text>
-                          <Text size="xs" c="dimmed">
-                            {row.nodeName || "Unnamed node"}
+                        {mobileSelectionMode ? (
+                          <Checkbox
+                            checked={selectedNodeIds.includes(row.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(e) =>
+                              toggleNodeSelection(
+                                row.id,
+                                e.currentTarget.checked
+                              )
+                            }
+                          />
+                        ) : null}
+                        <Stack gap={1} style={{ minWidth: 0 }}>
+                          <Group gap={6} wrap="wrap">
+                            <Text fw={700} size="lg" lh={1.1} lineClamp={1}>
+                              {row.id}
+                            </Text>
+                            <Badge
+                              color={connectivityStatusColor(row)}
+                              variant="light"
+                              size="xs"
+                            >
+                              {row.connectivity?.status || "offline"}
+                            </Badge>
+                          </Group>
+                          <Text
+                            size="xs"
+                            c="dimmed"
+                            lineClamp={1}
+                            title={nodeMetaLabel(row)}
+                          >
+                            {nodeMetaLabel(row)}
                           </Text>
                         </Stack>
                       </Group>
-                      <Badge
-                        color={connectivityStatusColor(row)}
-                        variant="light"
-                      >
-                        {connectivityStatusLabel(row)}
-                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {lastCheckedLabel(row)}
+                      </Text>
                     </Group>
-                    <Text size="xs" ff="monospace">
-                      {row.host} {row.ip ? `• ${row.ip}` : ""}
-                    </Text>
-                    <Group gap={6}>
-                      {statusBadge(row.dnsOk, "DNS", "DNS")}
-                      {statusBadge(row.tcp.ssh22.ok, "SSH", "SSH")}
-                      {statusBadge(row.http.nodeStatus.ok, "Node", "Node")}
-                      {statusBadge(row.http.cableVersion.ok, "Cable", "Cable")}
-                    </Group>
-                    {(() => {
-                      const runtime = resolveRuntimeCard(row.chibaNode.kioskUrl ?? null);
-                      return (
-                        <Group gap="xs" wrap="nowrap">
-                          {runtime.thumbnailUrl ? (
-                            <Image
-                              src={runtime.thumbnailUrl}
-                              alt={runtime.label}
-                              w={72}
-                              h={42}
-                              radius="sm"
-                              fit="cover"
-                            />
-                          ) : null}
-                          <Stack gap={0} style={{ minWidth: 0 }}>
-                            <Group gap={6}>
-                              <Badge size="xs" variant="light">
-                                {runtime.kind}
-                              </Badge>
-                              <Badge
-                                size="xs"
-                                variant="light"
-                                color={row.chibaNode.displayMode ? "cyan" : "gray"}
-                              >
-                                {displayResolutionLabel(row)}
-                              </Badge>
-                            </Group>
-                            <Text size="xs" fw={600} lineClamp={1}>
-                              {runtime.label}
-                            </Text>
-                            {runtime.subtitle ? (
-                              <Text size="xs" c="dimmed" lineClamp={1}>
-                                {runtime.subtitle}
-                              </Text>
-                            ) : null}
-                          </Stack>
-                        </Group>
-                      );
-                    })()}
-                    <Text size="xs" c="dimmed">
-                      node {row.chibaNode.version ?? "?"} • cable {row.cableServer?.version ?? "?"} •{" "}
-                      {row.connectivity?.status === "progressing"
-                        ? "checking..."
-                        : `${Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}s ago`}
-                    </Text>
-                    <Group gap="xs" grow>
-                      <Button
-                        variant="light"
-                        size="xs"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setActiveNodeId(row.id);
-                        }}
+                    {renderRuntimeSummary(row, "mobile")}
+                    {mobileSelectionMode ? null : (
+                      <Group
+                        gap={6}
+                        grow
+                        wrap="nowrap"
+                        className="ops-card-actions"
                       >
-                        Inspect
-                      </Button>
-                      <Button
-                        variant="light"
-                        color="blue"
-                        size="xs"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openEditNodeEditor(row.id);
-                          setFleetView("workspace");
-                          setNodeEditorOpen(true);
-                          setAssignTargetOpen(false);
-                          setWorkspacePanel("edit");
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="light"
-                        color="red"
-                        size="xs"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void removeNode(row.id);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </Group>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="blue"
+                          leftSection={<IconPencil size={14} />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditNodeEditor(row.id);
+                            setFleetView("workspace");
+                            setNodeEditorOpen(true);
+                            setAssignTargetOpen(false);
+                            setWorkspacePanel("edit");
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="cyan"
+                          leftSection={<IconBroadcast size={14} />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setActiveNodeId(row.id);
+                          }}
+                        >
+                          Inspect
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="red"
+                          leftSection={<IconTrash size={14} />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void removeNode(row.id);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
+                    )}
                   </Stack>
                 </Card>
               ))}
@@ -1330,35 +1724,48 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
           ) : (
             <Stack gap="xs">
               <ScrollArea>
-                <Table striped highlightOnHover withTableBorder withColumnBorders>
+                <Table
+                  striped
+                  highlightOnHover
+                  withTableBorder
+                  withColumnBorders
+                >
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th w={42}>
                         <Checkbox
                           checked={
                             filteredRows.length > 0 &&
-                            filteredRows.every((row) => selectedNodeIds.includes(row.id))
+                            filteredRows.every((row) =>
+                              selectedNodeIds.includes(row.id)
+                            )
                           }
                           onChange={(e) => {
                             if (e.currentTarget.checked) {
                               setSelectedNodeIds(
-                                Array.from(new Set([...selectedNodeIds, ...filteredRows.map((row) => row.id)]))
+                                Array.from(
+                                  new Set([
+                                    ...selectedNodeIds,
+                                    ...filteredRows.map((row) => row.id),
+                                  ])
+                                )
                               );
                             } else {
                               setSelectedNodeIds((prev) =>
-                                prev.filter((id) => !filteredRows.some((row) => row.id === id))
+                                prev.filter(
+                                  (id) =>
+                                    !filteredRows.some((row) => row.id === id)
+                                )
                               );
                             }
                           }}
                         />
                       </Table.Th>
-                      <Table.Th>Node</Table.Th>
-                      <Table.Th>Host/IP</Table.Th>
-                      <Table.Th>Connectivity</Table.Th>
-                      <Table.Th>Runtime</Table.Th>
-                      <Table.Th>Versions</Table.Th>
-                      <Table.Th>Last</Table.Th>
-                      <Table.Th>Actions</Table.Th>
+                      <Table.Th w={280}>Node</Table.Th>
+                      <Table.Th w={220}>Health</Table.Th>
+                      <Table.Th w={360}>Target</Table.Th>
+                      <Table.Th w={88}>Updated</Table.Th>
+                      <Table.Th w={120}>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -1372,120 +1779,88 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           <Checkbox
                             checked={selectedNodeIds.includes(row.id)}
                             onClick={(event) => event.stopPropagation()}
-                            onChange={(e) => toggleNodeSelection(row.id, e.currentTarget.checked)}
+                            onChange={(e) =>
+                              toggleNodeSelection(
+                                row.id,
+                                e.currentTarget.checked
+                              )
+                            }
                           />
                         </Table.Td>
                         <Table.Td>
-                          <Stack gap={2}>
-                            <Group gap={8}>
+                          <Stack gap={2} style={{ minWidth: 0 }}>
+                            <Group gap={6} wrap="wrap">
                               <Text fw={700}>{row.id}</Text>
-                              {statusBadge(row.ping.ok, "OK", "OFFLINE")}
+                              <Badge
+                                color={connectivityStatusColor(row)}
+                                variant="light"
+                                size="xs"
+                              >
+                                {row.connectivity?.status || "offline"}
+                              </Badge>
                             </Group>
-                            <Text size="xs" c="dimmed">
-                              {row.nodeName}
+                            <Text
+                              size="xs"
+                              c="dimmed"
+                              lineClamp={1}
+                              title={row.nodeName || ""}
+                            >
+                              {row.nodeName || "Unnamed node"}
                             </Text>
-                            <Text size="xs" c="dimmed">
-                              registry: {row.registryId || activeRegistryId}
-                            </Text>
-                          </Stack>
-                        </Table.Td>
-                        <Table.Td>
-                          <Stack gap={2}>
-                            <Text ff="monospace">{row.host}</Text>
-                            <Text ff="monospace" c="dimmed">
-                              {row.ip || "—"}
+                            <Text
+                              size="xs"
+                              ff="monospace"
+                              c="dimmed"
+                              lineClamp={1}
+                              title={nodeHostLabel(row)}
+                            >
+                              {nodeHostLabel(row)}
                             </Text>
                           </Stack>
                         </Table.Td>
                         <Table.Td>
                           <Stack gap={6}>
-                            <Group gap={6}>
-                              <Badge
-                                color={connectivityStatusColor(row)}
-                                variant="light"
-                              >
-                                {connectivityStatusLabel(row)}
-                              </Badge>
-                            </Group>
-                            <Group gap={6}>
-                              {statusBadge(row.dnsOk, "DNS", "DNS")}
-                              {statusBadge(row.tcp.ssh22.ok, "SSH", "SSH")}
-                              {statusBadge(row.http.nodeStatus.ok, "Node", "Node")}
-                              {statusBadge(row.http.cableVersion.ok, "Cable", "Cable")}
-                            </Group>
+                            <Badge
+                              color={connectivityStatusColor(row)}
+                              variant="light"
+                              size="xs"
+                            >
+                              {connectivityStatusLabel(row)}
+                            </Badge>
+                            {renderConnectivitySignals(row)}
+                            <Text
+                              size="xs"
+                              c="dimmed"
+                              ff="monospace"
+                              title={versionsCompactLabel(row)}
+                            >
+                              {versionsCompactLabel(row)}
+                            </Text>
                           </Stack>
                         </Table.Td>
                         <Table.Td>
-                          <Stack gap={4}>
-                            {(() => {
-                              const runtime = resolveRuntimeCard(row.chibaNode.kioskUrl ?? null);
-                              return (
-                                <Group gap="xs" wrap="nowrap" align="flex-start">
-                                  {runtime.thumbnailUrl ? (
-                                    <Image
-                                      src={runtime.thumbnailUrl}
-                                      alt={runtime.label}
-                                      w={88}
-                                      h={52}
-                                      radius="sm"
-                                      fit="cover"
-                                    />
-                                  ) : null}
-                                  <Stack gap={2} style={{ minWidth: 0 }}>
-                                    <Group gap={6}>
-                                      <Badge size="xs" variant="light">
-                                        {runtime.kind}
-                                      </Badge>
-                                    </Group>
-                                    <Text size="sm" fw={600} lineClamp={1}>
-                                      {runtime.label}
-                                    </Text>
-                                    {runtime.subtitle ? (
-                                      <Text size="xs" c="dimmed" lineClamp={1}>
-                                        {runtime.subtitle}
-                                      </Text>
-                                    ) : null}
-                                  </Stack>
-                                </Group>
-                              );
-                            })()}
-                            <Button
-                              variant="subtle"
-                              size="compact-xs"
-                              leftSection={<IconBroadcast size={12} />}
+                          {renderRuntimeSummary(row, "table")}
+                        </Table.Td>
+                        <Table.Td>
+                          <Stack gap={2}>
+                            <Text size="xs" c="dimmed">
+                              {lastCheckedLabel(row)}
+                            </Text>
+                          </Stack>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap={6}>
+                            <ActionIcon
+                              variant="light"
+                              color="blue"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setActiveNodeId(row.id);
                               }}
+                              title="Inspect node"
                             >
-                              Inspect
-                            </Button>
-                          </Stack>
-                        </Table.Td>
-                        <Table.Td>
-                          <Stack gap={2}>
-                            <Text size="xs">node: {row.chibaNode.version ?? "?"}</Text>
-                            <Text size="xs">cable: {row.cableServer?.version ?? "?"}</Text>
-                            <Text size="xs" c="dimmed">
-                              sha: {row.cableServer?.gitSha ?? "—"}
-                            </Text>
-                            <Text size="xs" c="dimmed">
-                              display: {displayResolutionLabel(row)}
-                              {row.chibaNode.displayOutput
-                                ? ` (${row.chibaNode.displayOutput})`
-                                : ""}
-                            </Text>
-                          </Stack>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="xs" c="dimmed">
-                            {row.connectivity?.status === "progressing"
-                              ? "checking..."
-                              : `${Math.max(0, Math.round((Date.now() - row.lastCheckedAt) / 1000))}s ago`}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Group gap={6}>
+                              <IconBroadcast size={14} />
+                            </ActionIcon>
                             <ActionIcon
                               variant="light"
                               color="blue"
@@ -1521,7 +1896,11 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
               </ScrollArea>
               <Group justify="space-between" mt="xs" wrap="wrap">
                 <Text size="xs" c="dimmed">
-                  {tableRangeLabel(filteredRows.length, fleetPage, TABLE_PAGE_SIZE.fleet)}
+                  {tableRangeLabel(
+                    filteredRows.length,
+                    fleetPage,
+                    TABLE_PAGE_SIZE.fleet
+                  )}
                 </Text>
                 <Pagination
                   total={fleetPageCount}

@@ -469,6 +469,7 @@ export function toPendingFleetHealth(pi: FleetPi): FleetPiHealth {
       displayMode: null,
       displayOutput: null,
       displayBackend: null,
+      runtime: null,
     },
     cableServer: null,
     needsUpdate: null,

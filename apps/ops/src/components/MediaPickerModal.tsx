@@ -78,13 +78,30 @@ function previewSource(media: Media): string | null {
   return null
 }
 
+function isWebSource(media: Media): boolean {
+  if (media.web) return true
+  if (media.sourceType !== 'url') return false
+  return (
+    !isLikelyVideoSource(media.sourceValue) &&
+    !isLikelyAudioSource(media.sourceValue) &&
+    !isLikelyImageSource(media.sourceValue)
+  )
+}
+
+function mediaKind(media: Media): 'video' | 'image' | 'audio' | 'web' | 'file' {
+  if (isLikelyVideoSource(media.sourceValue)) return 'video'
+  if (isLikelyImageSource(media.sourceValue)) return 'image'
+  if (isLikelyAudioSource(media.sourceValue)) return 'audio'
+  if (isWebSource(media)) return 'web'
+  return 'file'
+}
+
 export function MediaPickerModal(props: Props) {
   const [query, setQuery] = useState('')
   const [debouncedQuery] = useDebouncedValue(query, 150)
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'path' | 'url'>('all')
-  const [kindFilter, setKindFilter] = useState<
-    'all' | 'image' | 'video' | 'audio' | 'no_thumb'
-  >('all')
+  const [kindFilter, setKindFilter] = useState<'all' | 'image' | 'video' | 'audio' | 'web'>(
+    'all'
+  )
   const [selectionFilter, setSelectionFilter] = useState<'all' | 'selected'>('all')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set(props.selectedIds))
@@ -98,7 +115,7 @@ export function MediaPickerModal(props: Props) {
   useEffect(() => {
     if (!props.opened) return
     setVisibleCount(PAGE_SIZE)
-  }, [props.opened, debouncedQuery, sourceFilter, kindFilter, selectionFilter])
+  }, [props.opened, debouncedQuery, kindFilter, selectionFilter])
 
   const toggleSelection = (mediaId: string) => {
     setSelectedSet((prev) => {
@@ -114,15 +131,14 @@ export function MediaPickerModal(props: Props) {
     const ordered = [...props.media].reverse()
     return ordered.filter((row) => {
       if (selectionFilter === 'selected' && !selectedSet.has(row.id)) return false
-      if (sourceFilter !== 'all' && row.sourceType !== sourceFilter) return false
-      if (kindFilter === 'video' && !isLikelyVideoSource(row.sourceValue)) return false
-      if (kindFilter === 'audio' && !isLikelyAudioSource(row.sourceValue)) return false
-      if (kindFilter === 'image' && !isLikelyImageSource(row.sourceValue)) return false
-      if (kindFilter === 'no_thumb' && row.thumbnailUrl) return false
+      if (kindFilter === 'video' && mediaKind(row) !== 'video') return false
+      if (kindFilter === 'audio' && mediaKind(row) !== 'audio') return false
+      if (kindFilter === 'image' && mediaKind(row) !== 'image') return false
+      if (kindFilter === 'web' && mediaKind(row) !== 'web') return false
       if (!q) return true
       return searchText(row).includes(q)
     })
-  }, [debouncedQuery, kindFilter, props.media, selectedSet, selectionFilter, sourceFilter])
+  }, [debouncedQuery, kindFilter, props.media, selectedSet, selectionFilter])
 
   const visibleRows = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount])
 
@@ -147,27 +163,16 @@ export function MediaPickerModal(props: Props) {
         />
         <Group grow>
           <SegmentedControl
-            value={sourceFilter}
-            onChange={(value) => setSourceFilter((value as 'all' | 'path' | 'url') || 'all')}
-            data={[
-              { value: 'all', label: 'All Sources' },
-              { value: 'path', label: 'Path' },
-              { value: 'url', label: 'URL' },
-            ]}
-          />
-          <SegmentedControl
             value={kindFilter}
             onChange={(value) =>
-              setKindFilter(
-                (value as 'all' | 'image' | 'video' | 'audio' | 'no_thumb') || 'all'
-              )
+              setKindFilter((value as 'all' | 'image' | 'video' | 'audio' | 'web') || 'all')
             }
             data={[
               { value: 'all', label: 'All Types' },
               { value: 'video', label: 'Video' },
               { value: 'image', label: 'Image' },
               { value: 'audio', label: 'Audio' },
-              { value: 'no_thumb', label: 'No Thumb' },
+              { value: 'web', label: 'Web' },
             ]}
           />
           <SegmentedControl
@@ -190,6 +195,7 @@ export function MediaPickerModal(props: Props) {
             {visibleRows.map((row) => {
               const selected = selectedSet.has(row.id)
               const previewUrl = previewSource(row)
+              const kind = mediaKind(row)
               return (
                 <Card
                   key={row.id}
@@ -202,13 +208,22 @@ export function MediaPickerModal(props: Props) {
                 >
                   <Stack gap="sm">
                     <Group justify="space-between" align="center" wrap="nowrap">
-                      {isLikelyVideoSource(row.sourceValue) ? (
-                        <Badge variant="light" color="cyan">
-                          video
-                        </Badge>
-                      ) : (
-                        <span />
-                      )}
+                      <Badge
+                        variant="light"
+                        color={
+                          kind === 'video'
+                            ? 'cyan'
+                            : kind === 'audio'
+                              ? 'grape'
+                              : kind === 'image'
+                                ? 'teal'
+                                : kind === 'web'
+                                  ? 'blue'
+                                  : 'gray'
+                        }
+                      >
+                        {kind}
+                      </Badge>
                       <Checkbox
                         checked={selected}
                         onClick={(event) => event.stopPropagation()}

@@ -173,6 +173,7 @@ export function enqueueYouTubeIngest(args: {
     mediaId?: string;
     title?: string;
     artist?: string;
+    description?: string;
     cache?: boolean;
   };
 }): IngestJob {
@@ -195,6 +196,8 @@ export function enqueueEdenCollectionIngest(args: {
     dbName?: EdenDb;
     playlistId?: string;
     playlist?: boolean;
+    artist?: string;
+    description?: string;
     apiKey?: string;
   };
 }): IngestJob {

@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Code,
   Divider,
   Group,
   Image,
@@ -18,6 +17,7 @@ import {
   Textarea,
   TextInput,
 } from "@mantine/core";
+import { useMemo } from "react";
 import {
   IconPhotoPlus,
   IconStack2,
@@ -48,6 +48,8 @@ export type IngestSectionVm = {
   setYoutubeTitle: (value: string) => void;
   youtubeArtist: string;
   setYoutubeArtist: (value: string) => void;
+  youtubeDescription: string;
+  setYoutubeDescription: (value: string) => void;
   webUrl: string;
   setWebUrl: (value: string) => void;
   webTitle: string;
@@ -68,10 +70,21 @@ export type IngestSectionVm = {
   setEdenInput: (value: string) => void;
   edenCreatePlaylist: boolean;
   setEdenCreatePlaylist: (value: boolean) => void;
+  edenArtist: string;
+  setEdenArtist: (value: string) => void;
+  edenDescription: string;
+  setEdenDescription: (value: string) => void;
   getUploadRootProps: () => any;
   getUploadInputProps: () => any;
   isUploadDragActive: boolean;
   uploadFiles: File[];
+  uploadTitleOverrides: string[];
+  setUploadTitleOverrideAtIndex: (index: number, value: string) => void;
+  setUploadTitleForAll: (value: string) => void;
+  uploadArtistOverrides: string[];
+  setUploadArtistOverrideAtIndex: (index: number, value: string) => void;
+  uploadDescriptionOverrides: string[];
+  setUploadDescriptionOverrideAtIndex: (index: number, value: string) => void;
   uploadArtist: string;
   setUploadArtist: (value: string) => void;
   uploadDescription: string;
@@ -106,6 +119,8 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     setYoutubeTitle,
     youtubeArtist,
     setYoutubeArtist,
+    youtubeDescription,
+    setYoutubeDescription,
     webUrl,
     setWebUrl,
     webTitle,
@@ -120,16 +135,26 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     setWebLaunchProfile,
     webLaunchArgsEntries,
     setWebLaunchArgsEntries,
-    webLaunchConfig,
     webLaunchArgsError,
     edenInput,
     setEdenInput,
     edenCreatePlaylist,
     setEdenCreatePlaylist,
+    edenArtist,
+    setEdenArtist,
+    edenDescription,
+    setEdenDescription,
     getUploadRootProps,
     getUploadInputProps,
     isUploadDragActive,
     uploadFiles,
+    uploadTitleOverrides,
+    setUploadTitleOverrideAtIndex,
+    setUploadTitleForAll,
+    uploadArtistOverrides,
+    setUploadArtistOverrideAtIndex,
+    uploadDescriptionOverrides,
+    setUploadDescriptionOverrideAtIndex,
     uploadArtist,
     setUploadArtist,
     uploadDescription,
@@ -149,667 +174,646 @@ export function IngestSection({ vm }: { vm: IngestSectionVm }) {
     runUploadIngest,
   } = vm;
 
+  const uploadTitleForAllValue = useMemo(() => {
+    if (uploadPreviewItems.length === 0) return "";
+    const titles = uploadPreviewItems.map(
+      (_, index) => uploadTitleOverrides[index] ?? ""
+    );
+    const first = titles[0] ?? "";
+    return titles.every((title) => title === first) ? first : "";
+  }, [uploadPreviewItems, uploadTitleOverrides]);
+
+  const runFinalQueueAction = () => {
+    if (ingestSource === "youtube") {
+      void runYouTubeIngest();
+      return;
+    }
+    if (ingestSource === "eden") {
+      void runEdenIngest();
+      return;
+    }
+    if (ingestSource === "web") {
+      void runWebIngest();
+      return;
+    }
+    void runUploadIngest();
+  };
+  const ingestStepHint =
+    ingestStep === 2
+      ? canQueueIngest
+        ? "Step 2 of 3 • ready for review"
+        : ingestSource === "upload"
+        ? `Step 2 of 3 • add files to continue (${uploadFiles.length}/20)`
+        : ingestSource === "youtube"
+        ? "Step 2 of 3 • paste a YouTube URL to continue"
+        : ingestSource === "web"
+        ? "Step 2 of 3 • enter a web URL to continue"
+        : "Step 2 of 3 • enter a collection URL or ID to continue"
+      : "Step 3 of 3 • review metadata, then queue ingest";
+
   return (
-    <Stack gap="lg">
-                          <Group justify="space-between" align="center" wrap="wrap">
-                            <Text size="sm" c="dimmed">
-                              Target:{" "}
-                              <Code>{"{SHARE_ROOT}/chiba-cable/assets"}</Code>
-                            </Text>
-                            <Group gap="xs">
-                              <Badge variant="light">Step {ingestStep} / 3</Badge>
-                              {activeIngestJobs.length > 0 ? (
-                                <Group gap={6}>
-                                  <Loader size={14} />
-                                  <Text size="xs" c="dimmed">
-                                    {runningIngestCount} running •{" "}
-                                    {activeIngestJobs.length} active
-                                  </Text>
-                                </Group>
-                              ) : null}
-                            </Group>
+    <Stack gap="lg" className="ops-ingest-layout">
+      <Group justify="flex-end" align="center" wrap="wrap">
+        <Group gap="xs">
+          {activeIngestJobs.length > 0 ? (
+            <Group gap={6}>
+              <Loader size={14} />
+              <Text size="xs" c="dimmed">
+                {runningIngestCount} running • {activeIngestJobs.length} active
+              </Text>
+            </Group>
+          ) : null}
+        </Group>
+      </Group>
+
+      <Progress value={ingestStep === 1 ? 33 : ingestStep === 2 ? 66 : 100} />
+
+      {ingestStep > 1 ? (
+        <Group
+          justify="space-between"
+          align="center"
+          wrap="wrap"
+          className="ops-content-sticky-header ops-ingest-step-nav"
+        >
+          <Text size="xs" c="dimmed">
+            {ingestStepHint}
+          </Text>
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              size="xs"
+              variant="light"
+              onClick={() => setIngestStep(ingestStep === 2 ? 1 : 2)}
+              disabled={ingestBusy}
+            >
+              Back
+            </Button>
+            {ingestStep === 2 ? (
+              <Button size="xs" onClick={() => setIngestStep(3)} disabled={!canQueueIngest}>
+                Review Queue
+              </Button>
+            ) : (
+              <Button
+                size="xs"
+                loading={ingestBusy}
+                disabled={!canQueueIngest}
+                onClick={runFinalQueueAction}
+              >
+                {ingestSource === "web"
+                  ? "Create Media Record"
+                  : "Queue Ingest Job"}
+              </Button>
+            )}
+          </Group>
+        </Group>
+      ) : null}
+
+      {ingestStep === 1 ? (
+        <Stack gap="md">
+          <Text fw={700} size="sm">
+            Online Sources
+          </Text>
+          <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+            <Card
+              withBorder
+              p="lg"
+              className={`ops-ingest-source-card${
+                ingestSource === "youtube" ? " is-selected" : ""
+              }`}
+              onClick={() => {
+                setIngestSource("youtube");
+                setIngestStep(2);
+              }}
+            >
+              <Group gap={8}>
+                <IconUpload size={18} />
+                <Text fw={700}>YouTube</Text>
+              </Group>
+            </Card>
+            <Card
+              withBorder
+              p="lg"
+              className={`ops-ingest-source-card${
+                ingestSource === "eden" ? " is-selected" : ""
+              }`}
+              onClick={() => {
+                setIngestSource("eden");
+                setIngestStep(2);
+              }}
+            >
+              <Group gap={8}>
+                <IconStack2 size={18} />
+                <Text fw={700}>Eden Collection</Text>
+              </Group>
+            </Card>
+            <Card
+              withBorder
+              p="lg"
+              className={`ops-ingest-source-card${
+                ingestSource === "web" ? " is-selected" : ""
+              }`}
+              onClick={() => {
+                setIngestSource("web");
+                setIngestStep(2);
+              }}
+            >
+              <Group gap={8}>
+                <IconWorldWww size={18} />
+                <Text fw={700}>Web Link</Text>
+              </Group>
+            </Card>
+          </SimpleGrid>
+
+          <Divider />
+
+          <Text fw={700} size="sm">
+            Local Assets
+          </Text>
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <Card
+              withBorder
+              p="lg"
+              className={`ops-ingest-source-card${
+                ingestSource === "upload" ? " is-selected" : ""
+              }`}
+              onClick={() => {
+                setIngestSource("upload");
+                setIngestStep(2);
+              }}
+            >
+              <Group gap={8}>
+                <IconPhotoPlus size={18} />
+                <Text fw={700}>Files / Zip Upload</Text>
+              </Group>
+            </Card>
+          </SimpleGrid>
+        </Stack>
+      ) : null}
+
+      {ingestStep === 2 ? (
+        <Card withBorder p="md" className="ops-ingest-step-card">
+          <Stack>
+            {ingestSource === "youtube" ? (
+              <Stack>
+                <TextInput
+                  label="YouTube URL"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.currentTarget.value)}
+                />
+              </Stack>
+            ) : null}
+            {ingestSource === "web" ? (
+              <Stack>
+                <TextInput
+                  label="Web URL"
+                  placeholder="https://example.com/media.mp4"
+                  value={webUrl}
+                  onChange={(e) => setWebUrl(e.currentTarget.value)}
+                />
+                <Button
+                  variant={webCache ? "filled" : "light"}
+                  onClick={() => setWebCache(!webCache)}
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  {webCache
+                    ? "Cache enabled on nodes"
+                    : "Cache disabled on nodes"}
+                </Button>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <Select
+                    label="Custom launch logic"
+                    value={webLaunchProfile}
+                    data={[
+                      { value: "none", label: "None" },
+                      {
+                        value: "home_assistant_login",
+                        label: "Home Assistant login",
+                      },
+                    ]}
+                    onChange={(value) =>
+                      setWebLaunchProfile(
+                        value === "home_assistant_login"
+                          ? "home_assistant_login"
+                          : "none"
+                      )
+                    }
+                  />
+                </SimpleGrid>
+                <WebLaunchArgsEditor
+                  entries={webLaunchArgsEntries}
+                  onChange={setWebLaunchArgsEntries}
+                  error={webLaunchArgsError}
+                />
+              </Stack>
+            ) : null}
+            {ingestSource === "eden" ? (
+              <Stack>
+                <TextInput
+                  label="Collection URL or ID"
+                  placeholder="https://app.eden.art/collections/... or 6980..."
+                  value={edenInput}
+                  onChange={(e) => setEdenInput(e.currentTarget.value)}
+                />
+              </Stack>
+            ) : null}
+            {ingestSource === "upload" ? (
+              <Stack>
+                <Paper
+                  withBorder
+                  p="md"
+                  radius="md"
+                  {...getUploadRootProps()}
+                  style={{
+                    cursor: "pointer",
+                    borderStyle: "dashed",
+                    borderColor: isUploadDragActive
+                      ? "rgba(95, 169, 255, 0.95)"
+                      : undefined,
+                  }}
+                >
+                  <input {...getUploadInputProps()} />
+                  <Stack gap={6}>
+                    <Text fw={600}>
+                      {isUploadDragActive
+                        ? "Drop files here"
+                        : "Drag & drop files or zip here, or click to browse"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Up to 20 media files, or one zip archive. Total limit:
+                      2GB.
+                    </Text>
+                  </Stack>
+                </Paper>
+                <Text size="xs" c="dimmed">
+                  Selected: {uploadFiles.length} file(s)
+                </Text>
+                {uploadFiles.length > 0 ? (
+                  <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm">
+                    {uploadPreviewItems.map((item, itemIndex) => (
+                      <Card
+                        key={`${item.file.name}-${item.file.size}-${item.file.lastModified}`}
+                        withBorder
+                        p="xs"
+                        className="ops-upload-preview-card"
+                      >
+                        <Stack gap={8}>
+                          <Group
+                            justify="space-between"
+                            align="flex-start"
+                            wrap="nowrap"
+                          >
+                            <Badge size="sm" variant="light">
+                              {item.kind === "image"
+                                ? "IMAGE"
+                                : item.kind === "video"
+                                ? "VIDEO"
+                                : item.kind === "audio"
+                                ? "AUDIO"
+                                : item.kind === "zip"
+                                ? "ZIP"
+                                : "FILE"}
+                            </Badge>
+                            <ActionIcon
+                              color="red"
+                              variant="light"
+                              size="sm"
+                              title="Remove from upload"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                removeUploadFileAtIndex(itemIndex);
+                              }}
+                            >
+                              <IconTrash size={14} />
+                            </ActionIcon>
                           </Group>
-    
-                          <Progress
-                            value={
-                              ingestStep === 1 ? 33 : ingestStep === 2 ? 66 : 100
+                          {item.kind === "image" && item.url ? (
+                            <Image
+                              src={item.url}
+                              alt={item.file.name}
+                              radius="sm"
+                              h={124}
+                              fit="cover"
+                            />
+                          ) : null}
+                          {item.kind === "video" && item.url ? (
+                            <video
+                              className="ops-upload-preview-video"
+                              src={item.url}
+                              muted
+                              controls
+                              preload="metadata"
+                            />
+                          ) : null}
+                          {item.kind === "audio" && item.url ? (
+                            <audio
+                              src={item.url}
+                              controls
+                              preload="metadata"
+                              style={{ width: "100%" }}
+                            />
+                          ) : null}
+                          {item.kind === "zip" || item.kind === "file" ? (
+                            <Paper
+                              withBorder
+                              p="md"
+                              radius="sm"
+                              className="ops-upload-preview-fallback"
+                            >
+                              <Stack gap={4}>
+                                <Text size="xs" c="dimmed">
+                                  No inline preview
+                                </Text>
+                              </Stack>
+                            </Paper>
+                          ) : null}
+                          <Text size="sm" fw={600} lineClamp={1}>
+                            {item.file.name}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {formatBytes(item.file.size)}
+                          </Text>
+                        </Stack>
+                      </Card>
+                    ))}
+                  </SimpleGrid>
+                ) : null}
+                {uploadDropError ? (
+                  <Text size="xs" c="red">
+                    {uploadDropError}
+                  </Text>
+                ) : null}
+              </Stack>
+            ) : null}
+          </Stack>
+        </Card>
+      ) : null}
+
+      {ingestStep === 3 ? (
+        <Card withBorder p="md" className="ops-ingest-step-card">
+          <Stack gap="md">
+            <Text fw={700}>Review & Queue</Text>
+            {ingestSource === "upload" ? (
+              <Stack gap="sm">
+                <Card withBorder p="sm">
+                  <Stack gap="sm">
+                    <Text fw={700} size="sm">
+                      Default Metadata
+                    </Text>
+                    <TextInput
+                      label="Title for all items"
+                      placeholder="Set once, then fine-tune per item below"
+                      value={uploadTitleForAllValue}
+                      onChange={(event) =>
+                        setUploadTitleForAll(event.currentTarget.value)
+                      }
+                    />
+                    <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                      <TextInput
+                        label="Artist"
+                        placeholder="Applied to all items unless overridden"
+                        value={uploadArtist}
+                        onChange={(e) => setUploadArtist(e.currentTarget.value)}
+                      />
+                      <Textarea
+                        label="Description"
+                        placeholder="Applied to all items unless overridden"
+                        autosize
+                        minRows={2}
+                        maxRows={4}
+                        value={uploadDescription}
+                        onChange={(e) =>
+                          setUploadDescription(e.currentTarget.value)
+                        }
+                      />
+                    </SimpleGrid>
+                    {uploadFiles.length > 1 ? (
+                      <Stack gap="xs">
+                        <Checkbox
+                          label="Create playlist from imported media"
+                          checked={uploadCreatePlaylist}
+                          onChange={(event) =>
+                            setUploadCreatePlaylist(event.currentTarget.checked)
+                          }
+                        />
+                        {uploadCreatePlaylist ? (
+                          <TextInput
+                            label="Playlist title (optional)"
+                            placeholder="Uploaded Media"
+                            value={uploadPlaylistTitle}
+                            onChange={(e) =>
+                              setUploadPlaylistTitle(e.currentTarget.value)
                             }
                           />
-    
-                          {ingestStep === 1 ? (
-                            <Stack gap="md">
-                              <Stack gap={2}>
-                                <Text fw={700} size="sm">
-                                  Online Sources
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  Pull from existing URLs and external catalogs.
-                                </Text>
-                              </Stack>
-                              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-                                <Card
-                                  withBorder
-                                  p="lg"
-                                  className={`ops-ingest-source-card${
-                                    ingestSource === "youtube" ? " is-selected" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setIngestSource("youtube");
-                                    setIngestStep(2);
-                                  }}
-                                >
-                                  <Stack gap="xs">
-                                    <Group gap={8}>
-                                      <IconUpload size={18} />
-                                      <Text fw={700}>YouTube</Text>
-                                    </Group>
-                                    <Text size="sm" c="dimmed">
-                                      Download a single video via `yt-dlp`.
-                                    </Text>
-                                  </Stack>
-                                </Card>
-                                <Card
-                                  withBorder
-                                  p="lg"
-                                  className={`ops-ingest-source-card${
-                                    ingestSource === "eden" ? " is-selected" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setIngestSource("eden");
-                                    setIngestStep(2);
-                                  }}
-                                >
-                                  <Stack gap="xs">
-                                    <Group gap={8}>
-                                      <IconStack2 size={18} />
-                                      <Text fw={700}>Eden Collection</Text>
-                                    </Group>
-                                    <Text size="sm" c="dimmed">
-                                      Import collection items as media records.
-                                    </Text>
-                                  </Stack>
-                                </Card>
-                                <Card
-                                  withBorder
-                                  p="lg"
-                                  className={`ops-ingest-source-card${
-                                    ingestSource === "web" ? " is-selected" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setIngestSource("web");
-                                    setIngestStep(2);
-                                  }}
-                                >
-                                  <Stack gap="xs">
-                                    <Group gap={8}>
-                                      <IconWorldWww size={18} />
-                                      <Text fw={700}>Web Link</Text>
-                                    </Group>
-                                    <Text size="sm" c="dimmed">
-                                      Add a direct URL as media without uploading.
-                                    </Text>
-                                  </Stack>
-                                </Card>
-                              </SimpleGrid>
+                        ) : null}
+                      </Stack>
+                    ) : null}
+                  </Stack>
+                </Card>
 
-                              <Divider />
+                <Group justify="space-between" align="center">
+                  <Text fw={700} size="sm">
+                    Items
+                  </Text>
+                  <Badge variant="light" color="blue">
+                    {uploadFiles.length} file(s)
+                  </Badge>
+                </Group>
 
-                              <Stack gap={2}>
-                                <Text fw={700} size="sm">
-                                  Local Assets
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  Upload files to asset storage and auto-create media records.
-                                </Text>
-                              </Stack>
-                              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-                                <Card
-                                  withBorder
-                                  p="lg"
-                                  className={`ops-ingest-source-card${
-                                    ingestSource === "upload" ? " is-selected" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setIngestSource("upload");
-                                    setIngestStep(2);
-                                  }}
-                                >
-                                  <Stack gap="xs">
-                                    <Group gap={8}>
-                                      <IconPhotoPlus size={18} />
-                                      <Text fw={700}>Files / Zip Upload</Text>
-                                    </Group>
-                                    <Text size="sm" c="dimmed">
-                                      Upload up to 20 files or one zip archive.
-                                    </Text>
-                                  </Stack>
-                                </Card>
-                              </SimpleGrid>
+                <Stack gap="sm">
+                  {uploadPreviewItems.map((item, itemIndex) => (
+                    <Card
+                      key={`review-${item.file.name}-${item.file.size}-${item.file.lastModified}-${itemIndex}`}
+                      withBorder
+                      p="sm"
+                    >
+                      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                        <Paper withBorder p={0} radius="sm" h={140}>
+                          {item.kind === "image" && item.url ? (
+                            <Image
+                              src={item.url}
+                              alt={item.file.name}
+                              radius="sm"
+                              h={140}
+                              fit="cover"
+                            />
+                          ) : item.kind === "video" && item.url ? (
+                            <video
+                              className="ops-upload-preview-video"
+                              src={item.url}
+                              muted
+                              controls
+                              preload="metadata"
+                              style={{ height: 140 }}
+                            />
+                          ) : item.kind === "audio" && item.url ? (
+                            <Stack
+                              justify="center"
+                              align="center"
+                              h="100%"
+                              p="md"
+                            >
+                              <audio
+                                src={item.url}
+                                controls
+                                preload="metadata"
+                                style={{ width: "100%" }}
+                              />
                             </Stack>
-                          ) : null}
-    
-                          {ingestStep === 2 ? (
-                            <Card withBorder p="md">
-                              <Stack>
-                                <Group justify="space-between">
-                                  <Text fw={700}>
-                                    Configure {selectedIngestLabel}
-                                  </Text>
-                                  <Button
-                                    variant="light"
-                                    size="xs"
-                                    onClick={() => setIngestStep(1)}
-                                  >
-                                    Change Source
-                                  </Button>
-                                </Group>
-                                {ingestSource === "youtube" ? (
-                                  <Stack>
-                                    <TextInput
-                                      label="YouTube URL"
-                                      placeholder="https://www.youtube.com/watch?v=..."
-                                      value={youtubeUrl}
-                                      onChange={(e) =>
-                                        setYoutubeUrl(e.currentTarget.value)
-                                      }
-                                    />
-                                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                                      <TextInput
-                                        label="Title (optional)"
-                                        value={youtubeTitle}
-                                        onChange={(e) =>
-                                          setYoutubeTitle(e.currentTarget.value)
-                                        }
-                                      />
-                                      <TextInput
-                                        label="Artist (optional)"
-                                        value={youtubeArtist}
-                                        onChange={(e) =>
-                                          setYoutubeArtist(e.currentTarget.value)
-                                        }
-                                      />
-                                    </SimpleGrid>
-                                  </Stack>
-                                ) : null}
-                                {ingestSource === "web" ? (
-                                  <Stack>
-                                    <TextInput
-                                      label="Web URL"
-                                      placeholder="https://example.com/media.mp4"
-                                      value={webUrl}
-                                      onChange={(e) =>
-                                        setWebUrl(e.currentTarget.value)
-                                      }
-                                    />
-                                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                                      <TextInput
-                                        label="Title (optional)"
-                                        value={webTitle}
-                                        onChange={(e) =>
-                                          setWebTitle(e.currentTarget.value)
-                                        }
-                                      />
-                                      <TextInput
-                                        label="Artist (optional)"
-                                        value={webArtist}
-                                        onChange={(e) =>
-                                          setWebArtist(e.currentTarget.value)
-                                        }
-                                      />
-                                    </SimpleGrid>
-                                    <Textarea
-                                      label="Description (optional)"
-                                      minRows={2}
-                                      maxRows={4}
-                                      autosize
-                                      value={webDescription}
-                                      onChange={(e) =>
-                                        setWebDescription(e.currentTarget.value)
-                                      }
-                                    />
-                                    <Button
-                                      variant={webCache ? "filled" : "light"}
-                                      onClick={() => setWebCache(!webCache)}
-                                      style={{ alignSelf: "flex-start" }}
-                                    >
-                                      {webCache
-                                        ? "Cache enabled on nodes"
-                                        : "Cache disabled on nodes"}
-                                    </Button>
-                                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                                      <Select
-                                        label="Custom launch logic"
-                                        value={webLaunchProfile}
-                                        data={[
-                                          { value: "none", label: "None" },
-                                          {
-                                            value: "home_assistant_login",
-                                            label: "Home Assistant login",
-                                          },
-                                        ]}
-                                        onChange={(value) =>
-                                          setWebLaunchProfile(
-                                            value === "home_assistant_login"
-                                              ? "home_assistant_login"
-                                            : "none"
-                                          )
-                                        }
-                                      />
-                                    </SimpleGrid>
-                                    <WebLaunchArgsEditor
-                                      entries={webLaunchArgsEntries}
-                                      onChange={setWebLaunchArgsEntries}
-                                      error={webLaunchArgsError}
-                                    />
-                                  </Stack>
-                                ) : null}
-                                {ingestSource === "eden" ? (
-                                  <Stack>
-                                    <TextInput
-                                      label="Collection URL or ID"
-                                      placeholder="https://app.eden.art/collections/... or 6980..."
-                                      value={edenInput}
-                                      onChange={(e) =>
-                                        setEdenInput(e.currentTarget.value)
-                                      }
-                                    />
-                                    <Checkbox
-                                      label="Create playlist from imported media"
-                                      checked={edenCreatePlaylist}
-                                      onChange={(event) =>
-                                        setEdenCreatePlaylist(
-                                          event.currentTarget.checked
-                                        )
-                                      }
-                                    />
-                                  </Stack>
-                                ) : null}
-                                {ingestSource === "upload" ? (
-                                  <Stack>
-                                    <Paper
-                                      withBorder
-                                      p="md"
-                                      radius="md"
-                                      {...getUploadRootProps()}
-                                      style={{
-                                        cursor: "pointer",
-                                        borderStyle: "dashed",
-                                        borderColor: isUploadDragActive
-                                          ? "rgba(95, 169, 255, 0.95)"
-                                          : undefined,
-                                      }}
-                                    >
-                                      <input {...getUploadInputProps()} />
-                                      <Stack gap={6}>
-                                        <Text fw={600}>
-                                          {isUploadDragActive
-                                            ? "Drop files here"
-                                            : "Drag & drop files or zip here, or click to browse"}
-                                        </Text>
-                                        <Text size="xs" c="dimmed">
-                                          Up to 20 media files, or one zip archive.
-                                          Total limit: 2GB.
-                                        </Text>
-                                      </Stack>
-                                    </Paper>
-                                    <Text size="xs" c="dimmed">
-                                      Selected: {uploadFiles.length} file(s)
-                                    </Text>
-                                    <SimpleGrid
-                                      cols={{ base: 1, md: 2 }}
-                                      spacing="sm"
-                                    >
-                                      <TextInput
-                                        label="Artist for all uploads (optional)"
-                                        placeholder="Applied to every imported media item"
-                                        value={uploadArtist}
-                                        onChange={(e) =>
-                                          setUploadArtist(e.currentTarget.value)
-                                        }
-                                      />
-                                      <Textarea
-                                        label="Description for all uploads (optional)"
-                                        placeholder="Applied to every imported media item"
-                                        autosize
-                                        minRows={2}
-                                        maxRows={4}
-                                        value={uploadDescription}
-                                        onChange={(e) =>
-                                          setUploadDescription(
-                                            e.currentTarget.value
-                                          )
-                                        }
-                                      />
-                                    </SimpleGrid>
-                                    <Checkbox
-                                      label="Create playlist from imported media"
-                                      checked={uploadCreatePlaylist}
-                                      onChange={(event) =>
-                                        setUploadCreatePlaylist(
-                                          event.currentTarget.checked
-                                        )
-                                      }
-                                    />
-                                    {uploadCreatePlaylist ? (
-                                      <TextInput
-                                        label="Playlist title (optional)"
-                                        placeholder="Uploaded Media"
-                                        value={uploadPlaylistTitle}
-                                        onChange={(e) =>
-                                          setUploadPlaylistTitle(
-                                            e.currentTarget.value
-                                          )
-                                        }
-                                      />
-                                    ) : null}
-                                    {uploadFiles.length > 0 ? (
-                                      <SimpleGrid
-                                        cols={{ base: 1, sm: 2, lg: 3 }}
-                                        spacing="sm"
-                                      >
-                                        {uploadPreviewItems.map(
-                                          (item, itemIndex) => (
-                                            <Card
-                                              key={`${item.file.name}-${item.file.size}-${item.file.lastModified}`}
-                                              withBorder
-                                              p="xs"
-                                              className="ops-upload-preview-card"
-                                            >
-                                              <Stack gap={8}>
-                                                <Group
-                                                  justify="space-between"
-                                                  align="flex-start"
-                                                  wrap="nowrap"
-                                                >
-                                                  <Badge size="sm" variant="light">
-                                                    {item.kind === "image"
-                                                      ? "IMAGE"
-                                                      : item.kind === "video"
-                                                      ? "VIDEO"
-                                                      : item.kind === "audio"
-                                                      ? "AUDIO"
-                                                      : item.kind === "zip"
-                                                      ? "ZIP"
-                                                      : "FILE"}
-                                                  </Badge>
-                                                  <ActionIcon
-                                                    color="red"
-                                                    variant="light"
-                                                    size="sm"
-                                                    title="Remove from upload"
-                                                    onClick={(event) => {
-                                                      event.stopPropagation();
-                                                      removeUploadFileAtIndex(
-                                                        itemIndex
-                                                      );
-                                                    }}
-                                                  >
-                                                    <IconTrash size={14} />
-                                                  </ActionIcon>
-                                                </Group>
-                                                {item.kind === "image" &&
-                                                item.url ? (
-                                                  <Image
-                                                    src={item.url}
-                                                    alt={item.file.name}
-                                                    radius="sm"
-                                                    h={124}
-                                                    fit="cover"
-                                                  />
-                                                ) : null}
-                                                {item.kind === "video" &&
-                                                item.url ? (
-                                                  <video
-                                                    className="ops-upload-preview-video"
-                                                    src={item.url}
-                                                    muted
-                                                    controls
-                                                    preload="metadata"
-                                                  />
-                                                ) : null}
-                                                {item.kind === "audio" &&
-                                                item.url ? (
-                                                  <audio
-                                                    src={item.url}
-                                                    controls
-                                                    preload="metadata"
-                                                    style={{ width: "100%" }}
-                                                  />
-                                                ) : null}
-                                                {item.kind === "zip" ||
-                                                item.kind === "file" ? (
-                                                  <Paper
-                                                    withBorder
-                                                    p="md"
-                                                    radius="sm"
-                                                    className="ops-upload-preview-fallback"
-                                                  >
-                                                    <Stack gap={4}>
-                                                      <Text size="xs" c="dimmed">
-                                                        No inline preview
-                                                      </Text>
-                                                    </Stack>
-                                                  </Paper>
-                                                ) : null}
-                                                <Text
-                                                  size="sm"
-                                                  fw={600}
-                                                  lineClamp={1}
-                                                >
-                                                  {item.file.name}
-                                                </Text>
-                                                <Text size="xs" c="dimmed">
-                                                  {formatBytes(item.file.size)}
-                                                </Text>
-                                              </Stack>
-                                            </Card>
-                                          )
-                                        )}
-                                      </SimpleGrid>
-                                    ) : null}
-                                    {uploadDropError ? (
-                                      <Text size="xs" c="red">
-                                        {uploadDropError}
-                                      </Text>
-                                    ) : null}
-                                  </Stack>
-                                ) : null}
-                                <Group justify="space-between">
-                                  <Button
-                                    variant="light"
-                                    onClick={() => setIngestStep(1)}
-                                    disabled={ingestBusy}
-                                  >
-                                    Back
-                                  </Button>
-                                  <Button
-                                    onClick={() => setIngestStep(3)}
-                                    disabled={!canQueueIngest}
-                                  >
-                                    Review Queue
-                                  </Button>
-                                </Group>
-                              </Stack>
-                            </Card>
-                          ) : null}
-    
-                          {ingestStep === 3 ? (
-                            <Card withBorder p="md">
-                              <Stack gap="sm">
-                                <Text fw={700}>Review & Queue</Text>
-                                <Text size="sm" c="dimmed">
-                                  Source: {selectedIngestLabel}
-                                </Text>
-                                {ingestSource === "upload" ? (
-                                  <Stack gap="sm">
-                                    <Group gap="xs" wrap="wrap">
-                                      <Badge variant="light" color="blue">
-                                        {uploadFiles.length} file(s)
-                                      </Badge>
-                                      {uploadArtist.trim() ? (
-                                        <Badge variant="light" color="grape">
-                                          artist: {uploadArtist.trim()}
-                                        </Badge>
-                                      ) : null}
-                                      {uploadCreatePlaylist ? (
-                                        <Badge variant="light" color="teal">
-                                          playlist:{" "}
-                                          {uploadPlaylistTitle.trim() ||
-                                            "Uploaded Media"}
-                                        </Badge>
-                                      ) : null}
-                                    </Group>
-                                    {uploadDescription.trim() ? (
-                                      <Text size="sm" c="dimmed">
-                                        {uploadDescription.trim()}
-                                      </Text>
-                                    ) : null}
-                                    <SimpleGrid
-                                      cols={{ base: 1, sm: 2, lg: 3 }}
-                                      spacing="sm"
-                                    >
-                                      {uploadPreviewItems.map((item) => (
-                                        <Card
-                                          key={`review-${item.file.name}-${item.file.size}-${item.file.lastModified}`}
-                                          withBorder
-                                          p="xs"
-                                        >
-                                          <Stack gap={8}>
-                                            {item.kind === "image" && item.url ? (
-                                              <Image
-                                                src={item.url}
-                                                alt={item.file.name}
-                                                radius="sm"
-                                                h={124}
-                                                fit="cover"
-                                              />
-                                            ) : null}
-                                            {item.kind === "video" && item.url ? (
-                                              <video
-                                                className="ops-upload-preview-video"
-                                                src={item.url}
-                                                muted
-                                                controls
-                                                preload="metadata"
-                                              />
-                                            ) : null}
-                                            {item.kind === "audio" && item.url ? (
-                                              <audio
-                                                src={item.url}
-                                                controls
-                                                preload="metadata"
-                                                style={{ width: "100%" }}
-                                              />
-                                            ) : null}
-                                            {item.kind === "zip" ||
-                                            item.kind === "file" ? (
-                                              <Paper
-                                                withBorder
-                                                p="md"
-                                                radius="sm"
-                                                className="ops-upload-preview-fallback"
-                                              >
-                                                <Text size="xs" c="dimmed">
-                                                  No inline preview
-                                                </Text>
-                                              </Paper>
-                                            ) : null}
-                                            <Group
-                                              justify="space-between"
-                                              align="center"
-                                            >
-                                              <Text
-                                                size="sm"
-                                                fw={600}
-                                                lineClamp={1}
-                                              >
-                                                {item.file.name}
-                                              </Text>
-                                              <Badge size="xs" variant="light">
-                                                {item.kind}
-                                              </Badge>
-                                            </Group>
-                                            <Text size="xs" c="dimmed">
-                                              {formatBytes(item.file.size)}
-                                            </Text>
-                                          </Stack>
-                                        </Card>
-                                      ))}
-                                    </SimpleGrid>
-                                  </Stack>
-                                ) : (
-                                  <Code block>
-                                    {ingestSource === "youtube"
-                                      ? JSON.stringify(
-                                          {
-                                            url: youtubeUrl.trim(),
-                                            title: youtubeTitle.trim() || undefined,
-                                            artist:
-                                              youtubeArtist.trim() || undefined,
-                                          },
-                                          null,
-                                          2
-                                        )
-                                      : ingestSource === "web"
-                                      ? JSON.stringify(
-                                          {
-                                            sourceType: "url",
-                                            sourceValue: webUrl.trim(),
-                                            title: webTitle.trim() || undefined,
-                                            artist: webArtist.trim() || undefined,
-                                            description:
-                                              webDescription.trim() || undefined,
-                                            web: webLaunchConfig,
-                                            cache: webCache,
-                                          },
-                                          null,
-                                          2
-                                        )
-                                      : JSON.stringify(
-                                          {
-                                            input: edenInput.trim(),
-                                            playlist: edenCreatePlaylist,
-                                          },
-                                          null,
-                                          2
-                                        )}
-                                  </Code>
-                                )}
-                                <Group justify="space-between">
-                                  <Button
-                                    variant="light"
-                                    onClick={() => setIngestStep(2)}
-                                    disabled={ingestBusy}
-                                  >
-                                    Back
-                                  </Button>
-                                  <Button
-                                    loading={ingestBusy}
-                                    disabled={!canQueueIngest}
-                                    onClick={() => {
-                                      if (ingestSource === "youtube") {
-                                        void runYouTubeIngest();
-                                        return;
-                                      }
-                                      if (ingestSource === "eden") {
-                                        void runEdenIngest();
-                                        return;
-                                      }
-                                      if (ingestSource === "web") {
-                                        void runWebIngest();
-                                        return;
-                                      }
-                                      void runUploadIngest();
-                                    }}
-                                  >
-                                    {ingestSource === "web"
-                                      ? "Create Media Record"
-                                      : "Queue Ingest Job"}
-                                  </Button>
-                                </Group>
-                              </Stack>
-                            </Card>
-                          ) : null}
+                          ) : (
+                            <Stack
+                              justify="center"
+                              align="center"
+                              h="100%"
+                              gap={2}
+                            >
+                              <Text size="xs" c="dimmed">
+                                {item.kind.toUpperCase()}
+                              </Text>
+                            </Stack>
+                          )}
+                        </Paper>
+                        <Stack gap="xs" style={{ minWidth: 0 }}>
+                          <Group justify="space-between" align="center">
+                            <Text size="sm" fw={700} lineClamp={1}>
+                              {item.file.name}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {formatBytes(item.file.size)}
+                            </Text>
+                          </Group>
+                          <TextInput
+                            label="Title"
+                            value={uploadTitleOverrides[itemIndex] ?? ""}
+                            onChange={(event) =>
+                              setUploadTitleOverrideAtIndex(
+                                itemIndex,
+                                event.currentTarget.value
+                              )
+                            }
+                          />
+                          <TextInput
+                            label="Artist Override"
+                            placeholder={uploadArtist || "None"}
+                            value={uploadArtistOverrides[itemIndex] ?? ""}
+                            onChange={(event) =>
+                              setUploadArtistOverrideAtIndex(
+                                itemIndex,
+                                event.currentTarget.value
+                              )
+                            }
+                          />
+                          <Textarea
+                            label="Description Override"
+                            placeholder={uploadDescription || "None"}
+                            autosize
+                            minRows={2}
+                            maxRows={4}
+                            value={uploadDescriptionOverrides[itemIndex] ?? ""}
+                            onChange={(event) =>
+                              setUploadDescriptionOverrideAtIndex(
+                                itemIndex,
+                                event.currentTarget.value
+                              )
+                            }
+                          />
                         </Stack>
+                      </SimpleGrid>
+                    </Card>
+                  ))}
+                </Stack>
+              </Stack>
+            ) : ingestSource === "youtube" ? (
+              <Card withBorder p="sm">
+                <Stack gap="sm">
+                  <Text fw={700} size="sm">
+                    Item Metadata
+                  </Text>
+                  <TextInput
+                    label="Title (optional)"
+                    value={youtubeTitle}
+                    onChange={(e) => setYoutubeTitle(e.currentTarget.value)}
+                  />
+                  <TextInput
+                    label="Artist (optional)"
+                    value={youtubeArtist}
+                    onChange={(e) => setYoutubeArtist(e.currentTarget.value)}
+                  />
+                  <Textarea
+                    label="Description (optional)"
+                    autosize
+                    minRows={2}
+                    maxRows={4}
+                    value={youtubeDescription}
+                    onChange={(e) =>
+                      setYoutubeDescription(e.currentTarget.value)
+                    }
+                  />
+                </Stack>
+              </Card>
+            ) : ingestSource === "web" ? (
+              <Card withBorder p="sm">
+                <Stack gap="sm">
+                  <Text fw={700} size="sm">
+                    Item Metadata
+                  </Text>
+                  <TextInput
+                    label="Title (optional)"
+                    value={webTitle}
+                    onChange={(e) => setWebTitle(e.currentTarget.value)}
+                  />
+                  <TextInput
+                    label="Artist (optional)"
+                    value={webArtist}
+                    onChange={(e) => setWebArtist(e.currentTarget.value)}
+                  />
+                  <Textarea
+                    label="Description (optional)"
+                    autosize
+                    minRows={2}
+                    maxRows={4}
+                    value={webDescription}
+                    onChange={(e) => setWebDescription(e.currentTarget.value)}
+                  />
+                </Stack>
+              </Card>
+            ) : (
+              <Card withBorder p="sm">
+                <Stack gap="sm">
+                  <Text fw={700} size="sm">
+                    Default Metadata
+                  </Text>
+                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                    <TextInput
+                      label="Artist"
+                      placeholder="Applied to imported collection items"
+                      value={edenArtist}
+                      onChange={(e) => setEdenArtist(e.currentTarget.value)}
+                    />
+                    <Textarea
+                      label="Description"
+                      placeholder="Applied to imported collection items"
+                      autosize
+                      minRows={2}
+                      maxRows={4}
+                      value={edenDescription}
+                      onChange={(e) =>
+                        setEdenDescription(e.currentTarget.value)
+                      }
+                    />
+                  </SimpleGrid>
+                  <Checkbox
+                    label="Create playlist from imported media"
+                    checked={edenCreatePlaylist}
+                    onChange={(event) =>
+                      setEdenCreatePlaylist(event.currentTarget.checked)
+                    }
+                  />
+                </Stack>
+              </Card>
+            )}
+          </Stack>
+        </Card>
+      ) : null}
+    </Stack>
   );
 }

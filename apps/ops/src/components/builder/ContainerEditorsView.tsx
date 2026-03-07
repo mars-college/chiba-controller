@@ -6,7 +6,6 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Breadcrumbs,
@@ -390,32 +389,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                             {row.title || row.id || "Untitled block"}
                           </Text>
                         </Stack>
-                        <Group gap={6}>
-                          <ActionIcon
-                            color="blue"
-                            variant="light"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openBlockEditorRoute(row.id);
-                            }}
-                            title="Open block editor"
-                          >
-                            <IconPencil size={14} />
-                          </ActionIcon>
-                          <ActionIcon
-                            color="red"
-                            variant="light"
-                            size="sm"
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              await deleteBlockResource(row.id);
-                            }}
-                            title="Delete block"
-                          >
-                            <IconTrash size={14} />
-                          </ActionIcon>
-                        </Group>
+                        <Badge size="sm" variant="light" color="orange">
+                          block
+                        </Badge>
                       </Group>
                       <Group gap={6}>
                         <Badge size="sm" variant="light">
@@ -428,6 +404,32 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                       <Text size="sm" c="dimmed">
                         media:{mediaCount} playlist:{playlistCount}
                       </Text>
+                      <Group gap={6} grow>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="blue"
+                          leftSection={<IconPencil size={14} />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openBlockEditorRoute(row.id);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="red"
+                          leftSection={<IconTrash size={14} />}
+                          onClick={async (event) => {
+                            event.stopPropagation();
+                            await deleteBlockResource(row.id);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
                     </Stack>
                   </Card>
                 );
@@ -435,7 +437,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
             </SimpleGrid>
           ) : (
             <Card withBorder p="sm">
-              <ScrollArea h={560}>
+              <ScrollArea>
                 <Table striped highlightOnHover withTableBorder withColumnBorders>
                   <Table.Thead>
                     <Table.Tr>
@@ -443,7 +445,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                       <Table.Th>Mode</Table.Th>
                       <Table.Th>Items</Table.Th>
                       <Table.Th>Breakdown</Table.Th>
-                      <Table.Th w={96}>Actions</Table.Th>
+                      <Table.Th w={176}>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -467,29 +469,31 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                             </Text>
                           </Table.Td>
                           <Table.Td>
-                            <Group gap={6}>
-                              <ActionIcon
-                                color="blue"
+                            <Group gap={6} wrap="nowrap">
+                              <Button
+                                size="xs"
                                 variant="light"
+                                color="blue"
+                                leftSection={<IconPencil size={14} />}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   openBlockEditorRoute(row.id);
                                 }}
-                                title="Open block editor"
                               >
-                                <IconPencil size={14} />
-                              </ActionIcon>
-                              <ActionIcon
-                                color="red"
+                                Edit
+                              </Button>
+                              <Button
+                                size="xs"
                                 variant="light"
+                                color="red"
+                                leftSection={<IconTrash size={14} />}
                                 onClick={async (event) => {
                                   event.stopPropagation();
                                   await deleteBlockResource(row.id);
                                 }}
-                                title="Delete block"
                               >
-                                <IconTrash size={14} />
-                              </ActionIcon>
+                                Delete
+                              </Button>
                             </Group>
                           </Table.Td>
                         </Table.Tr>
@@ -670,7 +674,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 Drag to reorder, repeatable
               </Text>
             </Group>
-            <ScrollArea h={320}>
+            <ScrollArea>
               <Stack gap="xs">
                 {blockDraft.items.map((item, index) => {
                   const pickerItem = pickerByKind[item.kind].get(item.id);
@@ -855,32 +859,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                           {row.title || row.id || "Untitled channel"}
                         </Text>
                       </Stack>
-                      <Group gap={6}>
-                        <ActionIcon
-                          color="blue"
-                          variant="light"
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openChannelEditorRoute(row.id);
-                          }}
-                          title="Open channel editor"
-                        >
-                          <IconPencil size={14} />
-                        </ActionIcon>
-                        <ActionIcon
-                          color="red"
-                          variant="light"
-                          size="sm"
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            await deleteChannelResource(row.id);
-                          }}
-                          title="Delete channel"
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
-                      </Group>
+                      <Badge size="sm" variant="light" color="grape">
+                        channel
+                      </Badge>
                     </Group>
                     <Badge size="sm" variant="light">
                       {row.blockIds.length} block items
@@ -888,19 +869,45 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     <Text size="sm" c="dimmed" lineClamp={2}>
                       {row.blockIds.slice(0, 4).join(" • ") || "No blocks yet"}
                     </Text>
+                    <Group gap={6} grow>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconPencil size={14} />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openChannelEditorRoute(row.id);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={async (event) => {
+                          event.stopPropagation();
+                          await deleteChannelResource(row.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </Group>
                   </Stack>
                 </Card>
               ))}
             </SimpleGrid>
           ) : (
             <Card withBorder p="sm">
-              <ScrollArea h={560}>
+              <ScrollArea>
                 <Table striped highlightOnHover withTableBorder withColumnBorders>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Title</Table.Th>
                       <Table.Th>Block Items</Table.Th>
-                      <Table.Th w={96}>Actions</Table.Th>
+                      <Table.Th w={176}>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -913,29 +920,31 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                         <Table.Td>{row.title || "untitled"}</Table.Td>
                         <Table.Td>{row.blockIds.length}</Table.Td>
                         <Table.Td>
-                          <Group gap={6}>
-                            <ActionIcon
-                              color="blue"
+                          <Group gap={6} wrap="nowrap">
+                            <Button
+                              size="xs"
                               variant="light"
+                              color="blue"
+                              leftSection={<IconPencil size={14} />}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openChannelEditorRoute(row.id);
                               }}
-                              title="Open channel editor"
                             >
-                              <IconPencil size={14} />
-                            </ActionIcon>
-                            <ActionIcon
-                              color="red"
+                              Edit
+                            </Button>
+                            <Button
+                              size="xs"
                               variant="light"
+                              color="red"
+                              leftSection={<IconTrash size={14} />}
                               onClick={async (event) => {
                                 event.stopPropagation();
                                 await deleteChannelResource(row.id);
                               }}
-                              title="Delete channel"
                             >
-                              <IconTrash size={14} />
-                            </ActionIcon>
+                              Delete
+                            </Button>
                           </Group>
                         </Table.Td>
                       </Table.Tr>
@@ -1090,7 +1099,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 Drag to reorder, repeatable
               </Text>
             </Group>
-            <ScrollArea h={320}>
+            <ScrollArea>
               <Stack gap="xs">
                 {channelDraft.blockIds.map((blockId, index) => {
                   const blockPickerItem = pickerByKind.block.get(blockId);
@@ -1237,32 +1246,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                           {row.title || row.id || "Untitled profile"}
                         </Text>
                       </Stack>
-                      <Group gap={6}>
-                        <ActionIcon
-                          color="blue"
-                          variant="light"
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openProfileEditorRoute(row.id);
-                          }}
-                          title="Open profile editor"
-                        >
-                          <IconPencil size={14} />
-                        </ActionIcon>
-                        <ActionIcon
-                          color="red"
-                          variant="light"
-                          size="sm"
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            await deleteProfileResource(row.id);
-                          }}
-                          title="Delete profile"
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
-                      </Group>
+                      <Badge size="sm" variant="light" color="violet">
+                        profile
+                      </Badge>
                     </Group>
                     <Badge size="sm" variant="light" color="gray">
                       default:{row.defaultTargetKind}
@@ -1275,20 +1261,46 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                       }{" "}
                       node assignment(s)
                     </Text>
+                    <Group gap={6} grow>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconPencil size={14} />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openProfileEditorRoute(row.id);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={async (event) => {
+                          event.stopPropagation();
+                          await deleteProfileResource(row.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </Group>
                   </Stack>
                 </Card>
               ))}
             </SimpleGrid>
           ) : (
             <Card withBorder p="sm">
-              <ScrollArea h={560}>
+              <ScrollArea>
                 <Table striped highlightOnHover withTableBorder withColumnBorders>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Title</Table.Th>
                       <Table.Th>Default target</Table.Th>
                       <Table.Th>Nodes</Table.Th>
-                      <Table.Th w={96}>Actions</Table.Th>
+                      <Table.Th w={176}>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -1312,29 +1324,31 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                           }
                         </Table.Td>
                         <Table.Td>
-                          <Group gap={6}>
-                            <ActionIcon
-                              color="blue"
+                          <Group gap={6} wrap="nowrap">
+                            <Button
+                              size="xs"
                               variant="light"
+                              color="blue"
+                              leftSection={<IconPencil size={14} />}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openProfileEditorRoute(row.id);
                               }}
-                              title="Open profile editor"
                             >
-                              <IconPencil size={14} />
-                            </ActionIcon>
-                            <ActionIcon
-                              color="red"
+                              Edit
+                            </Button>
+                            <Button
+                              size="xs"
                               variant="light"
+                              color="red"
+                              leftSection={<IconTrash size={14} />}
                               onClick={async (event) => {
                                 event.stopPropagation();
                                 await deleteProfileResource(row.id);
                               }}
-                              title="Delete profile"
                             >
-                              <IconTrash size={14} />
-                            </ActionIcon>
+                              Delete
+                            </Button>
                           </Group>
                         </Table.Td>
                       </Table.Tr>
@@ -1533,7 +1547,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 </Group>
               </Group>
 
-              <ScrollArea h={420}>
+              <ScrollArea>
                 <Stack gap="sm">
                   {registryNodes.map((node) => {
                     const assigned = profileDraft.nodeAssignments.find(

@@ -60,6 +60,15 @@ function getThumbPublicUrl(fileName: string): string {
   return `/api/v1/assets/thumbs/${encodeURIComponent(fileName)}`;
 }
 
+function thumbExtFromContentType(contentType: string): string {
+  const mime = contentType.split(";")[0]?.trim().toLowerCase() || "";
+  if (mime === "image/png") return ".png";
+  if (mime === "image/webp") return ".webp";
+  if (mime === "image/gif") return ".gif";
+  if (mime === "image/avif") return ".avif";
+  return ".jpg";
+}
+
 function parsePositiveIntEnv(raw: string | undefined): number | null {
   const value = String(raw ?? "").trim();
   if (!value) return null;
@@ -223,6 +232,87 @@ async function pushThumbnailToMinio(args: {
   };
 }
 
+function getWebThumbnailTemplate(): string {
+  const raw = process.env.CHIBA3_WEB_THUMBNAIL_URL_TEMPLATE?.trim();
+  if (!raw) return "https://image.thum.io/get/width/1280/noanimate/{url}";
+  return raw;
+}
+
+function buildWebThumbnailRequestUrl(sourceUrl: string): string | null {
+  const template = getWebThumbnailTemplate();
+  if (!template) return null;
+  const encoded = encodeURIComponent(sourceUrl);
+  if (template.includes("{url}")) return template.replaceAll("{url}", encoded);
+  if (template.endsWith("/")) return `${template}${encoded}`;
+  return `${template}/${encoded}`;
+}
+
+function webThumbnailTimeoutMs(): number {
+  const raw = Number(process.env.CHIBA3_WEB_THUMBNAIL_TIMEOUT_MS ?? "8000");
+  if (!Number.isFinite(raw)) return 8000;
+  const normalized = Math.floor(raw);
+  return Math.max(1500, Math.min(normalized, 30000));
+}
+
+export async function captureUrlThumbnail(args: {
+  mediaId: string;
+  sourceUrl: string;
+}): Promise<{ thumbnailUrl: string; thumbnailObjectKey?: string } | null> {
+  const rawUrl = args.sourceUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+
+  const requestUrl = buildWebThumbnailRequestUrl(rawUrl);
+  if (!requestUrl) return null;
+
+  await ensureIngestDirs();
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), webThumbnailTimeoutMs());
+  try {
+    const response = await fetch(requestUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        Accept: "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1",
+      },
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().includes("image/")) return null;
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length < 256) return null;
+
+    const digest = createHash("sha1").update(rawUrl).digest("hex").slice(0, 12);
+    const ext = thumbExtFromContentType(contentType);
+    const thumbName = stripUnsafeName(`${args.mediaId}-web-${digest}${ext}`);
+    const thumbPath = path.join(getThumbsRoot(), thumbName);
+    await fs.writeFile(thumbPath, bytes);
+
+    const remote = await pushThumbnailToMinio({ thumbPath, thumbName });
+    if (remote) {
+      return {
+        thumbnailUrl: remote.thumbnailUrl,
+        thumbnailObjectKey: remote.thumbnailObjectKey,
+      };
+    }
+    return { thumbnailUrl: getThumbPublicUrl(thumbName) };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function maybeCreateThumbnail(args: {
   assetPath: string;
   mediaKind: "image" | "video" | "audio";
@@ -359,6 +449,10 @@ export async function ingestUploadedFiles(args: {
     filename: string;
     mimeType: string;
     bytes: Buffer;
+  }, options?: {
+    titleOverride?: string | null;
+    artistOverride?: string | null;
+    descriptionOverride?: string | null;
   }) => {
     const kind = classifyMediaFile({
       filename: file.filename,
@@ -378,11 +472,14 @@ export async function ingestUploadedFiles(args: {
       assetPath: outPath,
       mediaKind: kind,
     });
+    const titleOverride = options?.titleOverride?.trim();
+    const artistOverride = options?.artistOverride?.trim();
+    const descriptionOverride = options?.descriptionOverride?.trim();
     media.push({
       id: buildDeterministicMediaId("upload", `file:${outPath}`),
-      title: stripUnsafeName(file.filename),
-      artist: args.metadata?.artist,
-      description: args.metadata?.description,
+      title: titleOverride || stripUnsafeName(file.filename),
+      artist: artistOverride || args.metadata?.artist,
+      description: descriptionOverride || args.metadata?.description,
       sourceType: "path",
       sourceValue: outPath,
       thumbnailUrl: thumb.thumbnailUrl,
@@ -394,17 +491,24 @@ export async function ingestUploadedFiles(args: {
   };
 
   if (plan.mode === "files") {
-    const filesByName = new Map(args.files.map((file) => [file.filename, file]));
+    const normalizedFiles = args.files.filter((file) => file.filename.trim().length > 0);
     total = plan.files.length;
     report("starting");
-    for (const filePlan of plan.files) {
-      const file = filesByName.get(filePlan.filename);
+    for (let index = 0; index < plan.files.length; index += 1) {
+      const file = normalizedFiles[index];
       if (!file) {
         processed += 1;
-        report(`missing:${filePlan.filename}`);
+        report(`missing:index_${index}`);
         continue;
       }
-      await ingestBuffer(file);
+      const titleOverride = args.metadata?.fileTitles?.[index];
+      const artistOverride = args.metadata?.fileArtists?.[index];
+      const descriptionOverride = args.metadata?.fileDescriptions?.[index];
+      await ingestBuffer(file, {
+        ...(titleOverride ? { titleOverride } : {}),
+        ...(artistOverride ? { artistOverride } : {}),
+        ...(descriptionOverride ? { descriptionOverride } : {}),
+      });
     }
   } else {
     const archive = args.files.find((file) => file.filename === plan.archive.filename);
@@ -451,6 +555,9 @@ export async function ingestUploadedFiles(args: {
   }
 
   const dedupedMedia = Array.from(new Map(media.map((row) => [row.id, row])).values());
+  if (dedupedMedia.length !== media.length) {
+    warnings.push(`duplicate_media_deduped:${media.length - dedupedMedia.length}`);
+  }
   const wantsPlaylist = args.metadata?.playlist === true;
   const shouldCreatePlaylist = wantsPlaylist && dedupedMedia.length > 1;
   const playlistId = shouldCreatePlaylist
@@ -542,6 +649,7 @@ export async function ingestYouTube(args: {
   mediaId?: string;
   title?: string;
   artist?: string;
+  description?: string;
   cache?: boolean;
   persistResources?: PersistResourcesFn;
   onProgress?: (progress: IngestProgress) => void;
@@ -685,6 +793,7 @@ export async function ingestYouTube(args: {
         id: mediaId,
         title: args.title?.trim() || fileName,
         artist: args.artist?.trim() || undefined,
+        description: args.description?.trim() || undefined,
         sourceType: "path",
         sourceValue: outPath,
         thumbnailUrl: thumb.thumbnailUrl,
@@ -823,6 +932,8 @@ export async function ingestEdenCollection(args: {
   dbName?: EdenDb;
   playlistId?: string;
   playlist?: boolean;
+  artist?: string;
+  description?: string;
   apiKey?: string;
   persistResources?: PersistResourcesFn;
   onProgress?: (progress: IngestProgress) => void;
@@ -891,7 +1002,8 @@ export async function ingestEdenCollection(args: {
       media.push({
         id: `m-eden-${creation.id}`,
         title: creation.title || undefined,
-        artist: creation.artist || undefined,
+        artist: args.artist?.trim() || creation.artist || undefined,
+        description: args.description?.trim() || undefined,
         sourceType: "path",
         sourceValue: outPath,
         thumbnailUrl: thumb.thumbnailUrl,

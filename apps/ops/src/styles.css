@@ -88,9 +88,122 @@ body {
 }
 
 .ops-media-feed {
-  height: 620px;
-  overflow-y: auto;
-  padding-right: 6px;
+  width: 100%;
+  min-height: 0;
+}
+
+.ops-media-toolbar {
+  flex-wrap: nowrap;
+}
+
+.ops-media-search-input {
+  flex: 1;
+  min-width: 280px;
+}
+
+.ops-content-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 11;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ops-line);
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(8, 14, 25, 0.96) 0%,
+    rgba(8, 14, 25, 0.9) 100%
+  );
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.ops-ingest-step-nav {
+  top: 8px;
+  z-index: 12;
+}
+
+.ops-media-control-header {
+  gap: 10px;
+}
+
+.ops-media-control-row {
+  min-width: 0;
+}
+
+.ops-media-control-actions {
+  min-width: 0;
+}
+
+.ops-media-control-pagination {
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.ops-media-control-pagination .mantine-Pagination-root {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ops-media-control-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-library-media-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.ops-builder-tab-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 132px);
+}
+
+.ops-builder-grid {
+  flex: 1;
+}
+
+.ops-shell .ops-builder-panel.mantine-Paper-root {
+  height: 100%;
+  display: flex;
+  overflow: visible;
+}
+
+.ops-builder-content {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+.ops-ingest-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.ops-shell .ops-ingest-step-card.mantine-Card-root {
+  overflow: visible;
+}
+
+.ops-library-pane-scroll {
+  width: 100%;
+}
+
+.ops-library-pane-select {
+  width: 100%;
+}
+
+.ops-library-pane-tabs {
+  width: max-content;
+}
+
+.ops-library-pane-tabs .mantine-Button-root {
+  border-radius: 999px;
+  font-weight: 700;
 }
 
 .ops-media-card {
@@ -118,6 +231,16 @@ body {
 .ops-playlist-card:hover {
   border-color: rgba(95, 169, 255, 0.72);
   transform: translateY(-1px);
+}
+
+.ops-card-actions {
+  width: 100%;
+}
+
+.ops-card-actions .mantine-Button-root {
+  min-height: 44px;
+  border-radius: 12px;
+  font-weight: 700;
 }
 
 .ops-resource-card {
@@ -282,6 +405,21 @@ body {
   color: var(--ops-text-dim);
 }
 
+.ops-playlist-empty-state {
+  cursor: pointer;
+  border-style: dashed;
+  border-color: rgba(133, 166, 214, 0.45);
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.ops-playlist-empty-state:hover,
+.ops-playlist-empty-state:focus-visible {
+  border-color: rgba(95, 169, 255, 0.9);
+  background: rgba(20, 36, 58, 0.5);
+  transform: translateY(-1px);
+  outline: none;
+}
+
 .ops-shell .mantine-Card-root,
 .ops-shell .mantine-Paper-root,
 .ops-shell .mantine-Table-table {
@@ -334,11 +472,63 @@ body {
 
 .ops-main {
   height: calc(100dvh - 72px);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .ops-main-tabs {
   min-height: 100%;
+}
+
+.ops-fleet-card-section-title {
+  letter-spacing: 0.08em;
+}
+
+.ops-fleet-signal-strip {
+  row-gap: 4px;
+}
+
+.ops-fleet-signal-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ops-fleet-signal-pill.is-up {
+  background: rgba(31, 201, 151, 0.14);
+  color: #59e4bf;
+}
+
+.ops-fleet-signal-pill.is-down {
+  background: rgba(255, 107, 107, 0.14);
+  color: #ff9a9a;
+}
+
+.ops-fleet-runtime-summary {
+  min-width: 0;
+}
+
+.ops-fleet-runtime-row {
+  min-width: 0;
+}
+
+.ops-fleet-runtime-progress {
+  flex: 1;
+}
+
+.ops-fleet-runtime-progress-label {
+  min-width: 36px;
+  text-align: right;
+}
+
+.ops-fleet-versions-compact {
+  white-space: nowrap;
 }
 
 @media (max-width: 48em) {
@@ -346,7 +536,60 @@ body {
     height: calc(100dvh - 64px);
   }
 
-  .ops-media-feed {
-    height: 500px;
+  .ops-shell .ops-builder-panel.mantine-Paper-root,
+  .ops-shell .ops-fleet-panel.mantine-Paper-root {
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
   }
+
+  .ops-fleet-mobile-card {
+    border-radius: 14px;
+    padding: 12px;
+  }
+
+  .ops-fleet-versions-compact {
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ops-media-toolbar {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .ops-media-search-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .ops-content-sticky-header {
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .ops-media-control-row {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ops-media-control-actions .mantine-Button-root {
+    min-width: auto;
+  }
+
+  .ops-media-control-meta {
+    white-space: normal;
+  }
+
+  .ops-builder-tab-panel {
+    min-height: calc(100dvh - 104px);
+  }
+
+  .ops-media-feed {
+    width: 100%;
+  }
+
 }

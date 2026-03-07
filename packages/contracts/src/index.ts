@@ -330,6 +330,7 @@ export const IngestYouTubeRequestSchema = z
     mediaId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
     artist: z.string().min(1).optional(),
+    description: z.string().min(1).max(4_000).optional(),
     cache: z.boolean().optional(),
   })
   .strict();
@@ -343,6 +344,8 @@ export const IngestEdenCollectionRequestSchema = z
     db: z.enum(["PROD", "STAGE"]).optional(),
     playlistId: z.string().min(1).optional(),
     playlist: z.boolean().optional(),
+    artist: z.string().min(1).max(256).optional(),
+    description: z.string().min(1).max(4_000).optional(),
     apiKey: z.string().min(1).optional(),
   })
   .strict();
@@ -354,6 +357,48 @@ export const IngestUploadMetadataSchema = z
   .object({
     artist: z.string().min(1).max(256).optional(),
     description: z.string().min(1).max(4_000).optional(),
+    fileTitles: z
+      .preprocess((value) => {
+        if (Array.isArray(value)) return value;
+        if (typeof value !== "string") return value;
+        const raw = value.trim();
+        if (!raw) return undefined;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : value;
+        } catch {
+          return value;
+        }
+      }, z.array(z.string().max(256)).max(200))
+      .optional(),
+    fileArtists: z
+      .preprocess((value) => {
+        if (Array.isArray(value)) return value;
+        if (typeof value !== "string") return value;
+        const raw = value.trim();
+        if (!raw) return undefined;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : value;
+        } catch {
+          return value;
+        }
+      }, z.array(z.string().max(256)).max(200))
+      .optional(),
+    fileDescriptions: z
+      .preprocess((value) => {
+        if (Array.isArray(value)) return value;
+        if (typeof value !== "string") return value;
+        const raw = value.trim();
+        if (!raw) return undefined;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : value;
+        } catch {
+          return value;
+        }
+      }, z.array(z.string().max(4_000)).max(200))
+      .optional(),
     playlist: z
       .preprocess((value) => {
         if (typeof value === "boolean") return value;

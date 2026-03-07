@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Text } from "@mantine/core";
 
 export type PreviewTile = {
@@ -12,6 +13,12 @@ type Props = {
 };
 
 export function PreviewTileCluster({ tiles, totalCount, height = 160 }: Props) {
+  const [failedTiles, setFailedTiles] = useState<Record<number, true>>({});
+
+  useEffect(() => {
+    setFailedTiles({});
+  }, [tiles, totalCount, height]);
+
   const visibleTiles = tiles.slice(0, 4);
   const tileCount = Math.min(Math.max(visibleTiles.length, 1), 4);
   const moreCount =
@@ -34,10 +41,18 @@ export function PreviewTileCluster({ tiles, totalCount, height = 160 }: Props) {
         const fallbackText = (tile.label || `${index + 1}`)
           .slice(0, 1)
           .toUpperCase();
+        const showImage = Boolean(tile.src) && !failedTiles[index];
         return (
           <div key={`preview-tile-${index}`} className="ops-playlist-cover-tile">
-            {tile.src ? (
-              <img className="ops-playlist-cover-img" src={tile.src} alt={tile.label} />
+            {showImage ? (
+              <img
+                className="ops-playlist-cover-img"
+                src={tile.src}
+                alt=""
+                onError={() =>
+                  setFailedTiles((prev) => ({ ...prev, [index]: true }))
+                }
+              />
             ) : (
               <div className="ops-playlist-cover-fallback">
                 <Text fw={700}>{fallbackText}</Text>

@@ -74,6 +74,7 @@ import {
   DEFAULT_EDEN_SYNC_INTERVAL_SEC,
 } from "./ingest/eden-sync.js";
 import {
+  captureUrlThumbnail,
   ingestEdenCollection,
   ingestUploadedFiles,
   ingestYouTube,
@@ -2271,6 +2272,16 @@ async function probeFleetNode(args: {
     nodeInfo.display !== null
       ? (nodeInfo.display as Record<string, unknown>)
       : null;
+  const nodeRuntimeRaw =
+    nodeStatusJson &&
+    typeof nodeStatusJson.runtime === "object" &&
+    nodeStatusJson.runtime !== null
+      ? (nodeStatusJson.runtime as Record<string, unknown>)
+      : null;
+  const nodeRuntimeNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : null;
 
   const versionJson =
     cableVersion.data && typeof cableVersion.data === "object"
@@ -2413,6 +2424,27 @@ async function probeFleetNode(args: {
       displayBackend:
         typeof nodeDisplay?.backend === "string"
           ? nodeDisplay.backend
+          : null,
+      runtime:
+        nodeRuntimeRaw &&
+        (typeof nodeRuntimeRaw.phase === "string" ||
+          typeof nodeRuntimeRaw.currentItemId === "string" ||
+          nodeRuntimeNumber(nodeRuntimeRaw.cacheReady) !== null ||
+          nodeRuntimeNumber(nodeRuntimeRaw.cacheTotal) !== null ||
+          nodeRuntimeNumber(nodeRuntimeRaw.updatedAt) !== null)
+          ? {
+              phase:
+                typeof nodeRuntimeRaw.phase === "string"
+                  ? nodeRuntimeRaw.phase
+                  : null,
+              cacheReady: nodeRuntimeNumber(nodeRuntimeRaw.cacheReady),
+              cacheTotal: nodeRuntimeNumber(nodeRuntimeRaw.cacheTotal),
+              currentItemId:
+                typeof nodeRuntimeRaw.currentItemId === "string"
+                  ? nodeRuntimeRaw.currentItemId
+                  : null,
+              updatedAt: nodeRuntimeNumber(nodeRuntimeRaw.updatedAt),
+            }
           : null,
     },
     cableServer: versionJson
@@ -3068,9 +3100,45 @@ async function main(): Promise<void> {
       });
       return;
     }
+    const hydratedMedia: typeof parsed.data.media = [];
+    for (const media of parsed.data.media) {
+      if (media.sourceType !== "url") {
+        hydratedMedia.push(media);
+        continue;
+      }
+      const existingThumb = media.thumbnailUrl?.trim();
+      if (existingThumb) {
+        hydratedMedia.push(media);
+        continue;
+      }
+      const captured = await captureUrlThumbnail({
+        mediaId: media.id,
+        sourceUrl: media.sourceValue,
+      });
+      if (captured?.thumbnailUrl) {
+        hydratedMedia.push({
+          ...media,
+          thumbnailUrl: captured.thumbnailUrl,
+          ...(captured.thumbnailObjectKey
+            ? { thumbnailObjectKey: captured.thumbnailObjectKey }
+            : {}),
+        });
+        continue;
+      }
+      hydratedMedia.push({
+        ...media,
+        thumbnailUrl: buildFallbackPreviewDataUrl({
+          title: media.title || media.id,
+          subtitle: media.artist || "Web source",
+        }),
+      });
+    }
     const counts = await importResources({
       db,
-      payload: parsed.data,
+      payload: {
+        ...parsed.data,
+        media: hydratedMedia,
+      },
     });
     res.json({ ok: true, counts });
   });
@@ -3321,6 +3389,9 @@ async function main(): Promise<void> {
       ...(parsed.data.mediaId ? { mediaId: parsed.data.mediaId } : {}),
       ...(parsed.data.title ? { title: parsed.data.title } : {}),
       ...(parsed.data.artist ? { artist: parsed.data.artist } : {}),
+      ...(parsed.data.description
+        ? { description: parsed.data.description }
+        : {}),
       ...(typeof parsed.data.cache === "boolean"
         ? { cache: parsed.data.cache }
         : {}),
@@ -3357,6 +3428,10 @@ async function main(): Promise<void> {
       ...(parsed.data.playlistId ? { playlistId: parsed.data.playlistId } : {}),
       ...(typeof parsed.data.playlist === "boolean"
         ? { playlist: parsed.data.playlist }
+        : {}),
+      ...(parsed.data.artist ? { artist: parsed.data.artist } : {}),
+      ...(parsed.data.description
+        ? { description: parsed.data.description }
         : {}),
       ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
     });
@@ -3417,6 +3492,9 @@ async function main(): Promise<void> {
         ...(parsed.data.mediaId ? { mediaId: parsed.data.mediaId } : {}),
         ...(parsed.data.title ? { title: parsed.data.title } : {}),
         ...(parsed.data.artist ? { artist: parsed.data.artist } : {}),
+        ...(parsed.data.description
+          ? { description: parsed.data.description }
+          : {}),
         ...(typeof parsed.data.cache === "boolean"
           ? { cache: parsed.data.cache }
           : {}),
@@ -3456,6 +3534,10 @@ async function main(): Promise<void> {
         ...(parsed.data.playlistId ? { playlistId: parsed.data.playlistId } : {}),
         ...(typeof parsed.data.playlist === "boolean"
           ? { playlist: parsed.data.playlist }
+          : {}),
+        ...(parsed.data.artist ? { artist: parsed.data.artist } : {}),
+        ...(parsed.data.description
+          ? { description: parsed.data.description }
           : {}),
         ...(parsed.data.apiKey ? { apiKey: parsed.data.apiKey } : {}),
       },

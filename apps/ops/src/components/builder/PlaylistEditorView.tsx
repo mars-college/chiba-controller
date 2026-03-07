@@ -189,7 +189,9 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                                 Items ({playlistDraft.mediaIds.length})
                               </Text>
                               <Text size="xs" c="dimmed">
-                                Drag to reorder
+                                {playlistDraft.mediaIds.length > 0
+                                  ? "Drag to reorder"
+                                  : "Click to add items"}
                               </Text>
                             </Group>
                             <ScrollArea
@@ -200,6 +202,34 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                               }
                             >
                               <Stack gap="xs">
+                                {playlistDraft.mediaIds.length === 0 ? (
+                                  <Paper
+                                    withBorder
+                                    p="xl"
+                                    radius="md"
+                                    className="ops-playlist-empty-state"
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => setMediaPickerOpen(true)}
+                                    onKeyDown={(event) => {
+                                      if (
+                                        event.key === "Enter" ||
+                                        event.key === " "
+                                      ) {
+                                        event.preventDefault();
+                                        setMediaPickerOpen(true);
+                                      }
+                                    }}
+                                  >
+                                    <Stack gap={6} align="center">
+                                      <Text fw={700}>Click to add items</Text>
+                                      <Text size="sm" c="dimmed">
+                                        Open media selector and choose one or
+                                        more media items for this playlist.
+                                      </Text>
+                                    </Stack>
+                                  </Paper>
+                                ) : null}
                                 {playlistDraft.mediaIds.map((id, index) => {
                                   const media = mergedMedia.find(
                                     (row) => row.id === id

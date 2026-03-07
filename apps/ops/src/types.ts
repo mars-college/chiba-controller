@@ -29,6 +29,13 @@ export type RemoteNodeStatus = {
   displayMode?: string | null
   displayOutput?: string | null
   displayBackend?: string | null
+  runtime?: {
+    phase: string | null
+    cacheReady: number | null
+    cacheTotal: number | null
+    currentItemId: string | null
+    updatedAt: number | null
+  } | null
 }
 
 export type FleetPi = {

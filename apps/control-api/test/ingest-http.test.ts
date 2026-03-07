@@ -271,6 +271,64 @@ test("upload multipart metadata applies artist/description to imported media", a
   });
 });
 
+test("upload ingest processes duplicate filenames and applies per-file title overrides by order", async () => {
+  await withStubbedTools(async () => {
+    const calls: PersistCall[] = [];
+    const result = await ingestUploadedFiles({
+      db: {} as never,
+      contentLength: 0,
+      files: [
+        {
+          fieldName: "files",
+          filename: "duplicate.jpg",
+          mimeType: "image/jpeg",
+          bytes: Buffer.from("image-a"),
+        },
+        {
+          fieldName: "files",
+          filename: "duplicate.jpg",
+          mimeType: "image/jpeg",
+          bytes: Buffer.from("image-b"),
+        },
+      ],
+      metadata: IngestUploadMetadataSchema.parse({
+        artist: "Batch Artist",
+        description: "Batch Description",
+        fileTitles: JSON.stringify(["First Title", "Second Title"]),
+        fileArtists: JSON.stringify(["Artist One", "Artist Two"]),
+        fileDescriptions: JSON.stringify(["Desc One", "Desc Two"]),
+      }),
+      persistResources: async ({ payload }) => {
+        calls.push({ payload });
+        return {
+          media: payload.media.length,
+          playlists: payload.playlists.length,
+          blocks: payload.blocks.length,
+          channels: payload.channels.length,
+          profiles: payload.profiles.length,
+        };
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(calls.length, 1);
+    const media = calls[0]?.payload.media ?? [];
+    assert.equal(media.length, 2);
+    assert.deepEqual(
+      media.map((row) => row.title),
+      ["First Title", "Second Title"]
+    );
+    assert.deepEqual(
+      media.map((row) => row.artist),
+      ["Artist One", "Artist Two"]
+    );
+    assert.deepEqual(
+      media.map((row) => row.description),
+      ["Desc One", "Desc Two"]
+    );
+  });
+});
+
 test("youtube endpoint invokes yt-dlp and ffmpeg stubs via ingest runtime", async () => {
   await withStubbedTools(async ({ logPath }) => {
     const prevMaxHeight = process.env.CHIBA3_INGEST_YOUTUBE_MAX_HEIGHT;

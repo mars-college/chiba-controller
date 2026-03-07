@@ -3,12 +3,14 @@ import {
   Button,
   Group,
   Paper,
-  SegmentedControl,
+  ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Tabs,
   Title,
 } from "@mantine/core";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { IngestSection } from "./components/builder/IngestSection";
 import { ContainerEditorsView } from "./components/builder/ContainerEditorsView";
 import { MediaDetailView } from "./components/builder/MediaDetailView";
@@ -22,9 +24,10 @@ import { OpsSidebar } from "./components/OpsSidebar";
 import { QuickSendModal } from "./components/QuickSendModal";
 import { ResourcePickerModal } from "./components/ResourcePickerModal";
 import { FleetScreen } from "./components/screens/FleetScreen";
+import { LightsScreen } from "./components/screens/LightsScreen";
 import { useOpsAppModel } from "./hooks/useOpsAppModel";
 
-export default function App() {
+function OpsRoute() {
   const {
     isMobile,
     controlOpen,
@@ -53,10 +56,6 @@ export default function App() {
     ingestPollersRef,
     ingestJobStatusRef,
     ingestWatchWarnedRef,
-    refreshCatalogAndProfiles,
-    refreshServerSnapshot,
-    refreshNodesInventory,
-    refreshFleet,
     fleetRows,
     filteredRows,
     selectedNode,
@@ -168,8 +167,6 @@ export default function App() {
     setNodeDraft,
     nodeSaving,
     setNodeSaving,
-    loadingFleet,
-    setLoadingFleet,
     search,
     setSearch,
     lastTick,
@@ -295,6 +292,92 @@ export default function App() {
     summarizeApplyResult,
   } = useOpsAppModel();
 
+  const libraryPaneOptions: Array<{
+    value: "media" | "playlists" | "blocks" | "channels" | "profiles";
+    label: string;
+    compactLabel: string;
+  }> = [
+    {
+      value: "media",
+      label: `Media (${serverMedia.length})`,
+      compactLabel: "Media",
+    },
+    {
+      value: "playlists",
+      label: `Playlists (${draftStore.playlists.length})`,
+      compactLabel: "Lists",
+    },
+    {
+      value: "blocks",
+      label: `Blocks (${draftStore.blocks.length})`,
+      compactLabel: "Blocks",
+    },
+    {
+      value: "channels",
+      label: `Channels (${draftStore.channels.length})`,
+      compactLabel: "Chan",
+    },
+    {
+      value: "profiles",
+      label: `Profiles (${draftStore.profiles.length})`,
+      compactLabel: "Prof",
+    },
+  ];
+
+  const openLibraryPane = (
+    next: "media" | "playlists" | "blocks" | "channels" | "profiles"
+  ) => {
+    setServerMediaQuery("");
+    setSelectedServerMediaId(null);
+    setMediaDetailId(null);
+    if (next === "media" || next === "playlists") {
+      setMediaLibrarySection(next);
+      setBuilderTab("media");
+      return;
+    }
+    setMediaLibrarySection(next);
+    if (next === "blocks") setBuilderTab("block");
+    if (next === "channels") setBuilderTab("channel");
+    if (next === "profiles") setBuilderTab("profile");
+  };
+
+  const isLibraryBrowserView =
+    builderTab !== "ingest" &&
+    builderTab !== "mediaDetail" &&
+    builderTab !== "playlistEditor" &&
+    builderTab !== "blockEditor" &&
+    builderTab !== "channelEditor" &&
+    builderTab !== "profileEditor";
+  const builderTitle =
+    builderTab === "ingest"
+      ? "Add Media"
+      : builderTab === "playlistEditor"
+      ? "Playlist Editor"
+      : builderTab === "blockEditor"
+      ? "Block Editor"
+      : builderTab === "channelEditor"
+      ? "Channel Editor"
+      : builderTab === "profileEditor"
+      ? "Profile Editor"
+      : builderTab === "mediaDetail"
+      ? "Media Detail"
+      : isMobile
+      ? "Library"
+      : "Media Library";
+  const createActionLabel = isMobile
+    ? currentLibraryPane === "media"
+      ? "Add"
+      : "New"
+    : currentLibraryPane === "media"
+    ? "Add Media"
+    : currentLibraryPane === "playlists"
+    ? "New Playlist"
+    : currentLibraryPane === "blocks"
+    ? "New Block"
+    : currentLibraryPane === "channels"
+    ? "New Channel"
+    : "New Profile";
+
   return (
     <AppShell
       className="ops-shell"
@@ -313,13 +396,6 @@ export default function App() {
           onToggleControl={toggleControlOpen}
           autoRefresh={autoRefresh}
           onAutoRefreshChange={setAutoRefresh}
-          loadingFleet={loadingFleet}
-          onRefreshAll={() => {
-            refreshFleet();
-            void refreshNodesInventory();
-            void refreshCatalogAndProfiles();
-            void refreshServerSnapshot();
-          }}
         />
       </AppShell.Header>
 
@@ -334,6 +410,11 @@ export default function App() {
             updateOpsUrl({ view: null, playlistId: null }, "replace");
             if (isMobile) setControlOpen(false);
           }}
+          onOpenLights={() => {
+            setMainTab("devices");
+            updateOpsUrl({ view: null, playlistId: null }, "replace");
+            if (isMobile) setControlOpen(false);
+          }}
           onOpenIngestion={() => {
             setMainTab("builder");
             setBuilderTab("ingest");
@@ -344,6 +425,9 @@ export default function App() {
             setMainTab("builder");
             setBuilderTab("media");
             setMediaLibrarySection("media");
+            setServerMediaQuery("");
+            setSelectedServerMediaId(null);
+            setMediaDetailId(null);
             updateOpsUrl({ view: null, playlistId: null }, "replace");
             if (isMobile) setControlOpen(false);
           }}
@@ -363,38 +447,24 @@ export default function App() {
           className="ops-main-tabs"
           value={mainTab}
           onChange={(value) => {
-            if (value === "fleet" || value === "builder") setMainTab(value);
+            if (value === "fleet" || value === "builder" || value === "devices")
+              setMainTab(value);
           }}
           keepMounted={false}
         >
           <FleetScreen vm={fleetScreenVm} />
 
-          <Tabs.Panel value="builder" pt="md">
-            <SimpleGrid cols={1} spacing="md">
-              <Paper withBorder radius="md" p="md">
-                <Stack gap="md">
+          <Tabs.Panel value="devices" pt="md">
+            <LightsScreen />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="builder" pt="md" className="ops-builder-tab-panel">
+            <SimpleGrid cols={1} spacing="md" className="ops-builder-grid">
+              <Paper withBorder radius="md" p="md" className="ops-builder-panel">
+                <Stack gap="md" className="ops-builder-content">
                   <Group justify="space-between" align="center" wrap="wrap">
-                    <Title order={4}>
-                      {builderTab === "ingest"
-                        ? "Add Media"
-                        : builderTab === "playlistEditor"
-                        ? "Playlist Editor"
-                        : builderTab === "blockEditor"
-                        ? "Block Editor"
-                        : builderTab === "channelEditor"
-                        ? "Channel Editor"
-                        : builderTab === "profileEditor"
-                        ? "Profile Editor"
-                        : builderTab === "mediaDetail"
-                        ? "Media Detail"
-                        : "Media Library"}
-                    </Title>
-                    {builderTab !== "ingest" &&
-                    builderTab !== "mediaDetail" &&
-                    builderTab !== "playlistEditor" &&
-                    builderTab !== "blockEditor" &&
-                    builderTab !== "channelEditor" &&
-                    builderTab !== "profileEditor" ? (
+                    <Title order={isMobile ? 5 : 4}>{builderTitle}</Title>
+                    {isLibraryBrowserView ? (
                       <Button
                         size="xs"
                         variant="light"
@@ -418,68 +488,51 @@ export default function App() {
                           openProfileEditorRoute();
                         }}
                       >
-                        {currentLibraryPane === "media"
-                          ? "Add Media"
-                          : currentLibraryPane === "playlists"
-                          ? "New Playlist"
-                          : currentLibraryPane === "blocks"
-                          ? "New Block"
-                          : currentLibraryPane === "channels"
-                          ? "New Channel"
-                          : "New Profile"}
+                        {createActionLabel}
                       </Button>
                     ) : null}
                   </Group>
-                  {builderTab !== "ingest" &&
-                  builderTab !== "mediaDetail" &&
-                  builderTab !== "playlistEditor" &&
-                  builderTab !== "blockEditor" &&
-                  builderTab !== "channelEditor" &&
-                  builderTab !== "profileEditor" ? (
-                    <SegmentedControl
-                      value={currentLibraryPane}
-                      onChange={(value) => {
-                        const next =
-                          (value as
-                            | "media"
-                            | "playlists"
-                            | "blocks"
-                            | "channels"
-                            | "profiles") || "media";
-                        if (next === "media" || next === "playlists") {
-                          setMediaLibrarySection(next);
-                          setBuilderTab("media");
-                          return;
+                  {isLibraryBrowserView ? (
+                    isMobile ? (
+                      <Select
+                        value={currentLibraryPane}
+                        onChange={(value) =>
+                          openLibraryPane(
+                            ((value as
+                              | "media"
+                              | "playlists"
+                              | "blocks"
+                              | "channels"
+                              | "profiles") ?? "media")
+                          )
                         }
-                        setMediaLibrarySection(next);
-                        if (next === "blocks") setBuilderTab("block");
-                        if (next === "channels") setBuilderTab("channel");
-                        if (next === "profiles") setBuilderTab("profile");
-                      }}
-                      data={[
-                        {
-                          value: "media",
-                          label: `Media (${serverMedia.length})`,
-                        },
-                        {
-                          value: "playlists",
-                          label: `Playlists (${draftStore.playlists.length})`,
-                        },
-                        {
-                          value: "blocks",
-                          label: `Blocks (${draftStore.blocks.length})`,
-                        },
-                        {
-                          value: "channels",
-                          label: `Channels (${draftStore.channels.length})`,
-                        },
-                        {
-                          value: "profiles",
-                          label: `Profiles (${draftStore.profiles.length})`,
-                        },
-                      ]}
-                      fullWidth
-                    />
+                        data={libraryPaneOptions.map((option) => ({
+                          value: option.value,
+                          label: option.label,
+                        }))}
+                        allowDeselect={false}
+                        className="ops-library-pane-select"
+                      />
+                    ) : (
+                      <ScrollArea
+                        type="never"
+                        scrollbarSize={0}
+                        className="ops-library-pane-scroll"
+                      >
+                        <Group gap="xs" wrap="nowrap" className="ops-library-pane-tabs">
+                          {libraryPaneOptions.map((option) => (
+                            <Button
+                              key={option.value}
+                              size="sm"
+                              variant={currentLibraryPane === option.value ? "filled" : "light"}
+                              onClick={() => openLibraryPane(option.value)}
+                            >
+                              {option.label}
+                            </Button>
+                          ))}
+                        </Group>
+                      </ScrollArea>
+                    )
                   ) : null}
 
                   {builderTab === "ingest" ? (
@@ -575,5 +628,15 @@ export default function App() {
         }}
       />
     </AppShell>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<OpsRoute />} />
+      <Route path="/controls/*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
