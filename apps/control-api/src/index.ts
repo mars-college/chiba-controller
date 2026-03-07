@@ -31,9 +31,11 @@ import {
   ScreenConditionTypeSchema,
   NodeRuntimeCacheInspectResponseSchema,
   NodeRuntimeCacheClearResponseSchema,
+  NodeRuntimeCacheDeleteResponseSchema,
   NodeRuntimeStatusSnapshotSchema,
   OpsNodeCacheInspectResponseSchema,
   OpsNodeCacheClearResponseSchema,
+  OpsNodeCacheDeleteResponseSchema,
   OpsNodeRuntimeStatusResponseSchema,
   NodeRuntimeInputRequestSchema,
   NodeRuntimeInputResponseSchema,
@@ -4126,6 +4128,86 @@ async function main(): Promise<void> {
         host: hostResolved,
         nodePort,
         deletedFiles: parsed.data.deletedFiles,
+        deletedBytes: parsed.data.deletedBytes,
+        before: parsed.data.before,
+        after: parsed.data.after,
+      })
+    );
+  });
+
+  app.delete("/api/ops/nodes/:nodeId/cache/:fileName", async (req, res) => {
+    const params = paramsOf(req);
+    const query = queryOf(req);
+    const nodeId = String(params.nodeId ?? "").trim();
+    const fileName = String(params.fileName ?? "").trim();
+    if (!nodeId) {
+      res.status(400).json({ ok: false, error: "node_id_required" });
+      return;
+    }
+    if (!fileName) {
+      res.status(400).json({ ok: false, error: "file_name_required" });
+      return;
+    }
+    const namespace = readNamespace(req);
+    const registryId = readRegistryId(req, namespace);
+    const timeoutMs = Math.max(
+      200,
+      Math.min(5_000, Number(query.timeoutMs ?? 3_000) || 3_000)
+    );
+    const rows = await db
+      .select()
+      .from(schema.registryNodes)
+      .where(
+        and(
+          eq(schema.registryNodes.registryId, registryId),
+          eq(schema.registryNodes.nodeId, nodeId)
+        )
+      )
+      .limit(1);
+    const node = rows[0] ?? null;
+    if (!node) {
+      res.status(404).json({ ok: false, error: "node_not_found" });
+      return;
+    }
+    const hostResolved = (node.ip || node.host || "").trim();
+    if (!hostResolved) {
+      res.status(400).json({ ok: false, error: "node_host_or_ip_required" });
+      return;
+    }
+    const nodePort = node.nodePort ?? 8080;
+    const remote = await fetchJson({
+      url: `http://${hostResolved}:${nodePort}/api/cache/${encodeURIComponent(fileName)}`,
+      timeoutMs,
+      method: "DELETE",
+    });
+    if (!remote.ok) {
+      const status = remote.status ?? 502;
+      const detail = remote.error ?? `status_${remote.status ?? "unknown"}`;
+      res.status(status >= 400 && status < 500 ? status : 502).json({
+        ok: false,
+        error: "node_cache_delete_failed",
+        detail,
+      });
+      return;
+    }
+    const parsed = NodeRuntimeCacheDeleteResponseSchema.safeParse(remote.data);
+    if (!parsed.success) {
+      res.status(502).json({
+        ok: false,
+        error: "node_cache_delete_payload_invalid",
+        issues: parsed.error.issues,
+      });
+      return;
+    }
+    res.json(
+      OpsNodeCacheDeleteResponseSchema.parse({
+        ok: true,
+        nodeId,
+        registryId,
+        namespace,
+        host: hostResolved,
+        nodePort,
+        fileName: parsed.data.fileName,
         deletedBytes: parsed.data.deletedBytes,
         before: parsed.data.before,
         after: parsed.data.after,

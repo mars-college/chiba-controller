@@ -18,6 +18,7 @@ import {
 } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
 import { PreviewTileCluster, type PreviewTile } from "./PreviewTileCluster";
+import { OpsEmptyState, OpsFormDock, OpsToolbar } from "./ui/OpsSurface";
 
 export type ResourcePickerItem = {
   id: string;
@@ -142,48 +143,52 @@ export function ResourcePickerModal(props: Props) {
   return (
     <Modal opened={props.opened} onClose={props.onClose} title={props.title} fullScreen>
       <Stack gap="sm">
-        {props.kindOptions?.length ? (
-          <Select
-            label="Step 1: Target type"
-            value={props.kind || ""}
-            data={props.kindOptions}
-            onChange={(value) => {
-              if (!value || !props.onKindChange) return;
-              props.onKindChange(value);
-              setSelectedSet(new Set());
-            }}
-          />
-        ) : null}
+        <OpsToolbar sticky className="ops-toolbar-local-sticky">
+          <Stack gap="sm">
+            {props.kindOptions?.length ? (
+              <Select
+                label="Step 1: Target type"
+                value={props.kind || ""}
+                data={props.kindOptions}
+                onChange={(value) => {
+                  if (!value || !props.onKindChange) return;
+                  props.onKindChange(value);
+                  setSelectedSet(new Set());
+                }}
+              />
+            ) : null}
 
-        <TextInput
-          leftSection={<IconSearch size={16} />}
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Step 2: Search by id/title/artist/description"
-        />
-        <Group grow>
-          <SegmentedControl
-            value={badgeFilter}
-            onChange={setBadgeFilter}
-            data={badgeOptions}
-          />
-          <SegmentedControl
-            value={selectionFilter}
-            onChange={(value) =>
-              setSelectionFilter((value as "all" | "selected") || "all")
-            }
-            data={[
-              { value: "all", label: "All" },
-              { value: "selected", label: "Selected" },
-            ]}
-          />
-        </Group>
+            <TextInput
+              leftSection={<IconSearch size={16} />}
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+              placeholder="Step 2: Search by id/title/artist/description"
+            />
+            <Group grow align="flex-start">
+              <SegmentedControl
+                value={badgeFilter}
+                onChange={setBadgeFilter}
+                data={badgeOptions}
+              />
+              <SegmentedControl
+                value={selectionFilter}
+                onChange={(value) =>
+                  setSelectionFilter((value as "all" | "selected") || "all")
+                }
+                data={[
+                  { value: "all", label: "All" },
+                  { value: "selected", label: "Selected" },
+                ]}
+              />
+            </Group>
 
-        <Text size="xs" c="dimmed">
-          Showing {filtered.length} result(s), {selectedOrdered.length} selected
-        </Text>
+            <Text size="xs" c="dimmed">
+              Showing {filtered.length} result(s), {selectedOrdered.length} selected
+            </Text>
+          </Stack>
+        </OpsToolbar>
 
-        <ScrollArea h="62vh">
+        <ScrollArea h="calc(100dvh - 262px)">
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 4 }} spacing="sm">
             {filtered.map((item) => {
               const selected = selectedSet.has(item.id);
@@ -280,38 +285,31 @@ export function ResourcePickerModal(props: Props) {
             })}
           </SimpleGrid>
           {filtered.length === 0 ? (
-            <Paper withBorder p="lg" mt="sm">
-              <Text c="dimmed" size="sm">
-                No targets match the current search/filter set.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No matching targets"
+              description="No targets match the current search or filter combination."
+            />
           ) : null}
         </ScrollArea>
 
-        <Paper withBorder p="sm">
-          <Group justify="space-between" align="center">
-            <Text size="sm" c="dimmed">
+        <OpsFormDock
+          secondaryLabel="Cancel"
+          onSecondary={props.onClose}
+          primaryLabel={
+            props.applyLabel ||
+            (multi ? `Apply (${selectedOrdered.length})` : "Use selected target")
+          }
+          onPrimary={() => {
+            props.onApply(selectedOrdered);
+            props.onClose();
+          }}
+          primaryDisabled={selectedOrdered.length === 0}
+          aside={
+            <Text size="xs" c="dimmed">
               Selected: {selectedOrdered.length}
             </Text>
-            <Group gap="xs">
-              <Button variant="light" onClick={props.onClose}>
-                Cancel
-              </Button>
-              <Button
-                disabled={selectedOrdered.length === 0}
-                onClick={() => {
-                  props.onApply(selectedOrdered);
-                  props.onClose();
-                }}
-              >
-                {props.applyLabel ||
-                  (multi
-                    ? `Apply (${selectedOrdered.length})`
-                    : "Use selected target")}
-              </Button>
-            </Group>
-          </Group>
-        </Paper>
+          }
+        />
       </Stack>
     </Modal>
   );

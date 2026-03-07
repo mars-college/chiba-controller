@@ -13,11 +13,14 @@ import {
   Text,
   Textarea,
   TextInput,
-  Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconBroadcast } from "@tabler/icons-react";
-import { DetailBreadcrumbs } from "../DetailBreadcrumbs";
+import {
+  OpsFormDock,
+  OpsPageHeader,
+  OpsToolbar,
+} from "../ui/OpsSurface";
 import type { Media } from "../../lib/controlApi";
 import type { BuilderMode } from "../../store/uiStore";
 import type { QuickSendTarget } from "../../lib/opsModel";
@@ -125,26 +128,68 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
     webInitialSignature,
   ]);
 
+  const closeMediaDetailRoute = () => {
+    setMediaLibrarySection("media");
+    setBuilderTab("media");
+  };
+
+  const saveMediaChanges = () => {
+    if (!selectedMediaDetail) return;
+    let parsedWeb: Media["web"] | undefined = selectedMediaDetail.web;
+    if (selectedMediaDetail.sourceType === "url") {
+      if (parsedWebDraft.error) {
+        notifications.show({
+          color: "red",
+          title: "Invalid web config",
+          message: parsedWebDraft.error,
+        });
+        return;
+      }
+      parsedWeb = parsedWebDraft.config;
+    }
+    void saveMediaMetadata({
+      id: selectedMediaDetail.id,
+      title: titleDraft,
+      artist: artistDraft,
+      description: descriptionDraft,
+      web: parsedWeb,
+    }).catch((error) => {
+      notifications.show({
+        color: "red",
+        title: "Save media failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="center" wrap="wrap">
-        <Stack gap={4}>
-          <DetailBreadcrumbs
-            items={[
-              {
-                label: "Media Library",
-                onClick: () => {
-                  setMediaLibrarySection("media");
-                  setBuilderTab("media");
-                },
-              },
-              { label: selectedMediaDetail?.title || selectedMediaDetail?.id || "Media Detail" },
-            ]}
-          />
-          <Title order={5}>Media Detail</Title>
-        </Stack>
-        {selectedMediaDetail ? (
-          <Group gap="xs">
+      <OpsPageHeader
+        compact
+        title={selectedMediaDetail?.title || selectedMediaDetail?.id || "Media Detail"}
+        description="Edit media metadata, preview output, and inspect advanced source settings."
+        breadcrumbs={[
+          {
+            label: isMobile ? "Library" : "Media Library",
+            onClick: closeMediaDetailRoute,
+          },
+          {
+            label: "Media",
+            onClick: closeMediaDetailRoute,
+          },
+          {
+            label: selectedMediaDetail?.id || "Media Detail",
+          },
+        ]}
+        actions={
+          <Button variant="light" onClick={closeMediaDetailRoute}>
+            Back
+          </Button>
+        }
+      />
+      {selectedMediaDetail ? (
+        <OpsToolbar>
+          <Group gap="xs" grow={isMobile} wrap="wrap">
             <Button
               color="cyan"
               variant="light"
@@ -160,40 +205,6 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
               Send To Node
             </Button>
             <Button
-              variant="light"
-              loading={mediaSaveBusy}
-              disabled={!hasUnsavedChanges || Boolean(parsedWebDraft.error)}
-              onClick={() => {
-                let parsedWeb: Media["web"] | undefined = selectedMediaDetail.web;
-                if (selectedMediaDetail.sourceType === "url") {
-                  if (parsedWebDraft.error) {
-                    notifications.show({
-                      color: "red",
-                      title: "Invalid web config",
-                      message: parsedWebDraft.error,
-                    });
-                    return;
-                  }
-                  parsedWeb = parsedWebDraft.config;
-                }
-                void saveMediaMetadata({
-                  id: selectedMediaDetail.id,
-                  title: titleDraft,
-                  artist: artistDraft,
-                  description: descriptionDraft,
-                  web: parsedWeb,
-                }).catch((error) => {
-                  notifications.show({
-                    color: "red",
-                    title: "Save media failed",
-                    message: error instanceof Error ? error.message : String(error),
-                  });
-                });
-              }}
-            >
-              Save Changes
-            </Button>
-            <Button
               color="red"
               variant="light"
               loading={mediaDeleteBusy}
@@ -202,8 +213,8 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
               Delete Media
             </Button>
           </Group>
-        ) : null}
-      </Group>
+        </OpsToolbar>
+      ) : null}
       {selectedMediaDetail ? (
         <Card withBorder p="md">
           <Stack>
@@ -330,6 +341,27 @@ export function MediaDetailView({ vm }: { vm: MediaDetailViewVm }) {
           </Text>
         </Paper>
       )}
+      {selectedMediaDetail ? (
+        <OpsFormDock
+          secondaryLabel="Back"
+          onSecondary={closeMediaDetailRoute}
+          primaryLabel="Save Changes"
+          onPrimary={saveMediaChanges}
+          primaryDisabled={!hasUnsavedChanges || Boolean(parsedWebDraft.error)}
+          primaryLoading={mediaSaveBusy}
+          aside={
+            parsedWebDraft.error ? (
+              <Text size="xs" c="red">
+                Fix the web launch config before saving.
+              </Text>
+            ) : (
+              <Text size="xs" c="dimmed">
+                {hasUnsavedChanges ? "Unsaved changes" : "All changes saved"}
+              </Text>
+            )
+          }
+        />
+      ) : null}
     </Stack>
   );
 }

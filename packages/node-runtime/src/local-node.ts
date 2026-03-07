@@ -532,6 +532,31 @@ async function clearCacheFiles(cacheDir: string): Promise<{
   return { deletedFiles, deletedBytes };
 }
 
+function normalizeCacheFileName(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (!trimmed) return "";
+  if (trimmed === "." || trimmed === "..") return "";
+  return trimmed === path.basename(trimmed) ? trimmed : "";
+}
+
+async function deleteCacheFile(cacheDir: string, fileName: string): Promise<{
+  fileName: string;
+  deletedBytes: number;
+}> {
+  await ensureDir(cacheDir);
+  const normalized = normalizeCacheFileName(fileName);
+  if (!normalized) {
+    throw new Error("cache_file_name_invalid");
+  }
+  const filePath = path.join(cacheDir, normalized);
+  const stat = await fs.stat(filePath).catch(() => null);
+  if (!stat || !stat.isFile()) {
+    throw new Error("cache_file_not_found");
+  }
+  await fs.unlink(filePath);
+  return { fileName: normalized, deletedBytes: stat.size };
+}
+
 async function copyFileCached(args: {
   sourcePath: string;
   destPath: string;
@@ -1775,6 +1800,40 @@ function createNodeApiServer(args: {
         sendJson(res, 500, {
           ok: false,
           error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.startsWith("/api/cache/")) {
+      (async () => {
+        const requestedFileName = decodeURIComponent(
+          url.pathname.slice("/api/cache/".length)
+        );
+        const before = await args.getCacheSummary();
+        const deleted = await deleteCacheFile(args.cacheDir, requestedFileName);
+        const after = await args.getCacheSummary();
+        sendJson(res, 200, {
+          ok: true,
+          nodeId: args.nodeId,
+          fileName: deleted.fileName,
+          deletedBytes: deleted.deletedBytes,
+          before,
+          after,
+        });
+      })().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "cache_file_name_invalid") {
+          sendJson(res, 400, { ok: false, error: message });
+          return;
+        }
+        if (message === "cache_file_not_found") {
+          sendJson(res, 404, { ok: false, error: message });
+          return;
+        }
+        sendJson(res, 500, {
+          ok: false,
+          error: message,
         });
       });
       return;

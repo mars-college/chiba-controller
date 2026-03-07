@@ -593,6 +593,20 @@ export type NodeRuntimeCacheClearResponse = z.infer<
   typeof NodeRuntimeCacheClearResponseSchema
 >;
 
+export const NodeRuntimeCacheDeleteResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    nodeId: z.string().min(1),
+    fileName: z.string().min(1),
+    deletedBytes: z.number().int().nonnegative(),
+    before: NodeCacheSummarySchema,
+    after: NodeCacheSummarySchema,
+  })
+  .strict();
+export type NodeRuntimeCacheDeleteResponse = z.infer<
+  typeof NodeRuntimeCacheDeleteResponseSchema
+>;
+
 export const OpsNodeCacheInspectResponseSchema = z
   .object({
     ok: z.literal(true),
@@ -624,6 +638,24 @@ export const OpsNodeCacheClearResponseSchema = z
   .strict();
 export type OpsNodeCacheClearResponse = z.infer<
   typeof OpsNodeCacheClearResponseSchema
+>;
+
+export const OpsNodeCacheDeleteResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    nodeId: z.string().min(1),
+    registryId: z.string().min(1),
+    namespace: z.string().min(1),
+    host: z.string().min(1),
+    nodePort: z.number().int().positive(),
+    fileName: z.string().min(1),
+    deletedBytes: z.number().int().nonnegative(),
+    before: NodeCacheSummarySchema,
+    after: NodeCacheSummarySchema,
+  })
+  .strict();
+export type OpsNodeCacheDeleteResponse = z.infer<
+  typeof OpsNodeCacheDeleteResponseSchema
 >;
 
 export const OpsNodeRuntimeStatusResponseSchema = z

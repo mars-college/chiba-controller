@@ -17,6 +17,7 @@ import {
   bootstrapOpsNodeStream,
   clearOpsNodeCache,
   createOpsNode,
+  deleteOpsNodeCacheFile,
   deleteOpsNode,
   downloadOpsNodesExport,
   fetchDesiredScreenAssignments,
@@ -173,14 +174,6 @@ export function useOpsAppModel() {
   const setFleetView = useOpsUiStore((s) => s.setFleetView);
   const mediaLibrarySection = useOpsUiStore((s) => s.mediaLibrarySection);
   const setMediaLibrarySection = useOpsUiStore((s) => s.setMediaLibrarySection);
-  const playlistLibraryView = useOpsUiStore((s) => s.playlistLibraryView);
-  const setPlaylistLibraryView = useOpsUiStore((s) => s.setPlaylistLibraryView);
-  const blockLibraryView = useOpsUiStore((s) => s.blockLibraryView);
-  const setBlockLibraryView = useOpsUiStore((s) => s.setBlockLibraryView);
-  const channelLibraryView = useOpsUiStore((s) => s.channelLibraryView);
-  const setChannelLibraryView = useOpsUiStore((s) => s.setChannelLibraryView);
-  const profileLibraryView = useOpsUiStore((s) => s.profileLibraryView);
-  const setProfileLibraryView = useOpsUiStore((s) => s.setProfileLibraryView);
   const mediaPickerOpen = useOpsUiStore((s) => s.mediaPickerOpen);
   const setMediaPickerOpen = useOpsUiStore((s) => s.setMediaPickerOpen);
   const targetPickerOpen = useOpsUiStore((s) => s.targetPickerOpen);
@@ -226,7 +219,6 @@ export function useOpsAppModel() {
   );
   const [fleetPage, setFleetPage] = useState(1);
   const [mediaLibraryPage, setMediaLibraryPage] = useState(1);
-  const [mediaTablePage, setMediaTablePage] = useState(1);
   const [playlistTablePage, setPlaylistTablePage] = useState(1);
   const [blockTablePage, setBlockTablePage] = useState(1);
   const [channelTablePage, setChannelTablePage] = useState(1);
@@ -344,6 +336,96 @@ export function useOpsAppModel() {
     useState<DraftChannel>(EMPTY_CHANNEL_DRAFT);
   const [profileDraft, setProfileDraft] =
     useState<DraftProfile>(EMPTY_PROFILE_DRAFT);
+
+  const resetIngestComposer = useCallback(() => {
+    setIngestBusy(false);
+    setIngestSource("youtube");
+    setIngestStep(1);
+    setYoutubeUrl("");
+    setYoutubeTitle("");
+    setYoutubeArtist("");
+    setYoutubeDescription("");
+    setWebUrl("");
+    setWebTitle("");
+    setWebArtist("");
+    setWebDescription("");
+    setWebCache(true);
+    setWebLaunchProfile("none");
+    setWebLaunchArgsEntries([]);
+    setEdenInput("");
+    setEdenCreatePlaylist(false);
+    setEdenArtist("");
+    setEdenDescription("");
+    setUploadFiles([]);
+    setUploadTitleOverrides([]);
+    setUploadArtistOverrides([]);
+    setUploadDescriptionOverrides([]);
+    setUploadArtist("");
+    setUploadDescription("");
+    setUploadCreatePlaylist(false);
+    setUploadPlaylistTitle("");
+    setUploadDropError(null);
+  }, []);
+
+  const resetMediaBrowserState = useCallback(() => {
+    setServerMediaQuery("");
+    setServerMediaSourceFilter("all");
+    setSelectedServerMediaId(null);
+    setMediaDetailId(null);
+    setMediaLibraryPage(1);
+    setMediaFeedLimit(24);
+  }, []);
+
+  const resetPlaylistBrowserState = useCallback(() => {
+    setServerMediaQuery("");
+    setSelectedPlaylistId(null);
+    setPlaylistTablePage(1);
+  }, []);
+
+  const resetBlockBrowserState = useCallback(() => {
+    setServerMediaQuery("");
+    setSelectedBlockId(null);
+    setBlockTablePage(1);
+  }, []);
+
+  const resetChannelBrowserState = useCallback(() => {
+    setServerMediaQuery("");
+    setSelectedChannelId(null);
+    setChannelTablePage(1);
+  }, []);
+
+  const resetProfileBrowserState = useCallback(() => {
+    setServerMediaQuery("");
+    setSelectedProfileId(null);
+    setProfileTablePage(1);
+  }, []);
+
+  const resetFleetWorkspaceState = useCallback(() => {
+    setFleetView("table");
+    setNodeEditorOpen(false);
+    setAssignTargetOpen(false);
+    setActiveNodeId(null);
+    setNodeStash(null);
+    setNodeStashBusy(false);
+    setNodeStashClearing(false);
+    setNodeStashError(null);
+    setNodeStashFilterQuery("");
+    setNodeStashSort("updated_desc");
+    setNodeRuntimeStatus(null);
+    setNodeRuntimeBusy(false);
+    setNodeRuntimeError(null);
+    setNodeInputBusy(false);
+    setNodeInputError(null);
+    setNodeInputLastAction(null);
+    setNodeBootstrapBusy(false);
+    setNodeBootstrapError(null);
+    setNodeBootstrapResult(null);
+    setNodeBootstrapStdout("");
+    setNodeBootstrapStderr("");
+    setNodeDisplayModeBusy(false);
+    setNodeDisplayModeError(null);
+    setNodeDisplayModeResult(null);
+  }, [setAssignTargetOpen, setNodeEditorOpen, setFleetView]);
 
   const refreshCatalogAndProfiles = useCallback(async () => {
     try {
@@ -1038,6 +1120,48 @@ export function useOpsAppModel() {
       setNodeStashClearing(false);
     }
   }, [workspaceSingleNodeId]);
+
+  const deleteNodeStashItem = useCallback(
+    async (fileName: string) => {
+      const nodeId = workspaceSingleNodeId.trim();
+      const normalizedFileName = readString(fileName);
+      if (!nodeId || !normalizedFileName) return;
+      const ok = window.confirm(
+        `Delete cached file "${normalizedFileName}" from node "${nodeId}"?`
+      );
+      if (!ok) return;
+      setNodeStashClearing(true);
+      setNodeStashError(null);
+      try {
+        const result = await deleteOpsNodeCacheFile(nodeId, normalizedFileName);
+        setNodeStash({
+          ok: true,
+          nodeId: result.nodeId,
+          registryId: result.registryId,
+          namespace: result.namespace,
+          host: result.host,
+          nodePort: result.nodePort,
+          cache: result.after,
+        });
+        notifications.show({
+          color: "teal",
+          title: "Cached file removed",
+          message: `${result.fileName} • ${formatBytes(result.deletedBytes)} reclaimed`,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setNodeStashError(message);
+        notifications.show({
+          color: "red",
+          title: "Failed to delete cached file",
+          message,
+        });
+      } finally {
+        setNodeStashClearing(false);
+      }
+    },
+    [workspaceSingleNodeId]
+  );
 
   useEffect(() => {
     if (!workspaceSingleNodeId) {
@@ -3209,13 +3333,55 @@ export function useOpsAppModel() {
     return mediaLibrarySection;
   }, [builderTab, mediaLibrarySection]);
 
+  const builderFeatureKey = useMemo(() => {
+    if (builderTab === "ingest") return "ingest";
+    if (builderTab === "media" || builderTab === "mediaDetail") return "media";
+    if (builderTab === "playlistEditor") return "playlists";
+    if (builderTab === "block" || builderTab === "blockEditor") return "blocks";
+    if (builderTab === "channel" || builderTab === "channelEditor")
+      return "channels";
+    return "profiles";
+  }, [builderTab]);
+
+  const previousBuilderFeatureKeyRef = useRef(builderFeatureKey);
+  useEffect(() => {
+    const previous = previousBuilderFeatureKeyRef.current;
+    if (previous === builderFeatureKey) return;
+    if (previous === "ingest") {
+      resetIngestComposer();
+    } else if (previous === "media") {
+      resetMediaBrowserState();
+    } else if (previous === "playlists") {
+      resetPlaylistBrowserState();
+    } else if (previous === "blocks") {
+      resetBlockBrowserState();
+    } else if (previous === "channels") {
+      resetChannelBrowserState();
+    } else if (previous === "profiles") {
+      resetProfileBrowserState();
+    }
+    previousBuilderFeatureKeyRef.current = builderFeatureKey;
+  }, [
+    builderFeatureKey,
+    resetBlockBrowserState,
+    resetChannelBrowserState,
+    resetIngestComposer,
+    resetMediaBrowserState,
+    resetPlaylistBrowserState,
+    resetProfileBrowserState,
+  ]);
+
+  const previousMainTabRef = useRef(mainTab);
+  useEffect(() => {
+    const previous = previousMainTabRef.current;
+    if (previous === mainTab) return;
+    if (previous === "fleet") resetFleetWorkspaceState();
+    previousMainTabRef.current = mainTab;
+  }, [mainTab, resetFleetWorkspaceState]);
+
   const fleetPageCount = useMemo(
     () => Math.max(1, Math.ceil(filteredRows.length / TABLE_PAGE_SIZE.fleet)),
     [filteredRows.length]
-  );
-  const mediaTablePageCount = useMemo(
-    () => Math.max(1, Math.ceil(serverMedia.length / TABLE_PAGE_SIZE.media)),
-    [serverMedia.length]
   );
   const mediaLibraryPageCount = useMemo(
     () =>
@@ -3256,9 +3422,6 @@ export function useOpsAppModel() {
     setFleetPage((prev) => Math.min(prev, fleetPageCount));
   }, [fleetPageCount]);
   useEffect(() => {
-    setMediaTablePage((prev) => Math.min(prev, mediaTablePageCount));
-  }, [mediaTablePageCount]);
-  useEffect(() => {
     setMediaLibraryPage((prev) => Math.min(prev, mediaLibraryPageCount));
   }, [mediaLibraryPageCount]);
   useEffect(() => {
@@ -3277,10 +3440,6 @@ export function useOpsAppModel() {
   const fleetRowsPage = useMemo(
     () => paginateRows(filteredRows, fleetPage, TABLE_PAGE_SIZE.fleet),
     [filteredRows, fleetPage]
-  );
-  const mediaTableRowsPage = useMemo(
-    () => paginateRows(serverMedia, mediaTablePage, TABLE_PAGE_SIZE.media),
-    [mediaTablePage, serverMedia]
   );
   const mediaRowsPage = useMemo(
     () =>
@@ -3722,25 +3881,6 @@ export function useOpsAppModel() {
   }, []);
 
   useEffect(() => {
-    if (builderTab !== "playlist") return;
-    if (
-      selectedPlaylistId &&
-      draftStore.playlists.some((row) => row.id === selectedPlaylistId)
-    )
-      return;
-    const first = draftStore.playlists[0];
-    if (!first) return;
-    setSelectedPlaylistId(first.id);
-    setPlaylistDraft({
-      id: first.id,
-      title: first.title,
-      artist: first.artist,
-      description: first.description,
-      mediaIds: [...first.mediaIds],
-    });
-  }, [builderTab, draftStore.playlists, selectedPlaylistId]);
-
-  useEffect(() => {
     if (builderTab !== "profile") return;
     if (
       selectedProfileId &&
@@ -3795,6 +3935,7 @@ export function useOpsAppModel() {
     nodeStashClearing,
     nodeStash,
     clearNodeStash,
+    deleteNodeStashItem,
     nodeStashError,
     sendNodeInputAction,
     nodeInputBusy,
@@ -3876,6 +4017,7 @@ export function useOpsAppModel() {
     fleetPage,
     setFleetPage,
     fleetPageCount,
+    mergedMedia,
     mergedMediaById,
     mergedPlaylists,
   };
@@ -3954,8 +4096,6 @@ export function useOpsAppModel() {
     builderTab,
     loadingSnapshot,
     mediaLibrarySection,
-    playlistLibraryView,
-    setPlaylistLibraryView,
     serverMediaFiltered,
     serverMedia,
     refreshServerSnapshot,
@@ -3988,7 +4128,6 @@ export function useOpsAppModel() {
     mergedMediaById,
     deletePlaylistDraft,
     playlistRowsPage,
-    selectedPlaylistId,
     playlistTablePage,
     setPlaylistTablePage,
     playlistTablePageCount,
@@ -4027,27 +4166,6 @@ export function useOpsAppModel() {
     saveMediaMetadata,
   };
 
-  const mediaPlaylistTablesVm = {
-    builderTab,
-    mediaTableRowsPage,
-    setSelectedServerMediaId,
-    setMediaDetailId,
-    setBuilderTab,
-    serverMediaCount: serverMedia.length,
-    mediaTablePage,
-    setMediaTablePage,
-    mediaTablePageCount,
-    isMobile: Boolean(isMobile),
-    playlistRowsPage,
-    openPlaylistEditorRoute,
-    selectedPlaylistId,
-    deletePlaylistDraft,
-    playlistCount: playlistRowsFiltered.length,
-    playlistTablePage,
-    setPlaylistTablePage,
-    playlistTablePageCount,
-  };
-
   const containerEditorsVm = {
     builderTab,
     draftStore,
@@ -4058,8 +4176,6 @@ export function useOpsAppModel() {
     isMobile: Boolean(isMobile),
     serverMediaQuery,
     setServerMediaQuery,
-    blockLibraryView,
-    setBlockLibraryView,
     blockRowsPage,
     blockCount: blockRowsFiltered.length,
     selectedBlockId,
@@ -4071,8 +4187,6 @@ export function useOpsAppModel() {
     setBlockDraft,
     openBlockEditorRoute,
     closeBlockEditorRoute,
-    channelLibraryView,
-    setChannelLibraryView,
     channelRowsPage,
     channelCount: channelRowsFiltered.length,
     selectedChannelId,
@@ -4084,8 +4198,6 @@ export function useOpsAppModel() {
     setChannelDraft,
     openChannelEditorRoute,
     closeChannelEditorRoute,
-    profileLibraryView,
-    setProfileLibraryView,
     profileRowsPage,
     profileCount: profileRowsFiltered.length,
     selectedProfileId,
@@ -4118,14 +4230,6 @@ export function useOpsAppModel() {
     setFleetView,
     mediaLibrarySection,
     setMediaLibrarySection,
-    playlistLibraryView,
-    setPlaylistLibraryView,
-    blockLibraryView,
-    setBlockLibraryView,
-    channelLibraryView,
-    setChannelLibraryView,
-    profileLibraryView,
-    setProfileLibraryView,
     mediaPickerOpen,
     setMediaPickerOpen,
     targetPickerOpen,
@@ -4165,6 +4269,7 @@ export function useOpsAppModel() {
     refreshNodeStash,
     refreshNodeRuntime,
     clearNodeStash,
+    deleteNodeStashItem,
     openCreateNodeEditor,
     openEditNodeEditor,
     saveNodeDraft,
@@ -4211,13 +4316,11 @@ export function useOpsAppModel() {
     runningIngestCount,
     currentLibraryPane,
     fleetPageCount,
-    mediaTablePageCount,
     playlistTablePageCount,
     blockTablePageCount,
     channelTablePageCount,
     profileTablePageCount,
     fleetRowsPage,
-    mediaTableRowsPage,
     playlistRowsPage,
     blockRowsPage,
     channelRowsPage,
@@ -4240,7 +4343,6 @@ export function useOpsAppModel() {
     mediaLibraryVm,
     playlistEditorVm,
     mediaDetailVm,
-    mediaPlaylistTablesVm,
     containerEditorsVm,
     profiles,
     setProfiles,
@@ -4290,8 +4392,6 @@ export function useOpsAppModel() {
     setPlaylistDropIndex,
     fleetPage,
     setFleetPage,
-    mediaTablePage,
-    setMediaTablePage,
     playlistTablePage,
     setPlaylistTablePage,
     blockTablePage,

@@ -18,6 +18,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks'
 import { IconSearch } from '@tabler/icons-react'
 import { mediaStreamUrl, type Media } from '../lib/controlApi'
+import { OpsEmptyState, OpsFormDock, OpsToolbar } from './ui/OpsSurface'
 
 type Props = {
   opened: boolean
@@ -155,42 +156,46 @@ export function MediaPickerModal(props: Props) {
       title="Pick Media"
     >
       <Stack>
-        <TextInput
-          leftSection={<IconSearch size={16} />}
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Search by id, title, artist, description, source path/url"
-        />
-        <Group grow>
-          <SegmentedControl
-            value={kindFilter}
-            onChange={(value) =>
-              setKindFilter((value as 'all' | 'image' | 'video' | 'audio' | 'web') || 'all')
-            }
-            data={[
-              { value: 'all', label: 'All Types' },
-              { value: 'video', label: 'Video' },
-              { value: 'image', label: 'Image' },
-              { value: 'audio', label: 'Audio' },
-              { value: 'web', label: 'Web' },
-            ]}
-          />
-          <SegmentedControl
-            value={selectionFilter}
-            onChange={(value) =>
-              setSelectionFilter((value as 'all' | 'selected') || 'all')
-            }
-            data={[
-              { value: 'all', label: 'All' },
-              { value: 'selected', label: 'Selected' },
-            ]}
-          />
-        </Group>
-        <Text size="xs" c="dimmed">
-          Showing {Math.min(visibleRows.length, filtered.length)} of {filtered.length} result(s),{' '}
-          {selectedSet.size} selected
-        </Text>
-        <ScrollArea h="62vh">
+        <OpsToolbar sticky className="ops-toolbar-local-sticky">
+          <Stack gap="sm">
+            <TextInput
+              leftSection={<IconSearch size={16} />}
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+              placeholder="Search by id, title, artist, description, source path/url"
+            />
+            <Group grow align="flex-start">
+              <SegmentedControl
+                value={kindFilter}
+                onChange={(value) =>
+                  setKindFilter((value as 'all' | 'image' | 'video' | 'audio' | 'web') || 'all')
+                }
+                data={[
+                  { value: 'all', label: 'All Types' },
+                  { value: 'video', label: 'Video' },
+                  { value: 'image', label: 'Image' },
+                  { value: 'audio', label: 'Audio' },
+                  { value: 'web', label: 'Web' },
+                ]}
+              />
+              <SegmentedControl
+                value={selectionFilter}
+                onChange={(value) =>
+                  setSelectionFilter((value as 'all' | 'selected') || 'all')
+                }
+                data={[
+                  { value: 'all', label: 'All' },
+                  { value: 'selected', label: 'Selected' },
+                ]}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">
+              Showing {Math.min(visibleRows.length, filtered.length)} of {filtered.length} result(s),{' '}
+              {selectedSet.size} selected
+            </Text>
+          </Stack>
+        </OpsToolbar>
+        <ScrollArea h="calc(100dvh - 262px)">
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 4 }} spacing="sm">
             {visibleRows.map((row) => {
               const selected = selectedSet.has(row.id)
@@ -267,11 +272,10 @@ export function MediaPickerModal(props: Props) {
             })}
           </SimpleGrid>
           {filtered.length === 0 ? (
-            <Paper withBorder p="lg" mt="sm">
-              <Text c="dimmed" size="sm">
-                No media matches the current search/filter set.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No media found"
+              description="No media matches the current search or filter combination."
+            />
           ) : null}
           {visibleRows.length < filtered.length ? (
             <Group justify="center" mt="md">
@@ -286,27 +290,21 @@ export function MediaPickerModal(props: Props) {
             </Group>
           ) : null}
         </ScrollArea>
-        <Paper withBorder p="sm">
-          <Group justify="space-between" align="center">
-            <Text size="sm" c="dimmed">
+        <OpsFormDock
+          secondaryLabel="Cancel"
+          onSecondary={props.onClose}
+          primaryLabel={`Add To Playlist (${selectedOrdered.length})`}
+          onPrimary={() => {
+            props.onApply(selectedOrdered)
+            props.onClose()
+          }}
+          primaryDisabled={selectedOrdered.length === 0}
+          aside={
+            <Text size="xs" c="dimmed">
               Selected: {selectedOrdered.length}
             </Text>
-            <Group gap="xs">
-              <Button variant="light" onClick={props.onClose}>
-                Cancel
-              </Button>
-              <Button
-                disabled={selectedOrdered.length === 0}
-                onClick={() => {
-                  props.onApply(selectedOrdered)
-                  props.onClose()
-                }}
-              >
-                Add To Playlist ({selectedOrdered.length})
-              </Button>
-            </Group>
-          </Group>
-        </Paper>
+          }
+        />
       </Stack>
     </Modal>
   )

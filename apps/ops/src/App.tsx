@@ -15,7 +15,6 @@ import { IngestSection } from "./components/builder/IngestSection";
 import { ContainerEditorsView } from "./components/builder/ContainerEditorsView";
 import { MediaDetailView } from "./components/builder/MediaDetailView";
 import { MediaLibraryView } from "./components/builder/MediaLibraryView";
-import { MediaPlaylistTablesView } from "./components/builder/MediaPlaylistTablesView";
 import { PlaylistEditorView } from "./components/builder/PlaylistEditorView";
 import { MediaPickerModal } from "./components/MediaPickerModal";
 import { NodeInspectorModal } from "./components/NodeInspectorModal";
@@ -25,6 +24,7 @@ import { QuickSendModal } from "./components/QuickSendModal";
 import { ResourcePickerModal } from "./components/ResourcePickerModal";
 import { FleetScreen } from "./components/screens/FleetScreen";
 import { LightsScreen } from "./components/screens/LightsScreen";
+import { OpsPageHeader, OpsToolbar } from "./components/ui/OpsSurface";
 import { useOpsAppModel } from "./hooks/useOpsAppModel";
 
 function OpsRoute() {
@@ -41,8 +41,6 @@ function OpsRoute() {
     setFleetView,
     mediaLibrarySection,
     setMediaLibrarySection,
-    playlistLibraryView,
-    setPlaylistLibraryView,
     mediaPickerOpen,
     setMediaPickerOpen,
     targetPickerOpen,
@@ -121,13 +119,11 @@ function OpsRoute() {
     runningIngestCount,
     currentLibraryPane,
     fleetPageCount,
-    mediaTablePageCount,
     playlistTablePageCount,
     blockTablePageCount,
     channelTablePageCount,
     profileTablePageCount,
     fleetRowsPage,
-    mediaTableRowsPage,
     playlistRowsPage,
     blockRowsPage,
     channelRowsPage,
@@ -147,7 +143,6 @@ function OpsRoute() {
     mediaLibraryVm,
     playlistEditorVm,
     mediaDetailVm,
-    mediaPlaylistTablesVm,
     containerEditorsVm,
     profiles,
     setProfiles,
@@ -194,8 +189,6 @@ function OpsRoute() {
     setPlaylistDropIndex,
     fleetPage,
     setFleetPage,
-    mediaTablePage,
-    setMediaTablePage,
     playlistTablePage,
     setPlaylistTablePage,
     blockTablePage,
@@ -348,26 +341,43 @@ function OpsRoute() {
     builderTab !== "blockEditor" &&
     builderTab !== "channelEditor" &&
     builderTab !== "profileEditor";
+  const showBuilderHeader = builderTab === "ingest" && !isMobile;
   const builderTitle =
     builderTab === "ingest"
       ? "Add Media"
       : builderTab === "playlistEditor"
-      ? "Playlist Editor"
+      ? isMobile
+        ? "Playlists"
+        : "Playlist Editor"
       : builderTab === "blockEditor"
-      ? "Block Editor"
+      ? isMobile
+        ? "Blocks"
+        : "Block Editor"
       : builderTab === "channelEditor"
-      ? "Channel Editor"
+      ? isMobile
+        ? "Channels"
+        : "Channel Editor"
       : builderTab === "profileEditor"
-      ? "Profile Editor"
+      ? isMobile
+        ? "Profiles"
+        : "Profile Editor"
       : builderTab === "mediaDetail"
-      ? "Media Detail"
+      ? isMobile
+        ? "Media"
+        : "Media Detail"
       : isMobile
       ? "Library"
       : "Media Library";
   const createActionLabel = isMobile
     ? currentLibraryPane === "media"
-      ? "Add"
-      : "New"
+      ? "Add Media"
+      : currentLibraryPane === "playlists"
+      ? "New Playlist"
+      : currentLibraryPane === "blocks"
+      ? "New Block"
+      : currentLibraryPane === "channels"
+      ? "New Channel"
+      : "New Profile"
     : currentLibraryPane === "media"
     ? "Add Media"
     : currentLibraryPane === "playlists"
@@ -377,6 +387,25 @@ function OpsRoute() {
     : currentLibraryPane === "channels"
     ? "New Channel"
     : "New Profile";
+  const openCurrentCreateRoute = () => {
+    if (currentLibraryPane === "media") {
+      setBuilderTab("ingest");
+      return;
+    }
+    if (currentLibraryPane === "playlists") {
+      openPlaylistEditorRoute();
+      return;
+    }
+    if (currentLibraryPane === "blocks") {
+      openBlockEditorRoute();
+      return;
+    }
+    if (currentLibraryPane === "channels") {
+      openChannelEditorRoute();
+      return;
+    }
+    openProfileEditorRoute();
+  };
 
   return (
     <AppShell
@@ -462,96 +491,89 @@ function OpsRoute() {
             <SimpleGrid cols={1} spacing="md" className="ops-builder-grid">
               <Paper withBorder radius="md" p="md" className="ops-builder-panel">
                 <Stack gap="md" className="ops-builder-content">
-                  <Group justify="space-between" align="center" wrap="wrap">
-                    <Title order={isMobile ? 5 : 4}>{builderTitle}</Title>
-                    {isLibraryBrowserView ? (
-                      <Button
-                        size="xs"
-                        variant="light"
-                        onClick={() => {
-                          if (currentLibraryPane === "media") {
-                            setBuilderTab("ingest");
-                            return;
-                          }
-                          if (currentLibraryPane === "playlists") {
-                            openPlaylistEditorRoute();
-                            return;
-                          }
-                          if (currentLibraryPane === "blocks") {
-                            openBlockEditorRoute();
-                            return;
-                          }
-                          if (currentLibraryPane === "channels") {
-                            openChannelEditorRoute();
-                            return;
-                          }
-                          openProfileEditorRoute();
-                        }}
-                      >
-                        {createActionLabel}
-                      </Button>
-                    ) : null}
-                  </Group>
+                  {showBuilderHeader ? (
+                    <OpsPageHeader
+                      title={builderTitle}
+                      compact
+                      actions={null}
+                    />
+                  ) : null}
                   {isLibraryBrowserView ? (
                     isMobile ? (
-                      <Select
-                        value={currentLibraryPane}
-                        onChange={(value) =>
-                          openLibraryPane(
-                            ((value as
-                              | "media"
-                              | "playlists"
-                              | "blocks"
-                              | "channels"
-                              | "profiles") ?? "media")
-                          )
-                        }
-                        data={libraryPaneOptions.map((option) => ({
-                          value: option.value,
-                          label: option.label,
-                        }))}
-                        allowDeselect={false}
-                        className="ops-library-pane-select"
-                      />
-                    ) : (
-                      <ScrollArea
-                        type="never"
-                        scrollbarSize={0}
-                        className="ops-library-pane-scroll"
-                      >
-                        <Group gap="xs" wrap="nowrap" className="ops-library-pane-tabs">
-                          {libraryPaneOptions.map((option) => (
-                            <Button
-                              key={option.value}
-                              size="sm"
-                              variant={currentLibraryPane === option.value ? "filled" : "light"}
-                              onClick={() => openLibraryPane(option.value)}
-                            >
-                              {option.label}
-                            </Button>
-                          ))}
+                      <OpsToolbar sticky className="ops-library-mobile-toolbar">
+                        <Group align="center" gap="xs" wrap="nowrap">
+                          <Select
+                            value={currentLibraryPane}
+                            onChange={(value) =>
+                              openLibraryPane(
+                                ((value as
+                                  | "media"
+                                  | "playlists"
+                                  | "blocks"
+                                  | "channels"
+                                  | "profiles") ?? "media")
+                              )
+                            }
+                            data={libraryPaneOptions.map((option) => ({
+                              value: option.value,
+                              label: option.label,
+                            }))}
+                            allowDeselect={false}
+                            className="ops-library-pane-select"
+                          />
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={openCurrentCreateRoute}
+                          >
+                            {createActionLabel}
+                          </Button>
                         </Group>
-                      </ScrollArea>
+                      </OpsToolbar>
+                    ) : (
+                      <OpsToolbar sticky className="ops-library-pane-toolbar">
+                        <Group justify="space-between" align="center" gap="sm" wrap="nowrap">
+                          <ScrollArea
+                            type="never"
+                            scrollbarSize={0}
+                            className="ops-library-pane-scroll"
+                          >
+                            <Group gap="xs" wrap="nowrap" className="ops-library-pane-tabs">
+                              {libraryPaneOptions.map((option) => (
+                                <Button
+                                  key={option.value}
+                                  size="sm"
+                                  variant={currentLibraryPane === option.value ? "filled" : "light"}
+                                  onClick={() => openLibraryPane(option.value)}
+                                >
+                                  {option.label}
+                                </Button>
+                              ))}
+                            </Group>
+                          </ScrollArea>
+                          <Button size="sm" variant="light" onClick={openCurrentCreateRoute}>
+                            {createActionLabel}
+                          </Button>
+                        </Group>
+                      </OpsToolbar>
                     )
                   ) : null}
 
                   {builderTab === "ingest" ? (
-                    <IngestSection vm={ingestSectionVm} />
+                    <IngestSection key="builder-ingest" vm={ingestSectionVm} />
                   ) : null}
 
-                  <MediaLibraryView vm={mediaLibraryVm} />
+                  <MediaLibraryView key={`library-${currentLibraryPane}`} vm={mediaLibraryVm} />
 
                   {builderTab === "playlistEditor" ? (
-                    <PlaylistEditorView vm={playlistEditorVm} />
+                    <PlaylistEditorView key="playlist-editor" vm={playlistEditorVm} />
                   ) : null}
 
                   {builderTab === "mediaDetail" ? (
-                    <MediaDetailView vm={mediaDetailVm} />
+                    <MediaDetailView key="media-detail" vm={mediaDetailVm} />
                   ) : null}
 
-                  <MediaPlaylistTablesView vm={mediaPlaylistTablesVm} />
-
-                  <ContainerEditorsView vm={containerEditorsVm} />
+                  <ContainerEditorsView key={`container-${builderTab}`} vm={containerEditorsVm} />
                 </Stack>
               </Paper>
             </SimpleGrid>

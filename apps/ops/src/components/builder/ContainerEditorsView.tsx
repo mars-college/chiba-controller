@@ -6,23 +6,18 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  Anchor,
   Badge,
-  Breadcrumbs,
   Button,
   Card,
   Group,
   Image,
-  Pagination,
   Paper,
   ScrollArea,
   SegmentedControl,
   SimpleGrid,
   Stack,
-  Table,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconPencil, IconSearch, IconTrash } from "@tabler/icons-react";
@@ -42,6 +37,13 @@ import {
 import type { ResourcePickerItem } from "../ResourcePickerModal";
 import { ResourcePickerModal } from "../ResourcePickerModal";
 import { PreviewTileCluster } from "../PreviewTileCluster";
+import {
+  OpsEmptyState,
+  OpsFormDock,
+  OpsPaginationBar,
+  OpsPageHeader,
+  OpsToolbar,
+} from "../ui/OpsSurface";
 import { ReorderableSequenceItem } from "./ReorderableSequenceItem";
 import { TargetPickerRow } from "./TargetPickerRow";
 
@@ -56,7 +58,11 @@ export type ContainerEditorsVm = {
   draftStore: DraftStore;
   syncDraftStoreToControlDb: (
     nextStore: DraftStore,
-    options?: { successTitle?: string; successMessage?: string; quietSuccess?: boolean }
+    options?: {
+      successTitle?: string;
+      successMessage?: string;
+      quietSuccess?: boolean;
+    }
   ) => Promise<boolean>;
   deleteBlockDraft: (blockId: string) => Promise<boolean>;
   deleteChannelDraft: (channelId: string) => Promise<boolean>;
@@ -65,8 +71,6 @@ export type ContainerEditorsVm = {
   serverMediaQuery: string;
   setServerMediaQuery: (value: string) => void;
 
-  blockLibraryView: "cards" | "table";
-  setBlockLibraryView: (value: "cards" | "table") => void;
   blockRowsPage: DraftBlock[];
   blockCount: number;
   selectedBlockId: string | null;
@@ -79,8 +83,6 @@ export type ContainerEditorsVm = {
   openBlockEditorRoute: (blockId?: string) => void;
   closeBlockEditorRoute: () => void;
 
-  channelLibraryView: "cards" | "table";
-  setChannelLibraryView: (value: "cards" | "table") => void;
   channelRowsPage: DraftChannel[];
   channelCount: number;
   selectedChannelId: string | null;
@@ -93,8 +95,6 @@ export type ContainerEditorsVm = {
   openChannelEditorRoute: (channelId?: string) => void;
   closeChannelEditorRoute: () => void;
 
-  profileLibraryView: "cards" | "table";
-  setProfileLibraryView: (value: "cards" | "table") => void;
   profileRowsPage: DraftProfile[];
   profileCount: number;
   selectedProfileId: string | null;
@@ -131,7 +131,8 @@ function upsertNodeAssignment(
   const id = nodeId.trim();
   if (!id) return profile;
   const existing = profile.nodeAssignments.find((row) => row.nodeId === id);
-  const targetKind = next.targetKind || existing?.targetKind || profile.defaultTargetKind;
+  const targetKind =
+    next.targetKind || existing?.targetKind || profile.defaultTargetKind;
   const targetId = (next.targetId ?? existing?.targetId ?? "").trim();
   const nextRow = { nodeId: id, targetKind, targetId };
   const without = profile.nodeAssignments.filter((row) => row.nodeId !== id);
@@ -152,9 +153,6 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     isMobile,
     serverMediaQuery,
     setServerMediaQuery,
-
-    blockLibraryView,
-    setBlockLibraryView,
     blockRowsPage,
     blockCount,
     selectedBlockId,
@@ -167,8 +165,6 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     openBlockEditorRoute,
     closeBlockEditorRoute,
 
-    channelLibraryView,
-    setChannelLibraryView,
     channelRowsPage,
     channelCount,
     selectedChannelId,
@@ -181,8 +177,6 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     openChannelEditorRoute,
     closeChannelEditorRoute,
 
-    profileLibraryView,
-    setProfileLibraryView,
     profileRowsPage,
     profileCount,
     selectedProfileId,
@@ -331,286 +325,288 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     if (selectedProfileId === id) setSelectedProfileId(null);
   };
 
+  const libraryLabel = isMobile ? "Library" : "Media Library";
+  const blockEditorTitle =
+    blockDraft.title.trim() || blockDraft.id.trim() || "New Block";
+  const channelEditorTitle =
+    channelDraft.title.trim() || channelDraft.id.trim() || "New Channel";
+  const profileEditorTitle =
+    profileDraft.title.trim() || profileDraft.id.trim() || "New Profile";
+
+  const saveBlock = async () => {
+    const blockId =
+      blockDraft.id.trim() ||
+      generateAutoResourceId(
+        "block",
+        blockDraft.title || "block",
+        draftStore.blocks.map((row) => row.id)
+      );
+    const normalizedItems = blockDraft.items
+      .map((item) => ({ ...item, id: item.id.trim() }))
+      .filter((item) => item.id.length > 0);
+    const nextStore: DraftStore = {
+      ...draftStore,
+      blocks: [
+        ...draftStore.blocks.filter((row) => row.id !== blockId),
+        {
+          ...blockDraft,
+          id: blockId,
+          mode: blockDraft.mode,
+          items: normalizedItems,
+        },
+      ],
+    };
+    const synced = await syncDraftStoreToControlDb(nextStore, {
+      quietSuccess: true,
+    });
+    if (!synced) return;
+    setSelectedBlockId(blockId);
+    closeBlockEditorRoute();
+    notifications.show({
+      color: "teal",
+      title: "Block saved",
+      message: blockId,
+    });
+  };
+
+  const saveChannel = async () => {
+    const channelId =
+      channelDraft.id.trim() ||
+      generateAutoResourceId(
+        "channel",
+        channelDraft.title || "channel",
+        draftStore.channels.map((row) => row.id)
+      );
+    const normalizedBlockIds = channelDraft.blockIds
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+    const nextStore: DraftStore = {
+      ...draftStore,
+      channels: [
+        ...draftStore.channels.filter((row) => row.id !== channelId),
+        {
+          ...channelDraft,
+          id: channelId,
+          blockIds: normalizedBlockIds,
+        },
+      ],
+    };
+    const synced = await syncDraftStoreToControlDb(nextStore, {
+      quietSuccess: true,
+    });
+    if (!synced) return;
+    setSelectedChannelId(channelId);
+    closeChannelEditorRoute();
+    notifications.show({
+      color: "teal",
+      title: "Channel saved",
+      message: channelId,
+    });
+  };
+
+  const saveProfile = async () => {
+    const profileId =
+      profileDraft.id.trim() ||
+      generateAutoResourceId(
+        "profile",
+        profileDraft.title || "profile",
+        draftStore.profiles.map((row) => row.id)
+      );
+    const normalizedNodes = profileDraft.nodeAssignments
+      .map((row) => ({
+        nodeId: row.nodeId.trim(),
+        targetKind: row.targetKind,
+        targetId: row.targetId.trim(),
+      }))
+      .filter((row) => row.nodeId.length > 0 && row.targetId.length > 0);
+    const nextStore: DraftStore = {
+      ...draftStore,
+      profiles: [
+        ...draftStore.profiles.filter((row) => row.id !== profileId),
+        {
+          ...profileDraft,
+          id: profileId,
+          nodeAssignments: normalizedNodes,
+        },
+      ],
+    };
+    const synced = await syncDraftStoreToControlDb(nextStore, {
+      quietSuccess: true,
+    });
+    if (!synced) return;
+    setSelectedProfileId(profileId);
+    closeProfileEditorRoute();
+    notifications.show({
+      color: "teal",
+      title: "Profile saved",
+      message: profileId,
+    });
+  };
+
   return (
     <>
       {builderTab === "block" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Group gap="xs" wrap="wrap">
-              <Button size="xs" variant="light" onClick={() => openBlockEditorRoute()}>
-                New Block
-              </Button>
-              <SegmentedControl
-                value={blockLibraryView}
-                onChange={(value) =>
-                  setBlockLibraryView((value as "cards" | "table") || "cards")
+          <OpsToolbar sticky className="ops-toolbar-sticky-secondary">
+            <Stack gap="sm">
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Group gap="xs" wrap="wrap">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => openBlockEditorRoute()}
+                  >
+                    New Block
+                  </Button>
+                </Group>
+                <Group gap="xs">
+                  <Badge variant="light">{blockCount} shown</Badge>
+                  <Badge variant="light" color="gray">
+                    {draftStore.blocks.length} total
+                  </Badge>
+                </Group>
+              </Group>
+              <TextInput
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search blocks by id, title, mode, or item breakdown"
+                value={serverMediaQuery}
+                onChange={(event) =>
+                  setServerMediaQuery(event.currentTarget.value)
                 }
-                data={[
-                  { value: "cards", label: "Card View" },
-                  { value: "table", label: "List View" },
-                ]}
               />
-            </Group>
-            <Group gap="xs">
-              <Badge variant="light">{blockCount} shown</Badge>
-              <Badge variant="light" color="gray">
-                {draftStore.blocks.length} total
-              </Badge>
-            </Group>
-          </Group>
-          <TextInput
-            leftSection={<IconSearch size={16} />}
-            placeholder="Search blocks by id, title, mode, or item breakdown"
-            value={serverMediaQuery}
-            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+            </Stack>
+          </OpsToolbar>
+
+          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
+            {blockRowsPage.map((row) => {
+              const mediaCount = row.items.filter(
+                (item) => item.kind === "media"
+              ).length;
+              const playlistCount = row.items.filter(
+                (item) => item.kind === "playlist"
+              ).length;
+              const blockPickerItem = pickerByKind.block.get(row.id);
+              return (
+                <Card
+                  key={row.id}
+                  withBorder
+                  p="sm"
+                  className="ops-resource-card"
+                  onClick={() => openBlockEditorRoute(row.id)}
+                >
+                  <Stack gap="xs">
+                    {renderClusterPreview(blockPickerItem, 116)}
+                    <Group
+                      justify="space-between"
+                      align="flex-start"
+                      wrap="nowrap"
+                    >
+                      <Stack gap={2}>
+                        <Text fw={700} lineClamp={1}>
+                          {row.title || row.id || "Untitled block"}
+                        </Text>
+                      </Stack>
+                      <Badge size="sm" variant="light" color="orange">
+                        block
+                      </Badge>
+                    </Group>
+                    <Group gap={6}>
+                      <Badge size="sm" variant="light">
+                        {row.items.length} items
+                      </Badge>
+                      <Badge size="sm" variant="light" color="gray">
+                        mode:{row.mode}
+                      </Badge>
+                    </Group>
+                    <Text size="sm" c="dimmed">
+                      media:{mediaCount} playlist:{playlistCount}
+                    </Text>
+                    <Group gap={6} grow>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconPencil size={14} />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openBlockEditorRoute(row.id);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={async (event) => {
+                          event.stopPropagation();
+                          await deleteBlockResource(row.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Card>
+              );
+            })}
+          </SimpleGrid>
+          <OpsPaginationBar
+            rangeLabel={tableRangeLabel(
+              blockCount,
+              blockTablePage,
+              TABLE_PAGE_SIZE.blocks
+            )}
+            summary={`${blockCount} shown • ${draftStore.blocks.length} total`}
+            totalPages={blockTablePageCount}
+            value={blockTablePage}
+            onChange={setBlockTablePage}
+            size={isMobile ? "sm" : "md"}
+            sticky
           />
 
-          {blockLibraryView === "cards" ? (
-            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {blockRowsPage.map((row) => {
-                const mediaCount = row.items.filter((item) => item.kind === "media").length;
-                const playlistCount = row.items.filter(
-                  (item) => item.kind === "playlist"
-                ).length;
-                const blockPickerItem = pickerByKind.block.get(row.id);
-                return (
-                  <Card
-                    key={row.id}
-                    withBorder
-                    p="sm"
-                    className="ops-resource-card"
-                    onClick={() => openBlockEditorRoute(row.id)}
-                  >
-                    <Stack gap="xs">
-                      {renderClusterPreview(blockPickerItem, 116)}
-                      <Group justify="space-between" align="flex-start" wrap="nowrap">
-                        <Stack gap={2}>
-                          <Text fw={700} lineClamp={1}>
-                            {row.title || row.id || "Untitled block"}
-                          </Text>
-                        </Stack>
-                        <Badge size="sm" variant="light" color="orange">
-                          block
-                        </Badge>
-                      </Group>
-                      <Group gap={6}>
-                        <Badge size="sm" variant="light">
-                          {row.items.length} items
-                        </Badge>
-                        <Badge size="sm" variant="light" color="gray">
-                          mode:{row.mode}
-                        </Badge>
-                      </Group>
-                      <Text size="sm" c="dimmed">
-                        media:{mediaCount} playlist:{playlistCount}
-                      </Text>
-                      <Group gap={6} grow>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          color="blue"
-                          leftSection={<IconPencil size={14} />}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openBlockEditorRoute(row.id);
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          color="red"
-                          leftSection={<IconTrash size={14} />}
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            await deleteBlockResource(row.id);
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </Group>
-                    </Stack>
-                  </Card>
-                );
-              })}
-            </SimpleGrid>
-          ) : (
-            <Card withBorder p="sm">
-              <ScrollArea>
-                <Table striped highlightOnHover withTableBorder withColumnBorders>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Title</Table.Th>
-                      <Table.Th>Mode</Table.Th>
-                      <Table.Th>Items</Table.Th>
-                      <Table.Th>Breakdown</Table.Th>
-                      <Table.Th w={176}>Actions</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {blockRowsPage.map((row) => {
-                      const mediaCount = row.items.filter((item) => item.kind === "media").length;
-                      const playlistCount = row.items.filter(
-                        (item) => item.kind === "playlist"
-                      ).length;
-                      return (
-                        <Table.Tr
-                          key={row.id}
-                          onClick={() => openBlockEditorRoute(row.id)}
-                          style={tableRowStyle(selectedBlockId === row.id)}
-                        >
-                          <Table.Td>{row.title || "untitled"}</Table.Td>
-                          <Table.Td>{row.mode}</Table.Td>
-                          <Table.Td>{row.items.length}</Table.Td>
-                          <Table.Td>
-                            <Text size="sm" c="dimmed">
-                              m:{mediaCount} / pl:{playlistCount}
-                            </Text>
-                          </Table.Td>
-                          <Table.Td>
-                            <Group gap={6} wrap="nowrap">
-                              <Button
-                                size="xs"
-                                variant="light"
-                                color="blue"
-                                leftSection={<IconPencil size={14} />}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openBlockEditorRoute(row.id);
-                                }}
-                              >
-                                Edit
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="light"
-                                color="red"
-                                leftSection={<IconTrash size={14} />}
-                                onClick={async (event) => {
-                                  event.stopPropagation();
-                                  await deleteBlockResource(row.id);
-                                }}
-                              >
-                                Delete
-                              </Button>
-                            </Group>
-                          </Table.Td>
-                        </Table.Tr>
-                      );
-                    })}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Card>
-          )}
-          <Group justify="space-between" mt="xs" wrap="wrap">
-            <Text size="xs" c="dimmed">
-              {tableRangeLabel(blockCount, blockTablePage, TABLE_PAGE_SIZE.blocks)}
-            </Text>
-            <Pagination
-              total={blockTablePageCount}
-              value={blockTablePage}
-              onChange={setBlockTablePage}
-              size={isMobile ? "sm" : "md"}
-              siblings={1}
-              boundaries={1}
-              withEdges
-            />
-          </Group>
-
           {draftStore.blocks.length === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No blocks yet. Blocks can sequence media and/or playlists.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No blocks yet"
+              description="Blocks sequence media and playlists into reusable programming units."
+              actionLabel="New Block"
+              onAction={() => openBlockEditorRoute()}
+            />
           ) : blockCount === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No blocks match this search.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No blocks found"
+              description="No blocks match the current search."
+            />
           ) : null}
         </Stack>
       ) : null}
 
       {builderTab === "blockEditor" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Stack gap={4}>
-              <Breadcrumbs separator="/" separatorMargin="xs">
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeBlockEditorRoute();
-                  }}
-                >
-                  Media Library
-                </Anchor>
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeBlockEditorRoute();
-                  }}
-                >
-                  Blocks
-                </Anchor>
-                <Text size="sm" c="dimmed">
-                  {blockDraft.id.trim() || "New Block"}
-                </Text>
-              </Breadcrumbs>
-              <Title order={5}>{blockDraft.title.trim() || blockDraft.id.trim() || "New Block"}</Title>
-            </Stack>
-            <Group gap="xs">
+          <OpsPageHeader
+            compact
+            title={blockEditorTitle}
+            description="Sequence media and playlists into one reusable programming block."
+            breadcrumbs={[
+              {
+                label: libraryLabel,
+                onClick: closeBlockEditorRoute,
+              },
+              {
+                label: "Blocks",
+                onClick: closeBlockEditorRoute,
+              },
+              {
+                label: blockDraft.id.trim() || "New Block",
+              },
+            ]}
+            actions={
               <Button variant="light" onClick={closeBlockEditorRoute}>
                 Back
               </Button>
-              <Button
-                onClick={async () => {
-                  const blockId =
-                    blockDraft.id.trim() ||
-                    generateAutoResourceId(
-                      "block",
-                      blockDraft.title || "block",
-                      draftStore.blocks.map((row) => row.id)
-                    );
-                  const normalizedItems = blockDraft.items
-                    .map((item) => ({ ...item, id: item.id.trim() }))
-                    .filter((item) => item.id.length > 0);
-                  const nextStore: DraftStore = {
-                    ...draftStore,
-                    blocks: [
-                      ...draftStore.blocks.filter((row) => row.id !== blockId),
-                      {
-                        ...blockDraft,
-                        id: blockId,
-                        mode: blockDraft.mode,
-                        items: normalizedItems,
-                      },
-                    ],
-                  };
-                  const synced = await syncDraftStoreToControlDb(nextStore, {
-                    quietSuccess: true,
-                  });
-                  if (!synced) return;
-                  setSelectedBlockId(blockId);
-                  closeBlockEditorRoute();
-                  notifications.show({
-                    color: "teal",
-                    title: "Block saved",
-                    message: blockId,
-                  });
-                }}
-              >
-                Save Block
-              </Button>
-            </Group>
-          </Group>
+            }
+          />
 
           <TextInput
             label="Title"
@@ -680,17 +676,23 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   const pickerItem = pickerByKind[item.kind].get(item.id);
                   const label =
                     pickerItem?.title ||
-                    targetOptionsByKind[item.kind].find((row) => row.value === item.id)
-                      ?.label ||
+                    targetOptionsByKind[item.kind].find(
+                      (row) => row.value === item.id
+                    )?.label ||
                     item.id;
                   const subtitle =
                     pickerItem?.subtitle ||
                     (item.kind === "playlist" ? "Playlist" : "Media");
                   const previewTiles = pickerItem?.previewTiles || [];
-                  const previewSrc = pickerItem?.previewUrl || pickerItem?.thumbnailUrl || "";
-                  const isVideo = (pickerItem?.badge || "").toLowerCase() === "video";
+                  const previewSrc =
+                    pickerItem?.previewUrl || pickerItem?.thumbnailUrl || "";
+                  const isVideo =
+                    (pickerItem?.badge || "").toLowerCase() === "video";
                   return (
-                    <div key={`${item.kind}-${item.id}-${index}`} className="ops-playlist-item-wrap">
+                    <div
+                      key={`${item.kind}-${item.id}-${index}`}
+                      className="ops-playlist-item-wrap"
+                    >
                       {blockDragIndex !== null && blockDropIndex === index ? (
                         <div className="ops-playlist-drop-indicator" />
                       ) : null}
@@ -753,9 +755,11 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                         onDragOver={(event) => {
                           event.preventDefault();
                           if (blockDragIndex === null) return;
-                          const rect = event.currentTarget.getBoundingClientRect();
+                          const rect =
+                            event.currentTarget.getBoundingClientRect();
                           const midpoint = rect.top + rect.height / 2;
-                          const nextIndex = event.clientY < midpoint ? index : index + 1;
+                          const nextIndex =
+                            event.clientY < midpoint ? index : index + 1;
                           setBlockDropIndex((prev) =>
                             prev === nextIndex ? prev : nextIndex
                           );
@@ -785,287 +789,192 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      commitBlockDrop(blockDropIndex ?? blockDraft.items.length);
+                      commitBlockDrop(
+                        blockDropIndex ?? blockDraft.items.length
+                      );
                     }}
                   >
                     {blockDropIndex === blockDraft.items.length ? (
                       <div className="ops-playlist-drop-indicator is-tail" />
                     ) : (
-                      <div className="ops-playlist-drop-tail-placeholder">Drop at end</div>
+                      <div className="ops-playlist-drop-tail-placeholder">
+                        Drop at end
+                      </div>
                     )}
                   </div>
                 ) : null}
                 {blockDraft.items.length === 0 ? (
                   <Text size="sm" c="dimmed">
-                    No items yet. Add media and/or playlists to define this block.
+                    No items yet. Add media and/or playlists to define this
+                    block.
                   </Text>
                 ) : null}
               </Stack>
             </ScrollArea>
           </Paper>
+          <OpsFormDock
+            secondaryLabel="Back"
+            onSecondary={closeBlockEditorRoute}
+            primaryLabel="Save Block"
+            onPrimary={() => {
+              void saveBlock();
+            }}
+            aside={
+              <Text size="xs" c="dimmed">
+                {blockDraft.items.length} item(s)
+              </Text>
+            }
+          />
         </Stack>
       ) : null}
 
       {builderTab === "channel" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Group gap="xs" wrap="wrap">
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => openChannelEditorRoute()}
-              >
-                New Channel
-              </Button>
-              <SegmentedControl
-                value={channelLibraryView}
-                onChange={(value) =>
-                  setChannelLibraryView((value as "cards" | "table") || "cards")
+          <OpsToolbar sticky className="ops-toolbar-sticky-secondary">
+            <Stack gap="sm">
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Group gap="xs" wrap="wrap">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => openChannelEditorRoute()}
+                  >
+                    New Channel
+                  </Button>
+                </Group>
+                <Group gap="xs">
+                  <Badge variant="light">{channelCount} shown</Badge>
+                  <Badge variant="light" color="gray">
+                    {draftStore.channels.length} total
+                  </Badge>
+                </Group>
+              </Group>
+              <TextInput
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search channels by id, title, or block ids"
+                value={serverMediaQuery}
+                onChange={(event) =>
+                  setServerMediaQuery(event.currentTarget.value)
                 }
-                data={[
-                  { value: "cards", label: "Card View" },
-                  { value: "table", label: "List View" },
-                ]}
               />
-            </Group>
-            <Group gap="xs">
-              <Badge variant="light">{channelCount} shown</Badge>
-              <Badge variant="light" color="gray">
-                {draftStore.channels.length} total
-              </Badge>
-            </Group>
-          </Group>
-          <TextInput
-            leftSection={<IconSearch size={16} />}
-            placeholder="Search channels by id, title, or block ids"
-            value={serverMediaQuery}
-            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+            </Stack>
+          </OpsToolbar>
+
+          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
+            {channelRowsPage.map((row) => (
+              <Card
+                key={row.id}
+                withBorder
+                p="sm"
+                className="ops-resource-card"
+                onClick={() => openChannelEditorRoute(row.id)}
+              >
+                <Stack gap="xs">
+                  <Group
+                    justify="space-between"
+                    align="flex-start"
+                    wrap="nowrap"
+                  >
+                    <Stack gap={2}>
+                      <Text fw={700} lineClamp={1}>
+                        {row.title || row.id || "Untitled channel"}
+                      </Text>
+                    </Stack>
+                    <Badge size="sm" variant="light" color="grape">
+                      channel
+                    </Badge>
+                  </Group>
+                  <Badge size="sm" variant="light">
+                    {row.blockIds.length} block items
+                  </Badge>
+                  <Text size="sm" c="dimmed" lineClamp={2}>
+                    {row.blockIds.slice(0, 4).join(" • ") || "No blocks yet"}
+                  </Text>
+                  <Group gap={6} grow>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="blue"
+                      leftSection={<IconPencil size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openChannelEditorRoute(row.id);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconTrash size={14} />}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        await deleteChannelResource(row.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </Group>
+                </Stack>
+              </Card>
+            ))}
+          </SimpleGrid>
+          <OpsPaginationBar
+            rangeLabel={tableRangeLabel(
+              channelCount,
+              channelTablePage,
+              TABLE_PAGE_SIZE.channels
+            )}
+            summary={`${channelCount} shown • ${draftStore.channels.length} total`}
+            totalPages={channelTablePageCount}
+            value={channelTablePage}
+            onChange={setChannelTablePage}
+            size={isMobile ? "sm" : "md"}
+            sticky
           />
 
-          {channelLibraryView === "cards" ? (
-            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {channelRowsPage.map((row) => (
-                <Card
-                  key={row.id}
-                  withBorder
-                  p="sm"
-                  className="ops-resource-card"
-                  onClick={() => openChannelEditorRoute(row.id)}
-                >
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <Stack gap={2}>
-                        <Text fw={700} lineClamp={1}>
-                          {row.title || row.id || "Untitled channel"}
-                        </Text>
-                      </Stack>
-                      <Badge size="sm" variant="light" color="grape">
-                        channel
-                      </Badge>
-                    </Group>
-                    <Badge size="sm" variant="light">
-                      {row.blockIds.length} block items
-                    </Badge>
-                    <Text size="sm" c="dimmed" lineClamp={2}>
-                      {row.blockIds.slice(0, 4).join(" • ") || "No blocks yet"}
-                    </Text>
-                    <Group gap={6} grow>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="blue"
-                        leftSection={<IconPencil size={14} />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openChannelEditorRoute(row.id);
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="red"
-                        leftSection={<IconTrash size={14} />}
-                        onClick={async (event) => {
-                          event.stopPropagation();
-                          await deleteChannelResource(row.id);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </Group>
-                  </Stack>
-                </Card>
-              ))}
-            </SimpleGrid>
-          ) : (
-            <Card withBorder p="sm">
-              <ScrollArea>
-                <Table striped highlightOnHover withTableBorder withColumnBorders>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Title</Table.Th>
-                      <Table.Th>Block Items</Table.Th>
-                      <Table.Th w={176}>Actions</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {channelRowsPage.map((row) => (
-                      <Table.Tr
-                        key={row.id}
-                        onClick={() => openChannelEditorRoute(row.id)}
-                        style={tableRowStyle(selectedChannelId === row.id)}
-                      >
-                        <Table.Td>{row.title || "untitled"}</Table.Td>
-                        <Table.Td>{row.blockIds.length}</Table.Td>
-                        <Table.Td>
-                          <Group gap={6} wrap="nowrap">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="blue"
-                              leftSection={<IconPencil size={14} />}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openChannelEditorRoute(row.id);
-                              }}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="red"
-                              leftSection={<IconTrash size={14} />}
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                await deleteChannelResource(row.id);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </Group>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Card>
-          )}
-          <Group justify="space-between" mt="xs" wrap="wrap">
-            <Text size="xs" c="dimmed">
-              {tableRangeLabel(
-                channelCount,
-                channelTablePage,
-                TABLE_PAGE_SIZE.channels
-              )}
-            </Text>
-            <Pagination
-              total={channelTablePageCount}
-              value={channelTablePage}
-              onChange={setChannelTablePage}
-              size={isMobile ? "sm" : "md"}
-              siblings={1}
-              boundaries={1}
-              withEdges
-            />
-          </Group>
-
           {draftStore.channels.length === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No channels yet. Channels sequence blocks in a repeatable order.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No channels yet"
+              description="Channels sequence blocks in a repeatable order."
+              actionLabel="New Channel"
+              onAction={() => openChannelEditorRoute()}
+            />
           ) : channelCount === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No channels match this search.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No channels found"
+              description="No channels match the current search."
+            />
           ) : null}
         </Stack>
       ) : null}
 
       {builderTab === "channelEditor" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Stack gap={4}>
-              <Breadcrumbs separator="/" separatorMargin="xs">
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeChannelEditorRoute();
-                  }}
-                >
-                  Media Library
-                </Anchor>
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeChannelEditorRoute();
-                  }}
-                >
-                  Channels
-                </Anchor>
-                <Text size="sm" c="dimmed">
-                  {channelDraft.id.trim() || "New Channel"}
-                </Text>
-              </Breadcrumbs>
-              <Title order={5}>
-                {channelDraft.title.trim() || channelDraft.id.trim() || "New Channel"}
-              </Title>
-            </Stack>
-            <Group gap="xs">
+          <OpsPageHeader
+            compact
+            title={channelEditorTitle}
+            description="Build a repeatable sequence of blocks for channel playback."
+            breadcrumbs={[
+              {
+                label: libraryLabel,
+                onClick: closeChannelEditorRoute,
+              },
+              {
+                label: "Channels",
+                onClick: closeChannelEditorRoute,
+              },
+              {
+                label: channelDraft.id.trim() || "New Channel",
+              },
+            ]}
+            actions={
               <Button variant="light" onClick={closeChannelEditorRoute}>
                 Back
               </Button>
-              <Button
-                onClick={async () => {
-                  const channelId =
-                    channelDraft.id.trim() ||
-                    generateAutoResourceId(
-                      "channel",
-                      channelDraft.title || "channel",
-                      draftStore.channels.map((row) => row.id)
-                    );
-                  const normalizedBlockIds = channelDraft.blockIds
-                    .map((id) => id.trim())
-                    .filter((id) => id.length > 0);
-                  const nextStore: DraftStore = {
-                    ...draftStore,
-                    channels: [
-                      ...draftStore.channels.filter((row) => row.id !== channelId),
-                      {
-                        ...channelDraft,
-                        id: channelId,
-                        blockIds: normalizedBlockIds,
-                      },
-                    ],
-                  };
-                  const synced = await syncDraftStoreToControlDb(nextStore, {
-                    quietSuccess: true,
-                  });
-                  if (!synced) return;
-                  setSelectedChannelId(channelId);
-                  closeChannelEditorRoute();
-                  notifications.show({
-                    color: "teal",
-                    title: "Channel saved",
-                    message: channelId,
-                  });
-                }}
-              >
-                Save Channel
-              </Button>
-            </Group>
-          </Group>
+            }
+          />
 
           <TextInput
             label="Title"
@@ -1103,15 +1012,21 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
               <Stack gap="xs">
                 {channelDraft.blockIds.map((blockId, index) => {
                   const blockPickerItem = pickerByKind.block.get(blockId);
-                  const block = draftStore.blocks.find((row) => row.id === blockId);
+                  const block = draftStore.blocks.find(
+                    (row) => row.id === blockId
+                  );
                   const label =
                     blockPickerItem?.title ||
                     blockOptions.find((row) => row.value === blockId)?.label ||
                     blockId;
                   const subtitle = `${block?.items.length || 0} items`;
                   return (
-                    <div key={`${blockId}-${index}`} className="ops-playlist-item-wrap">
-                      {channelDragIndex !== null && channelDropIndex === index ? (
+                    <div
+                      key={`${blockId}-${index}`}
+                      className="ops-playlist-item-wrap"
+                    >
+                      {channelDragIndex !== null &&
+                      channelDropIndex === index ? (
                         <div className="ops-playlist-drop-indicator" />
                       ) : null}
                       <ReorderableSequenceItem
@@ -1140,9 +1055,11 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                         onDragOver={(event) => {
                           event.preventDefault();
                           if (channelDragIndex === null) return;
-                          const rect = event.currentTarget.getBoundingClientRect();
+                          const rect =
+                            event.currentTarget.getBoundingClientRect();
                           const midpoint = rect.top + rect.height / 2;
-                          const nextIndex = event.clientY < midpoint ? index : index + 1;
+                          const nextIndex =
+                            event.clientY < midpoint ? index : index + 1;
                           setChannelDropIndex((prev) =>
                             prev === nextIndex ? prev : nextIndex
                           );
@@ -1172,308 +1089,197 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      commitChannelDrop(channelDropIndex ?? channelDraft.blockIds.length);
+                      commitChannelDrop(
+                        channelDropIndex ?? channelDraft.blockIds.length
+                      );
                     }}
                   >
                     {channelDropIndex === channelDraft.blockIds.length ? (
                       <div className="ops-playlist-drop-indicator is-tail" />
                     ) : (
-                      <div className="ops-playlist-drop-tail-placeholder">Drop at end</div>
+                      <div className="ops-playlist-drop-tail-placeholder">
+                        Drop at end
+                      </div>
                     )}
                   </div>
                 ) : null}
                 {channelDraft.blockIds.length === 0 ? (
                   <Text size="sm" c="dimmed">
-                    No block items yet. Add blocks to build this channel sequence.
+                    No block items yet. Add blocks to build this channel
+                    sequence.
                   </Text>
                 ) : null}
               </Stack>
             </ScrollArea>
           </Paper>
+          <OpsFormDock
+            secondaryLabel="Back"
+            onSecondary={closeChannelEditorRoute}
+            primaryLabel="Save Channel"
+            onPrimary={() => {
+              void saveChannel();
+            }}
+            aside={
+              <Text size="xs" c="dimmed">
+                {channelDraft.blockIds.length} block(s)
+              </Text>
+            }
+          />
         </Stack>
       ) : null}
 
       {builderTab === "profile" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Group gap="xs" wrap="wrap">
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => openProfileEditorRoute()}
-              >
-                New Profile
-              </Button>
-              <SegmentedControl
-                value={profileLibraryView}
-                onChange={(value) =>
-                  setProfileLibraryView((value as "cards" | "table") || "cards")
+          <OpsToolbar sticky className="ops-toolbar-sticky-secondary">
+            <Stack gap="sm">
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Group gap="xs" wrap="wrap">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => openProfileEditorRoute()}
+                  >
+                    New Profile
+                  </Button>
+                </Group>
+                <Group gap="xs">
+                  <Badge variant="light">{profileCount} shown</Badge>
+                  <Badge variant="light" color="gray">
+                    {draftStore.profiles.length} total
+                  </Badge>
+                </Group>
+              </Group>
+              <TextInput
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search profiles by id, title, targets, or node assignments"
+                value={serverMediaQuery}
+                onChange={(event) =>
+                  setServerMediaQuery(event.currentTarget.value)
                 }
-                data={[
-                  { value: "cards", label: "Card View" },
-                  { value: "table", label: "List View" },
-                ]}
               />
-            </Group>
-            <Group gap="xs">
-              <Badge variant="light">{profileCount} shown</Badge>
-              <Badge variant="light" color="gray">
-                {draftStore.profiles.length} total
-              </Badge>
-            </Group>
-          </Group>
-          <TextInput
-            leftSection={<IconSearch size={16} />}
-            placeholder="Search profiles by id, title, targets, or node assignments"
-            value={serverMediaQuery}
-            onChange={(event) => setServerMediaQuery(event.currentTarget.value)}
+            </Stack>
+          </OpsToolbar>
+
+          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
+            {profileRowsPage.map((row) => (
+              <Card
+                key={row.id}
+                withBorder
+                p="sm"
+                className="ops-resource-card"
+                onClick={() => openProfileEditorRoute(row.id)}
+              >
+                <Stack gap="xs">
+                  <Group
+                    justify="space-between"
+                    align="flex-start"
+                    wrap="nowrap"
+                  >
+                    <Stack gap={2}>
+                      <Text fw={700} lineClamp={1}>
+                        {row.title || row.id || "Untitled profile"}
+                      </Text>
+                    </Stack>
+                    <Badge size="sm" variant="light" color="violet">
+                      profile
+                    </Badge>
+                  </Group>
+                  <Badge size="sm" variant="light" color="gray">
+                    default:{row.defaultTargetKind}
+                  </Badge>
+                  <Text size="sm" c="dimmed">
+                    {
+                      row.nodeAssignments.filter(
+                        (node) => node.targetId.trim().length > 0
+                      ).length
+                    }{" "}
+                    node assignment(s)
+                  </Text>
+                  <Group gap={6} grow>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="blue"
+                      leftSection={<IconPencil size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openProfileEditorRoute(row.id);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconTrash size={14} />}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        await deleteProfileResource(row.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </Group>
+                </Stack>
+              </Card>
+            ))}
+          </SimpleGrid>
+          <OpsPaginationBar
+            rangeLabel={tableRangeLabel(
+              profileCount,
+              profileTablePage,
+              TABLE_PAGE_SIZE.profiles
+            )}
+            summary={`${profileCount} shown • ${draftStore.profiles.length} total`}
+            totalPages={profileTablePageCount}
+            value={profileTablePage}
+            onChange={setProfileTablePage}
+            size={isMobile ? "sm" : "md"}
+            sticky
           />
 
-          {profileLibraryView === "cards" ? (
-            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {profileRowsPage.map((row) => (
-                <Card
-                  key={row.id}
-                  withBorder
-                  p="sm"
-                  className="ops-resource-card"
-                  onClick={() => openProfileEditorRoute(row.id)}
-                >
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <Stack gap={2}>
-                        <Text fw={700} lineClamp={1}>
-                          {row.title || row.id || "Untitled profile"}
-                        </Text>
-                      </Stack>
-                      <Badge size="sm" variant="light" color="violet">
-                        profile
-                      </Badge>
-                    </Group>
-                    <Badge size="sm" variant="light" color="gray">
-                      default:{row.defaultTargetKind}
-                    </Badge>
-                    <Text size="sm" c="dimmed">
-                      {
-                        row.nodeAssignments.filter(
-                          (node) => node.targetId.trim().length > 0
-                        ).length
-                      }{" "}
-                      node assignment(s)
-                    </Text>
-                    <Group gap={6} grow>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="blue"
-                        leftSection={<IconPencil size={14} />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openProfileEditorRoute(row.id);
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="red"
-                        leftSection={<IconTrash size={14} />}
-                        onClick={async (event) => {
-                          event.stopPropagation();
-                          await deleteProfileResource(row.id);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </Group>
-                  </Stack>
-                </Card>
-              ))}
-            </SimpleGrid>
-          ) : (
-            <Card withBorder p="sm">
-              <ScrollArea>
-                <Table striped highlightOnHover withTableBorder withColumnBorders>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Title</Table.Th>
-                      <Table.Th>Default target</Table.Th>
-                      <Table.Th>Nodes</Table.Th>
-                      <Table.Th w={176}>Actions</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {profileRowsPage.map((row) => (
-                      <Table.Tr
-                        key={row.id}
-                        onClick={() => openProfileEditorRoute(row.id)}
-                        style={tableRowStyle(selectedProfileId === row.id)}
-                      >
-                        <Table.Td>{row.title || "untitled"}</Table.Td>
-                        <Table.Td>
-                          <Text size="sm" c="dimmed">
-                            {row.defaultTargetKind}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          {
-                            row.nodeAssignments.filter(
-                              (node) => node.targetId.trim().length > 0
-                            ).length
-                          }
-                        </Table.Td>
-                        <Table.Td>
-                          <Group gap={6} wrap="nowrap">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="blue"
-                              leftSection={<IconPencil size={14} />}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openProfileEditorRoute(row.id);
-                              }}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="red"
-                              leftSection={<IconTrash size={14} />}
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                await deleteProfileResource(row.id);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </Group>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Card>
-          )}
-          <Group justify="space-between" mt="xs" wrap="wrap">
-            <Text size="xs" c="dimmed">
-              {tableRangeLabel(
-                profileCount,
-                profileTablePage,
-                TABLE_PAGE_SIZE.profiles
-              )}
-            </Text>
-            <Pagination
-              total={profileTablePageCount}
-              value={profileTablePage}
-              onChange={setProfileTablePage}
-              size={isMobile ? "sm" : "md"}
-              siblings={1}
-              boundaries={1}
-              withEdges
-            />
-          </Group>
-
           {draftStore.profiles.length === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No profiles yet. Profiles assign default and per-node targets.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No profiles yet"
+              description="Profiles assign default and per-node targets."
+              actionLabel="New Profile"
+              onAction={() => openProfileEditorRoute()}
+            />
           ) : profileCount === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No profiles match this search.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No profiles found"
+              description="No profiles match the current search."
+            />
           ) : null}
         </Stack>
       ) : null}
 
       {builderTab === "profileEditor" ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Stack gap={4}>
-              <Breadcrumbs separator="/" separatorMargin="xs">
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeProfileEditorRoute();
-                  }}
-                >
-                  Media Library
-                </Anchor>
-                <Anchor
-                  size="sm"
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    closeProfileEditorRoute();
-                  }}
-                >
-                  Profiles
-                </Anchor>
-                <Text size="sm" c="dimmed">
-                  {profileDraft.id.trim() || "New Profile"}
-                </Text>
-              </Breadcrumbs>
-              <Title order={5}>
-                {profileDraft.title.trim() || profileDraft.id.trim() || "New Profile"}
-              </Title>
-            </Stack>
-            <Group gap="xs">
+          <OpsPageHeader
+            compact
+            title={profileEditorTitle}
+            description="Set default targets and per-node overrides in one place."
+            breadcrumbs={[
+              {
+                label: libraryLabel,
+                onClick: closeProfileEditorRoute,
+              },
+              {
+                label: "Profiles",
+                onClick: closeProfileEditorRoute,
+              },
+              {
+                label: profileDraft.id.trim() || "New Profile",
+              },
+            ]}
+            actions={
               <Button variant="light" onClick={closeProfileEditorRoute}>
                 Back
               </Button>
-              <Button
-                onClick={async () => {
-                  const profileId =
-                    profileDraft.id.trim() ||
-                    generateAutoResourceId(
-                      "profile",
-                      profileDraft.title || "profile",
-                      draftStore.profiles.map((row) => row.id)
-                    );
-                  const normalizedNodes = profileDraft.nodeAssignments
-                    .map((row) => ({
-                      nodeId: row.nodeId.trim(),
-                      targetKind: row.targetKind,
-                      targetId: row.targetId.trim(),
-                    }))
-                    .filter((row) => row.nodeId.length > 0 && row.targetId.length > 0);
-                  const nextStore: DraftStore = {
-                    ...draftStore,
-                    profiles: [
-                      ...draftStore.profiles.filter((row) => row.id !== profileId),
-                      {
-                        ...profileDraft,
-                        id: profileId,
-                        nodeAssignments: normalizedNodes,
-                      },
-                    ],
-                  };
-                  const synced = await syncDraftStoreToControlDb(nextStore, {
-                    quietSuccess: true,
-                  });
-                  if (!synced) return;
-                  setSelectedProfileId(profileId);
-                  closeProfileEditorRoute();
-                  notifications.show({
-                    color: "teal",
-                    title: "Profile saved",
-                    message: profileId,
-                  });
-                }}
-              >
-                Save Profile
-              </Button>
-            </Group>
-          </Group>
+            }
+          />
 
           <TextInput
             label="Title"
@@ -1503,7 +1309,10 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   }));
                 }}
                 onTargetIdChange={(targetId) => {
-                  setProfileDraft((current) => ({ ...current, defaultTargetId: targetId }));
+                  setProfileDraft((current) => ({
+                    ...current,
+                    defaultTargetId: targetId,
+                  }));
                 }}
                 kindOptions={[
                   { value: "media", label: "Media" },
@@ -1528,9 +1337,13 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                   <Button
                     size="xs"
                     variant="light"
-                    disabled={!profileDraft.defaultTargetId.trim() || registryNodes.length === 0}
+                    disabled={
+                      !profileDraft.defaultTargetId.trim() ||
+                      registryNodes.length === 0
+                    }
                     onClick={() => {
-                      const defaultTargetId = profileDraft.defaultTargetId.trim();
+                      const defaultTargetId =
+                        profileDraft.defaultTargetId.trim();
                       if (!defaultTargetId) return;
                       setProfileDraft((current) => ({
                         ...current,
@@ -1553,12 +1366,17 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     const assigned = profileDraft.nodeAssignments.find(
                       (row) => row.nodeId === node.nodeId
                     );
-                    const kind = assigned?.targetKind || profileDraft.defaultTargetKind;
+                    const kind =
+                      assigned?.targetKind || profileDraft.defaultTargetKind;
                     const targetId = assigned?.targetId || "";
                     return (
                       <Paper key={node.nodeId} withBorder p="sm">
                         <Stack gap="xs">
-                          <Group justify="space-between" align="center" wrap="wrap">
+                          <Group
+                            justify="space-between"
+                            align="center"
+                            wrap="wrap"
+                          >
                             <Group gap="xs">
                               <Text fw={700}>{node.label}</Text>
                               {node.registered ? null : (
@@ -1573,7 +1391,8 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                                 variant="light"
                                 disabled={!profileDraft.defaultTargetId.trim()}
                                 onClick={() => {
-                                  const defaultTargetId = profileDraft.defaultTargetId.trim();
+                                  const defaultTargetId =
+                                    profileDraft.defaultTargetId.trim();
                                   if (!defaultTargetId) return;
                                   setProfileDraft((current) =>
                                     upsertNodeAssignment(current, node.nodeId, {
@@ -1592,9 +1411,10 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                                 onClick={() => {
                                   setProfileDraft((current) => ({
                                     ...current,
-                                    nodeAssignments: current.nodeAssignments.filter(
-                                      (row) => row.nodeId !== node.nodeId
-                                    ),
+                                    nodeAssignments:
+                                      current.nodeAssignments.filter(
+                                        (row) => row.nodeId !== node.nodeId
+                                      ),
                                   }));
                                 }}
                               >
@@ -1640,13 +1460,27 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
 
                   {registryNodes.length === 0 ? (
                     <Text size="sm" c="dimmed">
-                      No nodes are registered yet. Add nodes in Fleet to assign profile targets.
+                      No nodes are registered yet. Add nodes in Fleet to assign
+                      profile targets.
                     </Text>
                   ) : null}
                 </Stack>
               </ScrollArea>
             </Stack>
           </Paper>
+          <OpsFormDock
+            secondaryLabel="Back"
+            onSecondary={closeProfileEditorRoute}
+            primaryLabel="Save Profile"
+            onPrimary={() => {
+              void saveProfile();
+            }}
+            aside={
+              <Text size="xs" c="dimmed">
+                {profileDraft.nodeAssignments.length} node override(s)
+              </Text>
+            }
+          />
         </Stack>
       ) : null}
 

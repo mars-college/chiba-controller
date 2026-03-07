@@ -14,7 +14,6 @@ import {
   SegmentedControl,
   SimpleGrid,
   Stack,
-  Table,
   Text,
   Textarea,
   TextInput,
@@ -37,13 +36,16 @@ import {
 } from "../../lib/opsModel";
 import { PreviewTileCluster } from "../PreviewTileCluster";
 import { SectionLoader } from "../SectionLoader";
+import {
+  OpsEmptyState,
+  OpsPaginationBar,
+  OpsToolbar,
+} from "../ui/OpsSurface";
 
 export type MediaLibraryViewVm = {
   builderTab: BuilderMode;
   loadingSnapshot: boolean;
   mediaLibrarySection: "media" | "playlists" | "blocks" | "channels" | "profiles";
-  playlistLibraryView: "cards" | "table";
-  setPlaylistLibraryView: (value: "cards" | "table") => void;
   serverMediaFiltered: Media[];
   serverMedia: Media[];
   serverMediaSourceFilter: "all" | "path" | "url";
@@ -76,7 +78,6 @@ export type MediaLibraryViewVm = {
   mergedMediaById: Map<string, Media>;
   deletePlaylistDraft: (id: string) => void | Promise<void> | Promise<boolean>;
   playlistRowsPage: DraftPlaylist[];
-  selectedPlaylistId: string | null;
   playlistTablePage: number;
   setPlaylistTablePage: (page: number) => void;
   playlistTablePageCount: number;
@@ -88,8 +89,6 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
     builderTab,
     loadingSnapshot,
     mediaLibrarySection,
-    playlistLibraryView,
-    setPlaylistLibraryView,
     serverMediaFiltered,
     serverMedia,
     serverMediaSourceFilter,
@@ -118,7 +117,6 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
     mergedMediaById,
     deletePlaylistDraft,
     playlistRowsPage,
-    selectedPlaylistId,
     playlistTablePage,
     setPlaylistTablePage,
     playlistTablePageCount,
@@ -179,55 +177,60 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
             <SectionLoader label="Loading media library..." />
           ) : null}
 
-          <Stack gap="sm" className="ops-content-sticky-header ops-media-control-header">
-            <TextInput
-              className="ops-media-search-input"
-              leftSection={<IconSearch size={16} />}
-              placeholder="Search by title, id, artist, or URL"
-              value={serverMediaQuery}
-              onChange={(e) => setServerMediaQuery(e.currentTarget.value)}
-              w="100%"
-            />
-            <Group
-              justify="space-between"
-              align="center"
-              wrap="nowrap"
-              gap="xs"
-              className="ops-media-control-row"
-            >
-              <Group gap="xs" wrap="nowrap" className="ops-media-control-actions">
-                <Button
-                  size="xs"
-                  variant="light"
-                  leftSection={<IconAdjustments size={14} />}
-                  onClick={() => setFiltersOpen(true)}
-                >
-                  Filters
-                </Button>
-                {activeFilterCount > 0 ? (
-                  <Badge variant="light" color="blue">
-                    {activeFilterCount} active
-                  </Badge>
+          <OpsToolbar
+            sticky
+            className="ops-media-control-header ops-toolbar-sticky-secondary"
+          >
+            <Stack gap="sm">
+              <TextInput
+                className="ops-media-search-input"
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search by title, id, artist, or URL"
+                value={serverMediaQuery}
+                onChange={(e) => setServerMediaQuery(e.currentTarget.value)}
+                w="100%"
+              />
+              <Group
+                justify="space-between"
+                align="center"
+                wrap="nowrap"
+                gap="xs"
+                className="ops-media-control-row"
+              >
+                <Group gap="xs" wrap="nowrap" className="ops-media-control-actions">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    leftSection={<IconAdjustments size={14} />}
+                    onClick={() => setFiltersOpen(true)}
+                  >
+                    Filters
+                  </Button>
+                  {activeFilterCount > 0 ? (
+                    <Badge variant="light" color="blue">
+                      {activeFilterCount} active
+                    </Badge>
+                  ) : null}
+                </Group>
+                {showMediaPagination ? (
+                  <Pagination
+                    total={mediaLibraryPageCount}
+                    value={mediaLibraryPage}
+                    onChange={setMediaLibraryPage}
+                    size={isMobile ? "xs" : "sm"}
+                    siblings={isMobile ? 0 : 1}
+                    boundaries={isMobile ? 0 : 1}
+                    withEdges={!isMobile}
+                    className="ops-media-control-pagination"
+                  />
                 ) : null}
               </Group>
-              {showMediaPagination ? (
-                <Pagination
-                  total={mediaLibraryPageCount}
-                  value={mediaLibraryPage}
-                  onChange={setMediaLibraryPage}
-                  size={isMobile ? "xs" : "sm"}
-                  siblings={isMobile ? 0 : 1}
-                  boundaries={isMobile ? 0 : 1}
-                  withEdges={!isMobile}
-                  className="ops-media-control-pagination"
-                />
-              ) : null}
-            </Group>
-            <Text size="xs" c="dimmed" className="ops-media-control-meta">
-              {mediaRange} • {serverMediaFiltered.length} shown • {serverMedia.length} total
-              {selectionMode ? ` • ${selectedMediaIds.length} selected` : ""}
-            </Text>
-          </Stack>
+              <Text size="xs" c="dimmed" className="ops-media-control-meta">
+                {mediaRange} • {serverMediaFiltered.length} shown • {serverMedia.length} total
+                {selectionMode ? ` • ${selectedMediaIds.length} selected` : ""}
+              </Text>
+            </Stack>
+          </OpsToolbar>
 
           <Modal
             opened={filtersOpen}
@@ -560,245 +563,168 @@ export function MediaLibraryView({ vm }: { vm: MediaLibraryViewVm }) {
             </SimpleGrid>
 
             {serverMediaFiltered.length === 0 ? (
-              <Text size="sm" c="dimmed" mt="sm">
-                No media matches this filter.
-              </Text>
+              <OpsEmptyState
+                title="No media found"
+                description="No media matches the current search or filter settings."
+              />
             ) : null}
           </div>
 
+          {showMediaPagination ? (
+            <OpsPaginationBar
+              rangeLabel={mediaRange}
+              summary={`${serverMediaFiltered.length} shown • ${serverMedia.length} total`}
+              totalPages={mediaLibraryPageCount}
+              value={mediaLibraryPage}
+              onChange={setMediaLibraryPage}
+              size={isMobile ? "xs" : "sm"}
+              siblings={isMobile ? 0 : 1}
+              boundaries={isMobile ? 0 : 1}
+              withEdges={!isMobile}
+              sticky
+            />
+          ) : null}
         </Stack>
       ) : (
         <>
-          <Group justify="space-between" align="center" wrap="wrap">
-            <TextInput
-              className="ops-media-search-input"
-              leftSection={<IconSearch size={16} />}
-              placeholder="Search playlists by id, title, artist, description"
-              value={serverMediaQuery}
-              onChange={(e) => setServerMediaQuery(e.currentTarget.value)}
-            />
-            <SegmentedControl
-              value={playlistLibraryView}
-              onChange={(value) =>
-                setPlaylistLibraryView((value as "cards" | "table") || "cards")
-              }
-              size={isMobile ? "xs" : "sm"}
-              data={[
-                { value: "cards", label: "Cards" },
-                { value: "table", label: "Table" },
-              ]}
-            />
-          </Group>
+          <OpsToolbar sticky className="ops-toolbar-sticky-secondary">
+            <Group justify="space-between" align="center" wrap="wrap">
+              <TextInput
+                className="ops-media-search-input"
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search playlists by id, title, artist, description"
+                value={serverMediaQuery}
+                onChange={(e) => setServerMediaQuery(e.currentTarget.value)}
+              />
+              <Badge variant="light" color="blue">
+                Card view only
+              </Badge>
+            </Group>
+          </OpsToolbar>
 
-          {playlistLibraryView === "cards" ? (
-            <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
-              {playlistRowsPage.map((row) => (
-                <Card
-                  key={row.id}
-                  withBorder
-                  p="sm"
-                  className="ops-playlist-card"
-                  onClick={() => openPlaylistEditorRoute(row.id)}
-                >
-                  <Stack gap="xs">
-                    <PreviewTileCluster
-                      tiles={row.mediaIds.slice(0, 4).map((mediaId) => {
-                        const media = mergedMediaById.get(mediaId);
-                        const previewSrc = media
-                          ? media.thumbnailUrl ||
-                            (!isVideoMedia(media) ? mediaPreviewSource(media) || undefined : undefined)
-                          : undefined;
-                        return {
-                          src: previewSrc,
-                          label: media?.title || mediaId,
-                        };
-                      })}
-                      totalCount={row.mediaIds.length}
-                      height={176}
-                    />
-                    <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <Stack gap={2}>
-                        <Text fw={700} lineClamp={1}>
-                          {row.title || row.id}
-                        </Text>
-                      </Stack>
-                      <Badge size="sm" variant="light" color="blue">
-                        playlist
+          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="sm">
+            {playlistRowsPage.map((row) => (
+              <Card
+                key={row.id}
+                withBorder
+                p="sm"
+                className="ops-playlist-card"
+                onClick={() => openPlaylistEditorRoute(row.id)}
+              >
+                <Stack gap="xs">
+                  <PreviewTileCluster
+                    tiles={row.mediaIds.slice(0, 4).map((mediaId) => {
+                      const media = mergedMediaById.get(mediaId);
+                      const previewSrc = media
+                        ? media.thumbnailUrl ||
+                          (!isVideoMedia(media)
+                            ? mediaPreviewSource(media) || undefined
+                            : undefined)
+                        : undefined;
+                      return {
+                        src: previewSrc,
+                        label: media?.title || mediaId,
+                      };
+                    })}
+                    totalCount={row.mediaIds.length}
+                    height={176}
+                  />
+                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                    <Stack gap={2}>
+                      <Text fw={700} lineClamp={1}>
+                        {row.title || row.id}
+                      </Text>
+                    </Stack>
+                    <Badge size="sm" variant="light" color="blue">
+                      playlist
+                    </Badge>
+                  </Group>
+                  <Group gap={6}>
+                    <Badge size="sm" variant="light">
+                      {row.mediaIds.length} items
+                    </Badge>
+                    {row.artist ? (
+                      <Badge size="sm" variant="light" color="gray">
+                        {row.artist}
                       </Badge>
-                    </Group>
-                    <Group gap={6}>
-                      <Badge size="sm" variant="light">
-                        {row.mediaIds.length} items
-                      </Badge>
-                      {row.artist ? (
-                        <Badge size="sm" variant="light" color="gray">
-                          {row.artist}
-                        </Badge>
-                      ) : null}
-                    </Group>
-                    <Text size="sm" c="dimmed" lineClamp={2}>
-                      {row.description || "No description"}
-                    </Text>
-                    <Group gap={6} grow className="ops-card-actions">
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="blue"
-                        leftSection={<IconPencil size={14} />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openPlaylistEditorRoute(row.id);
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="cyan"
-                        leftSection={<IconBroadcast size={14} />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openQuickSend({
-                            kind: "playlist",
-                            id: row.id,
-                            label: row.title || row.id,
-                          });
-                        }}
-                      >
-                        Send
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="red"
-                        leftSection={<IconTrash size={14} />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void deletePlaylistDraft(row.id);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </Group>
-                  </Stack>
-                </Card>
-              ))}
-            </SimpleGrid>
-          ) : (
-            <Card withBorder p="sm">
-              <ScrollArea>
-                <Table striped highlightOnHover withTableBorder withColumnBorders>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Title</Table.Th>
-                      <Table.Th>Artist</Table.Th>
-                      <Table.Th>Description</Table.Th>
-                      <Table.Th>Items</Table.Th>
-                      <Table.Th w={248}>Actions</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {playlistRowsPage.map((row) => (
-                      <Table.Tr
-                        key={row.id}
-                        onClick={() => openPlaylistEditorRoute(row.id)}
-                        style={
-                          selectedPlaylistId === row.id
-                            ? {
-                                background: "rgba(56, 132, 227, 0.18)",
-                                cursor: "pointer",
-                              }
-                            : { cursor: "pointer" }
-                        }
-                      >
-                        <Table.Td>{row.title || "untitled"}</Table.Td>
-                        <Table.Td>{row.artist || "—"}</Table.Td>
-                        <Table.Td>
-                          <Text size="sm" c="dimmed" lineClamp={1}>
-                            {row.description || "—"}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>{row.mediaIds.length}</Table.Td>
-                        <Table.Td>
-                          <Group gap={6} wrap="nowrap">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="blue"
-                              leftSection={<IconPencil size={14} />}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openPlaylistEditorRoute(row.id);
-                              }}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="cyan"
-                              leftSection={<IconBroadcast size={14} />}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openQuickSend({
-                                  kind: "playlist",
-                                  id: row.id,
-                                  label: row.title || row.id,
-                                });
-                              }}
-                            >
-                              Send
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="red"
-                              leftSection={<IconTrash size={14} />}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void deletePlaylistDraft(row.id);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </Group>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Card>
-          )}
+                    ) : null}
+                  </Group>
+                  <Text size="sm" c="dimmed" lineClamp={2}>
+                    {row.description || "No description"}
+                  </Text>
+                  <Group gap={6} grow className="ops-card-actions">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="blue"
+                      leftSection={<IconPencil size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openPlaylistEditorRoute(row.id);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="cyan"
+                      leftSection={<IconBroadcast size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openQuickSend({
+                          kind: "playlist",
+                          id: row.id,
+                          label: row.title || row.id,
+                        });
+                      }}
+                    >
+                      Send
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconTrash size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void deletePlaylistDraft(row.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </Group>
+                </Stack>
+              </Card>
+            ))}
+          </SimpleGrid>
 
-          <Group justify="space-between" mt="xs" wrap="wrap">
-            <Text size="xs" c="dimmed">
-              {tableRangeLabel(playlistCount, playlistTablePage, TABLE_PAGE_SIZE.playlists)}
-            </Text>
-            <Pagination
-              total={playlistTablePageCount}
-              value={playlistTablePage}
-              onChange={setPlaylistTablePage}
-              size={isMobile ? "sm" : "md"}
-              siblings={1}
-              boundaries={1}
-              withEdges
-            />
-          </Group>
+          <OpsPaginationBar
+            rangeLabel={tableRangeLabel(
+              playlistCount,
+              playlistTablePage,
+              TABLE_PAGE_SIZE.playlists
+            )}
+            summary={`${playlistCount} shown • ${playlistTotalCount} total`}
+            totalPages={playlistTablePageCount}
+            value={playlistTablePage}
+            onChange={setPlaylistTablePage}
+            size={isMobile ? "sm" : "md"}
+            sticky
+          />
 
           {playlistTotalCount === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No playlists yet. Create one to start assembling programming.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No playlists yet"
+              description="Create a playlist to start assembling programming."
+              actionLabel="New Playlist"
+              onAction={() => openPlaylistEditorRoute()}
+            />
           ) : playlistCount === 0 ? (
-            <Paper withBorder p="md">
-              <Text size="sm" c="dimmed">
-                No playlists match this search.
-              </Text>
-            </Paper>
+            <OpsEmptyState
+              title="No playlists found"
+              description="No playlists match the current search."
+            />
           ) : null}
         </>
       )}

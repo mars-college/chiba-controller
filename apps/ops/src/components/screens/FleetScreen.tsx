@@ -84,6 +84,7 @@ export type FleetScreenVm = {
   nodeStashClearing: boolean;
   nodeStash: any;
   clearNodeStash: () => Promise<void>;
+  deleteNodeStashItem: (fileName: string) => Promise<void>;
   nodeStashError: string | null;
   sendNodeInputAction: (action: NodeRuntimeInputAction) => Promise<void>;
   nodeInputBusy: boolean;
@@ -196,6 +197,7 @@ export type FleetScreenVm = {
   fleetPage: number;
   setFleetPage: (page: number) => void;
   fleetPageCount: number;
+  mergedMedia: Media[];
   mergedMediaById: Map<string, Media>;
   mergedPlaylists: Array<{
     id: string;
@@ -213,6 +215,30 @@ type WorkspacePanel =
   | "edit"
   | "stash"
   | "runtime";
+
+function cacheSourceExt(sourceValue: string): string {
+  const raw = sourceValue.trim();
+  if (!raw) return "";
+  try {
+    const pathname = new URL(raw).pathname || "";
+    const match = pathname.match(/\.[a-z0-9]+$/i);
+    return match ? match[0].toLowerCase() : "";
+  } catch {
+    const match = raw.match(/\.[a-z0-9]+$/i);
+    return match ? match[0].toLowerCase() : "";
+  }
+}
+
+async function sha1Hex(value: string): Promise<string> {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    throw new Error("sha1_unavailable");
+  }
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-1", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
   const {
@@ -237,6 +263,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     nodeStashClearing,
     nodeStash,
     clearNodeStash,
+    deleteNodeStashItem,
     nodeStashError,
     sendNodeInputAction,
     nodeInputBusy,
@@ -314,6 +341,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
     fleetPage,
     setFleetPage,
     fleetPageCount,
+    mergedMedia,
     mergedMediaById,
     mergedPlaylists,
   } = vm;
@@ -699,6 +727,79 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
   const runtimeCacheDownloadProgress = runtimeCacheProgress?.active
     ? runtimeCacheProgress
     : null;
+  const [stashPreviewMap, setStashPreviewMap] = useState<
+    Record<
+      string,
+      {
+        mediaId: string;
+        label: string;
+        subtitle: string;
+        previewSrc: string | null;
+      }
+    >
+  >({});
+
+  useEffect(() => {
+    const fileNames = new Set(
+      (nodeStash?.cache?.files ?? [])
+        .map((file: { name?: unknown }) =>
+          typeof file.name === "string" ? file.name.trim() : ""
+        )
+        .filter(Boolean)
+    );
+    if (fileNames.size === 0 || mergedMedia.length === 0) {
+      setStashPreviewMap({});
+      return;
+    }
+    if (typeof crypto === "undefined" || !crypto.subtle) {
+      setStashPreviewMap({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nextEntries = await Promise.all(
+          mergedMedia.map(async (media) => {
+            const ext = cacheSourceExt(media.sourceValue) || ".bin";
+            const fileName = `${await sha1Hex(`${media.id}:${media.sourceValue}`)}${ext}`;
+            if (!fileNames.has(fileName)) return null;
+            return [
+              fileName,
+              {
+                mediaId: media.id,
+                label: media.title || media.id,
+                subtitle: media.artist || media.id,
+                previewSrc: media.thumbnailUrl || mediaPreviewSource(media),
+              },
+            ] as const;
+          })
+        );
+        if (cancelled) return;
+        setStashPreviewMap(
+          Object.fromEntries(
+            nextEntries.filter(
+              (
+                entry
+              ): entry is readonly [
+                string,
+                {
+                  mediaId: string;
+                  label: string;
+                  subtitle: string;
+                  previewSrc: string | null;
+                }
+              ] => Boolean(entry)
+            )
+          )
+        );
+      } catch {
+        if (!cancelled) setStashPreviewMap({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mergedMedia, nodeStash]);
 
   return (
     <Tabs.Panel value="fleet" pt="md">
@@ -985,7 +1086,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconAdjustments size={14} />}
                           onClick={openAssignPanel}
                         >
-                          Assign Media/Container
+                          Assign Target
                         </Button>
                         <Button
                           variant="light"
@@ -993,14 +1094,14 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconKeyboard size={14} />}
                           onClick={openControlPanel}
                         >
-                          Control App/Web
+                          Remote Ops
                         </Button>
                         <Button
                           variant="light"
                           leftSection={<IconBroadcast size={14} />}
                           onClick={() => setWorkspacePanel("runtime")}
                         >
-                          Inspect Runtime
+                          Runtime Details
                         </Button>
                         <Button
                           variant="light"
@@ -1016,7 +1117,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconDownload size={14} />}
                           onClick={openStashPanel}
                         >
-                          Inspect Media Stash
+                          Media Stash
                         </Button>
                       </Stack>
                     </Stack>
@@ -1067,7 +1168,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconAdjustments size={14} />}
                           onClick={openAssignPanel}
                         >
-                          Assign Media/Container
+                          Assign Target
                         </Button>
                         <Button
                           variant="light"
@@ -1258,19 +1359,55 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                               >
                                 <Table.Thead>
                                   <Table.Tr>
+                                    <Table.Th w={112}>Preview</Table.Th>
                                     <Table.Th>File</Table.Th>
                                     <Table.Th w={120}>Size</Table.Th>
                                     <Table.Th w={180}>Updated</Table.Th>
+                                    <Table.Th w={104}>Actions</Table.Th>
                                   </Table.Tr>
                                 </Table.Thead>
                                 <Table.Tbody>
-                                  {filteredNodeStashItems.map((file) => (
+                                  {filteredNodeStashItems.map((file) => {
+                                    const preview = stashPreviewMap[file.fileName];
+                                    return (
                                     <Table.Tr key={`stash-${file.fileName}`}>
+                                      <Table.Td>
+                                        {preview?.previewSrc ? (
+                                          <Image
+                                            src={preview.previewSrc}
+                                            alt={preview.label}
+                                            h={48}
+                                            w={80}
+                                            fit="cover"
+                                            radius="sm"
+                                          />
+                                        ) : (
+                                          <Paper withBorder p="xs" radius="sm">
+                                            <Text size="xs" c="dimmed">
+                                              No preview
+                                            </Text>
+                                          </Paper>
+                                        )}
+                                      </Table.Td>
                                       <Table.Td>
                                         <Stack gap={4}>
                                           <Text size="xs" ff="monospace">
                                             {file.fileName}
                                           </Text>
+                                          {preview ? (
+                                            <Group gap={8} wrap="nowrap">
+                                              <Badge size="sm" variant="light" color="blue">
+                                                matched
+                                              </Badge>
+                                              <Text
+                                                size="xs"
+                                                c="dimmed"
+                                                lineClamp={1}
+                                              >
+                                                {preview.label}
+                                              </Text>
+                                            </Group>
+                                          ) : null}
                                           {runtimePlaybackFileName ===
                                             file.fileName &&
                                           workspacePlaybackMedia ? (
@@ -1312,8 +1449,22 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                           ).toLocaleString()}
                                         </Text>
                                       </Table.Td>
+                                      <Table.Td>
+                                        <Button
+                                          size="xs"
+                                          variant="light"
+                                          color="red"
+                                          leftSection={<IconTrash size={12} />}
+                                          loading={nodeStashClearing}
+                                          onClick={() =>
+                                            void deleteNodeStashItem(file.fileName)
+                                          }
+                                        >
+                                          Delete
+                                        </Button>
+                                      </Table.Td>
                                     </Table.Tr>
-                                  ))}
+                                  )})}
                                 </Table.Tbody>
                               </Table>
                             </ScrollArea>

@@ -5,17 +5,20 @@ import {
   Button,
   Group,
   NumberInput,
-  Paper,
   Select,
   SimpleGrid,
   Stack,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
 import { IconAdjustments } from "@tabler/icons-react";
 import type { OpsApplyResponse, OpsApplyTarget } from "../types";
-import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import { type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import {
+  OpsFormDock,
+  OpsPageHeader,
+  OpsSurface,
+} from "./ui/OpsSurface";
 
 type AssignTargetPanelProps = {
   selectedNodeCount: number;
@@ -112,19 +115,27 @@ export function AssignTargetPanel({
     selectedNodeCount > 0 && (applyId.trim().length > 0 || hasLaunchOverrides);
 
   return (
-    <Paper withBorder p="md" radius="md">
+    <OpsSurface>
       <Stack gap="md">
-        <Stack gap={4}>
-          <DetailBreadcrumbs items={breadcrumbs} />
-          <Title order={5}>Assign Target + Launch Options</Title>
-        </Stack>
+        <OpsPageHeader
+          title="Assign Target + Launch Options"
+          description='Apply media/container state to selected nodes. Use "inherit" to keep existing launch behavior.'
+          breadcrumbs={breadcrumbs}
+          compact
+          meta={
+            <>
+              <Badge variant="light">{selectedNodeCount} selected</Badge>
+              {hasLaunchOverrides ? (
+                <Badge variant="light" color="teal">
+                  overrides ready
+                </Badge>
+              ) : null}
+            </>
+          }
+        />
 
-        <Text size="sm" c="dimmed">
-          Apply media/container state to selected nodes. Use "inherit" to keep
-          existing launch behavior.
-        </Text>
-
-        <Accordion multiple defaultValue={["target", "playback", "overlays"]}>
+        <OpsSurface padded="md">
+          <Accordion multiple defaultValue={["target", "playback", "overlays"]}>
           <Accordion.Item value="target">
             <Accordion.Control>Target</Accordion.Control>
             <Accordion.Panel>
@@ -334,37 +345,28 @@ export function AssignTargetPanel({
             </Accordion.Panel>
           </Accordion.Item>
 
-        </Accordion>
+          </Accordion>
+        </OpsSurface>
 
-        <Group justify="space-between" wrap="wrap">
-          <Text size="sm" c="dimmed">
-            {selectedNodeCount} selected node(s)
-          </Text>
-          <Group gap="xs">
-            <Button variant="light" color="gray" onClick={onClose}>
-              Close
-            </Button>
-            <Button
-              leftSection={<IconAdjustments size={16} />}
-              onClick={() => void runApply()}
-              disabled={!canApply}
-            >
-              Apply to selected
-            </Button>
-          </Group>
-        </Group>
-
-        {applyResult ? (
-          <Paper withBorder p="sm">
-            <Text fw={600} mb={4}>
-              Last apply
-            </Text>
-            <Text size="sm" c={applyResult.ok ? "teal" : "orange"}>
-              {summarizeApplyResult(applyResult)}
-            </Text>
-          </Paper>
-        ) : null}
+        <OpsFormDock
+          secondaryLabel="Close"
+          onSecondary={onClose}
+          primaryLabel="Apply to selected"
+          onPrimary={() => void runApply()}
+          primaryDisabled={!canApply}
+          aside={
+            applyResult ? (
+              <Text size="xs" c={applyResult.ok ? "teal" : "orange"}>
+                {summarizeApplyResult(applyResult)}
+              </Text>
+            ) : (
+              <Text size="xs" c="dimmed">
+                Select a target or set launch overrides to apply changes.
+              </Text>
+            )
+          }
+        />
       </Stack>
-    </Paper>
+    </OpsSurface>
   );
 }

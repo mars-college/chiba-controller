@@ -19,11 +19,13 @@ import type {
 import {
   NodeRuntimeInputActionSchema,
   OpsNodeCacheClearResponseSchema,
+  OpsNodeCacheDeleteResponseSchema,
   OpsNodeCacheInspectResponseSchema,
   OpsNodeInputResponseSchema,
   OpsNodeRuntimeStatusResponseSchema,
   type NodeRuntimeInputAction,
   type OpsNodeCacheClearResponse,
+  type OpsNodeCacheDeleteResponse,
   type OpsNodeCacheInspectResponse,
   type OpsNodeInputResponse,
   type OpsNodeRuntimeStatusResponse,
@@ -163,6 +165,27 @@ export async function clearOpsNodeCache(nodeId: string): Promise<OpsNodeCacheCle
     res,
     schema: OpsNodeCacheClearResponseSchema,
     errorPrefix: 'node_cache_clear_failed',
+  })
+}
+
+export async function deleteOpsNodeCacheFile(
+  nodeId: string,
+  fileName: string
+): Promise<OpsNodeCacheDeleteResponse> {
+  const id = nodeId.trim()
+  const normalizedFileName = fileName.trim()
+  if (!id) throw new Error('node_cache_delete_failed:400:node_id_required')
+  if (!normalizedFileName) throw new Error('node_cache_delete_failed:400:file_name_required')
+  const res = await fetch(
+    `/api/ops/nodes/${encodeURIComponent(id)}/cache/${encodeURIComponent(normalizedFileName)}`,
+    {
+      method: 'DELETE',
+    }
+  )
+  return parseJsonResponseOrThrow({
+    res,
+    schema: OpsNodeCacheDeleteResponseSchema,
+    errorPrefix: 'node_cache_delete_failed',
   })
 }
 

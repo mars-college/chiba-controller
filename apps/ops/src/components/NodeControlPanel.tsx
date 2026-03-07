@@ -5,14 +5,12 @@ import {
   Checkbox,
   Divider,
   Group,
-  Paper,
   Select,
   SimpleGrid,
   Stack,
   Text,
   TextInput,
   Textarea,
-  Title,
 } from "@mantine/core";
 import {
   IconArrowDown,
@@ -30,7 +28,8 @@ import type {
   OpsNodeDisplayModeResponse,
 } from "../types";
 import { fetchOpsBootstrapDefaults } from "../lib/api";
-import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import { type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import { OpsPageHeader, OpsSurface } from "./ui/OpsSurface";
 
 type NodeControlPanelProps = {
   selectedNodeCount: number;
@@ -238,12 +237,14 @@ export function NodeControlPanel({
   const bootstrapStderrValue = bootstrapResult?.stderr ?? bootstrapStderr;
 
   return (
-    <Paper withBorder p="md" radius="md">
+    <OpsSurface>
       <Stack gap="md">
-        <Stack gap={4}>
-          <DetailBreadcrumbs items={breadcrumbs} />
-          <Title order={5}>Control App/Web</Title>
-        </Stack>
+        <OpsPageHeader
+          title="Remote Ops"
+          description="Send input to the active runtime window, bootstrap node runtime defaults, and manage display mode without leaving Ops."
+          breadcrumbs={breadcrumbs}
+          compact
+        />
 
         <Group gap="xs" wrap="wrap">
           <Badge variant="light">{selectedNodeCount} selected node(s)</Badge>
@@ -262,7 +263,7 @@ export function NodeControlPanel({
           the selected node.
         </Text>
 
-        <Paper withBorder p="sm" radius="sm">
+        <OpsSurface padded="sm">
           <Stack gap="sm">
             <Group gap={8}>
               <IconKeyboard size={16} />
@@ -284,9 +285,9 @@ export function NodeControlPanel({
               ))}
             </SimpleGrid>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Paper withBorder p="sm" radius="sm">
+        <OpsSurface padded="sm">
           <Stack gap="sm">
             <Group gap={8}>
               <IconSend size={16} />
@@ -313,9 +314,9 @@ export function NodeControlPanel({
               </Button>
             </Group>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Paper withBorder p="sm" radius="sm">
+        <OpsSurface padded="sm">
           <Stack gap="sm">
             <Group gap={8}>
               <IconClick size={16} />
@@ -342,7 +343,7 @@ export function NodeControlPanel({
               </Button>
             </Group>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
         {error ? (
           <Text size="sm" c="red">
@@ -352,7 +353,7 @@ export function NodeControlPanel({
 
         <Divider label="Node Bootstrap" labelPosition="center" />
 
-        <Paper withBorder p="sm" radius="sm">
+        <OpsSurface padded="sm">
           <Stack gap="sm">
             <Text fw={600}>Bootstrap Node Runtime</Text>
             <Text size="sm" c="dimmed">
@@ -476,11 +477,11 @@ export function NodeControlPanel({
               />
             ) : null}
           </Stack>
-        </Paper>
+        </OpsSurface>
 
         <Divider label="Display Mode" labelPosition="center" />
 
-        <Paper withBorder p="sm" radius="sm">
+        <OpsSurface padded="sm">
           <Stack gap="sm">
             <Text fw={600}>Display Mode (System)</Text>
             <Text size="sm" c="dimmed">
@@ -586,7 +587,7 @@ export function NodeControlPanel({
               />
             ) : null}
           </Stack>
-        </Paper>
+        </OpsSurface>
 
         <Group justify="space-between">
           <Button variant="light" onClick={onClose}>
@@ -594,6 +595,6 @@ export function NodeControlPanel({
           </Button>
         </Group>
       </Stack>
-    </Paper>
+    </OpsSurface>
   );
 }

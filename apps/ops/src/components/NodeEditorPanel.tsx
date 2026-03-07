@@ -1,18 +1,20 @@
 import type { Dispatch, SetStateAction } from "react";
 import {
   Badge,
-  Button,
   Group,
   NumberInput,
-  Paper,
   Select,
   SimpleGrid,
   Stack,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
-import { DetailBreadcrumbs, type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import { type DetailBreadcrumb } from "./DetailBreadcrumbs";
+import {
+  OpsFormDock,
+  OpsPageHeader,
+  OpsSurface,
+} from "./ui/OpsSurface";
 
 export type NodeDraft = {
   registryId: string;
@@ -47,25 +49,24 @@ export function NodeEditorPanel({
   onClose,
   breadcrumbs,
 }: NodeEditorPanelProps) {
+  const canSave = Boolean(
+    nodeDraft.registryId.trim() && nodeDraft.nodeId.trim()
+  );
+
   return (
-    <Paper withBorder p="md" radius="md">
+    <OpsSurface>
       <Stack gap="md">
-        <Stack gap={4}>
-          <DetailBreadcrumbs items={breadcrumbs} />
-          <Title order={5}>
-            {editingNodeId ? `Edit Node • ${editingNodeId}` : "Add Node"}
-          </Title>
-        </Stack>
+        <OpsPageHeader
+          title={editingNodeId ? `Edit Node • ${editingNodeId}` : "New Node"}
+          description="Node records drive fleet probing, deployments, and profile overrides. Define identity first, then network/runtime settings."
+          breadcrumbs={breadcrumbs}
+          compact
+        />
 
-        <Text size="sm" c="dimmed">
-          Node records drive fleet probing, deployments, and profile overrides.
-          Define identity first, then network/runtime settings.
-        </Text>
-
-        <Paper withBorder p="md" radius="md">
+        <OpsSurface padded="md">
           <Stack gap="sm">
             <Group justify="space-between">
-              <Title order={6}>Identity</Title>
+              <Text fw={700}>Identity</Text>
               <Badge color="red" variant="light">
                 Required
               </Badge>
@@ -118,11 +119,11 @@ export function NodeEditorPanel({
               />
             </SimpleGrid>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Paper withBorder p="md" radius="md">
+        <OpsSurface padded="md">
           <Stack gap="sm">
-            <Title order={6}>Network</Title>
+            <Text fw={700}>Network</Text>
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               <TextInput
                 label="Host"
@@ -144,11 +145,11 @@ export function NodeEditorPanel({
               />
             </SimpleGrid>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Paper withBorder p="md" radius="md">
+        <OpsSurface padded="md">
           <Stack gap="sm">
-            <Title order={6}>Node Runtime</Title>
+            <Text fw={700}>Node Runtime</Text>
             <Text size="sm" c="dimmed">
               Configure node-local runtime only. Guide/Cable app endpoints are
               server-hosted and not configured per node.
@@ -191,12 +192,12 @@ export function NodeEditorPanel({
               />
             </SimpleGrid>
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Paper withBorder p="md" radius="md">
+        <OpsSurface padded="md">
           <Stack gap="sm">
             <Group justify="space-between">
-              <Title order={6}>Security</Title>
+              <Text fw={700}>Security</Text>
               <Badge color="gray" variant="light">
                 Optional
               </Badge>
@@ -211,21 +212,28 @@ export function NodeEditorPanel({
               }}
             />
           </Stack>
-        </Paper>
+        </OpsSurface>
 
-        <Group justify="space-between">
-          <Button variant="light" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void onSave()}
-            loading={saving}
-            disabled={!nodeDraft.registryId.trim() || !nodeDraft.nodeId.trim()}
-          >
-            {editingNodeId ? "Save Node" : "Create Node"}
-          </Button>
-        </Group>
+        <OpsFormDock
+          secondaryLabel="Cancel"
+          onSecondary={onClose}
+          primaryLabel={editingNodeId ? "Save Node" : "Create Node"}
+          onPrimary={() => void onSave()}
+          primaryLoading={saving}
+          primaryDisabled={!canSave}
+          aside={
+            canSave ? (
+              <Text size="xs" c="dimmed">
+                Required fields are complete.
+              </Text>
+            ) : (
+              <Text size="xs" c="dimmed">
+                Registry ID and Node ID are required.
+              </Text>
+            )
+          }
+        />
       </Stack>
-    </Paper>
+    </OpsSurface>
   );
 }
