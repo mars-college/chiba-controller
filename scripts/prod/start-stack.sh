@@ -20,7 +20,7 @@ LOG_TAIL=200
 usage() {
   cat <<EOF
 Usage:
-  $0 [start|stop|restart|status|logs] [options]
+  $0 [start|stop|restart|import-registries|status|logs] [options]
 
 Options:
   --env-file PATH        Compose env file (default: ${ENV_FILE})
@@ -41,7 +41,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    start|stop|restart|status|logs)
+    start|stop|restart|import-registries|status|logs)
       ACTION="$1"
       shift
       ;;
@@ -312,6 +312,12 @@ case "${ACTION}" in
     fi
     compose_cmd "${up_args[@]}"
     compose_cmd ps
+    ;;
+  import-registries)
+    echo "Running DB migrations..."
+    compose_cmd run --rm db-migrate
+    echo "Importing registries from compose config..."
+    compose_cmd run --rm db-import-registries
     ;;
   status)
     compose_cmd ps

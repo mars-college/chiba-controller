@@ -62,12 +62,19 @@ Defaults are already set for host `10.10.13.9`, with hostname routing on port `8
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-The prod compose stack includes one-shot init jobs:
+The prod compose stack includes one-shot init jobs/services:
 
 - DB migrations (`db-migrate`)
 - registry import (`db-import-registries`)
 
-That import includes `config/registry.prod.toml` with `registryId=prod`.
+Normal `start` and `restart` no longer re-import registries, so Ops edits to node inventory persist in the database.
+When you intentionally want to replace node inventory from `config/registry.prod.toml`, run:
+
+```bash
+pnpm prod:import-registries
+```
+
+That import uses `config/registry.prod.toml` with `registryId=prod`.
 
 3. Check status:
 

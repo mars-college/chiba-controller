@@ -96,8 +96,6 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-      db-import-registries:
-        condition: service_completed_successfully
     restart: unless-stopped
     environment:
       HOST: 0.0.0.0

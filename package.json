@@ -23,6 +23,7 @@
     "prod:up": "bash ./scripts/prod/start-stack.sh start",
     "prod:down": "bash ./scripts/prod/start-stack.sh stop",
     "prod:restart": "bash ./scripts/prod/start-stack.sh restart",
+    "prod:import-registries": "bash ./scripts/prod/start-stack.sh import-registries",
     "prod:status": "bash ./scripts/prod/start-stack.sh status",
     "prod:logs": "bash ./scripts/prod/start-stack.sh logs",
     "db:up": "docker compose up -d postgres",
