@@ -4,7 +4,7 @@
 [defaults]
 user = "pi"
 controller_url = "http://10.10.13.9:24422/"
-control_plane_url = "http://10.10.13.9:8795"
+control_plane_url = "http://chiba.mars.college:8795"
 guide_port = 5173
 node_port = 8080
 server_port = 8787

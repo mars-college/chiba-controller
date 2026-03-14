@@ -34,7 +34,7 @@ docker compose up --build
 
 3. Open:
 
-- Ops: `http://127.0.0.1:8792/ops/`
+- Ops: `http://127.0.0.1:8792/`
 - Control API: `http://127.0.0.1:8795`
 - Guide: `http://127.0.0.1:5173`
 - MinIO API: `http://127.0.0.1:9100`
@@ -51,7 +51,10 @@ the local Docker stack reuse the same asset files across restarts.
 cp .env.prod.example .env.prod
 ```
 
-Defaults are already set for host `10.10.13.9`.
+Defaults are already set for host `10.10.13.9`, with hostname routing on port `80`:
+
+- Ops: `http://chiba.mars.college/`
+- Guide: `http://cable.mars.college/`
 
 2. Start the production stack:
 
@@ -84,13 +87,13 @@ bash ./scripts/prod/start-stack.sh logs
 
 Ops now exposes node bootstrap in the Node Workspace control panel.
 
-1. Open Ops: `http://10.10.13.9:8792/ops/`
+1. Open Ops: `http://chiba.mars.college/`
 2. Go to `Fleet` -> select a node -> `Control App/Web`
 3. In `Bootstrap Node Runtime`, set:
 
-- `Lookup Control API URL`: `http://10.10.13.9:8795`
-- `Node Control API URL`: `http://10.10.13.9:8795`
-- `Guide Base URL`: `http://10.10.13.9:5173`
+- `Lookup Control API URL`: `http://chiba.mars.college:8795`
+- `Node Control API URL`: `http://chiba.mars.college:8795`
+- `Guide Base URL`: `http://cable.mars.college`
 - `Namespace`: `prod`
 - `Registry ID`: `prod`
 
@@ -102,9 +105,9 @@ The panel shows command, stdout, stderr, and exit code.
 
 ```bash
 bash ./scripts/pis/bootstrap-node-runtime.sh <node-id> \
-  --control-api-url http://10.10.13.9:8795 \
-  --node-control-api-url http://10.10.13.9:8795 \
-  --guide-base-url http://10.10.13.9:5173 \
+  --control-api-url http://chiba.mars.college:8795 \
+  --node-control-api-url http://chiba.mars.college:8795 \
+  --guide-base-url http://cable.mars.college \
   --namespace prod \
   --registry-id prod \
   --endpoints-only

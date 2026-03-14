@@ -105,7 +105,7 @@ services:
       CHIBA3_NAMESPACE: ${CHIBA3_NAMESPACE:-prod}
       CHIBA3_REGISTRY_ID: ${CHIBA3_REGISTRY_ID:-prod}
       CHIBA3_DB_URL: postgresql://${POSTGRES_USER:-chiba}:${POSTGRES_PASSWORD:-chiba}@postgres:5432/${POSTGRES_DB:-chiba3}
-      CHIBA3_GUIDE_BASE_URL: ${CHIBA3_GUIDE_BASE_URL:-http://10.10.13.9:${GUIDE_PORT:-5173}}
+      CHIBA3_GUIDE_BASE_URL: ${CHIBA3_GUIDE_BASE_URL:-http://cable.mars.college}
       SHARE_ROOT: /share
       CHIBA3_THUMBNAIL_BACKEND: minio
       CHIBA3_S3_ENDPOINT_URL: http://minio:9000
@@ -115,8 +115,8 @@ services:
       CHIBA3_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       EDEN_API_KEY: ${EDEN_API_KEY:-}
       CHIBA3_REMOTE_URL: ${CHIBA3_REMOTE_URL:-}
-      CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL: ${CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL:-http://10.10.13.9:${CONTROL_API_PORT:-8795}}
-      CHIBA3_BOOTSTRAP_GUIDE_BASE_URL: ${CHIBA3_BOOTSTRAP_GUIDE_BASE_URL:-http://10.10.13.9:${GUIDE_PORT:-5173}}
+      CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL: ${CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL:-http://chiba.mars.college:${CONTROL_API_PORT:-8795}}
+      CHIBA3_BOOTSTRAP_GUIDE_BASE_URL: ${CHIBA3_BOOTSTRAP_GUIDE_BASE_URL:-http://cable.mars.college}
     command: ["pnpm", "-C", "apps/control-api", "start"]
     ports:
       - "${CONTROL_API_PORT:-8795}:8795"
@@ -144,7 +144,7 @@ services:
     ports:
       - "${OPS_PORT:-8792}:8792"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8792/ops/ >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8792/ >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 20
@@ -169,6 +169,20 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
+
+  web:
+    image: caddy:2-alpine
+    container_name: chiba-controller-prod-web
+    depends_on:
+      ops:
+        condition: service_healthy
+      guide:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/Caddyfile.prod:/etc/caddy/Caddyfile:ro
 
   node-runtime:
     build:

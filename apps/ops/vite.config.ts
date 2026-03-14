@@ -15,8 +15,6 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react()],
-  // Served from cable server at /ops/
-  base: '/ops/',
   server: {
     port: 8792,
     strictPort: true,
