@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 const controlApiTarget =
   process.env.CHIBA3_CONTROL_API_PROXY_TARGET ?? "http://localhost:8795";
 const controlApiWsTarget = controlApiTarget.replace(/^http/i, "ws");
+const allowedHosts = ["cable.mars.college", "chiba.mars.college"];
 
 // https://vite.dev/config/
 // We serve the Guide from Vite (dev + preview) on port 5173, while the backend
@@ -64,9 +65,11 @@ export default defineConfig({
     // reactScan()
   ],
   server: {
+    allowedHosts,
     proxy,
   },
   preview: {
+    allowedHosts,
     proxy,
   },
 });
