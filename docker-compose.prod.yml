@@ -105,7 +105,7 @@ services:
       CHIBA3_NAMESPACE: ${CHIBA3_NAMESPACE:-prod}
       CHIBA3_REGISTRY_ID: ${CHIBA3_REGISTRY_ID:-prod}
       CHIBA3_DB_URL: postgresql://${POSTGRES_USER:-chiba}:${POSTGRES_PASSWORD:-chiba}@postgres:5432/${POSTGRES_DB:-chiba3}
-      CHIBA3_GUIDE_BASE_URL: ${CHIBA3_GUIDE_BASE_URL:-http://cable.mars.college}
+      CHIBA3_GUIDE_BASE_URL: ${CHIBA3_GUIDE_BASE_URL:-http://10.10.13.9:${GUIDE_PORT:-5173}}
       SHARE_ROOT: /share
       CHIBA3_THUMBNAIL_BACKEND: minio
       CHIBA3_S3_ENDPOINT_URL: http://minio:9000
@@ -116,7 +116,7 @@ services:
       EDEN_API_KEY: ${EDEN_API_KEY:-}
       CHIBA3_REMOTE_URL: ${CHIBA3_REMOTE_URL:-}
       CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL: ${CHIBA3_BOOTSTRAP_NODE_CONTROL_API_URL:-http://chiba.mars.college:${CONTROL_API_PORT:-8795}}
-      CHIBA3_BOOTSTRAP_GUIDE_BASE_URL: ${CHIBA3_BOOTSTRAP_GUIDE_BASE_URL:-http://cable.mars.college}
+      CHIBA3_BOOTSTRAP_GUIDE_BASE_URL: ${CHIBA3_BOOTSTRAP_GUIDE_BASE_URL:-http://10.10.13.9:${GUIDE_PORT:-5173}}
     command: ["pnpm", "-C", "apps/control-api", "start"]
     ports:
       - "${CONTROL_API_PORT:-8795}:8795"

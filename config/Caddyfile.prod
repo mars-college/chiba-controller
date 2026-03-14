@@ -1,12 +1,7 @@
 :80 {
-  @ops host chiba.mars.college
+  @ops host cable.mars.college chiba.mars.college
   handle @ops {
     reverse_proxy ops:8792
-  }
-
-  @guide host cable.mars.college
-  handle @guide {
-    reverse_proxy guide:5173
   }
 
   respond "unknown host" 404
