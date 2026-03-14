@@ -40,6 +40,9 @@ docker compose up --build
 - MinIO API: `http://127.0.0.1:9100`
 - MinIO console: `http://127.0.0.1:9101`
 
+Local uploaded media is stored under `.local/share-root/` so host-run dev servers and
+the local Docker stack reuse the same asset files across restarts.
+
 ## Production (10.10.13.9)
 
 1. Prepare env file:

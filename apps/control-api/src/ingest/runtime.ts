@@ -19,6 +19,7 @@ import {
   parseEdenCollectionInput,
   type EdenDb,
 } from "./service.js";
+import { getAssetsRoot, getThumbsRoot } from "../share-root.js";
 
 export type UploadedFile = {
   fieldName: string;
@@ -43,18 +44,6 @@ type PersistResourcesFn = (args: {
   db: Cable3Db;
   payload: ResourceImportPayload;
 }) => Promise<ImportCounts>;
-
-function getShareRoot(): string {
-  return process.env.SHARE_ROOT?.trim() || path.join(os.tmpdir(), "share-root");
-}
-
-function getAssetsRoot(): string {
-  return path.join(getShareRoot(), "chiba-cable", "assets");
-}
-
-function getThumbsRoot(): string {
-  return path.join(getAssetsRoot(), ".thumbs");
-}
 
 function getThumbPublicUrl(fileName: string): string {
   return `/api/v1/assets/thumbs/${encodeURIComponent(fileName)}`;

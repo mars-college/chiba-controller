@@ -87,6 +87,11 @@ import { parseEdenCollectionInput } from "./ingest/service.js";
 import { normalizeOpsApplyLaunch } from "./launch-policy.js";
 import { buildConnectivitySummary, toRegistryToml } from "./nodes-utils.js";
 import { registerDeviceController } from "./device-controller.js";
+import {
+  mediaPathCandidates,
+  resolveExistingMediaFile,
+  resolveExistingMediaFileSync,
+} from "./share-root.js";
 
 declare module "fastify" {
   interface FastifyReply {
@@ -635,12 +640,8 @@ function inferStreamMediaKind(media: MediaResource): "image" | "video" | "audio"
 function mediaStreamVersion(media: MediaResource): string {
   let seed = `${media.sourceType}:${media.sourceValue}`;
   if (media.sourceType === "path") {
-    try {
-      const stat = fs.statSync(path.normalize(media.sourceValue));
-      seed = `${seed}:${stat.size}:${Math.floor(stat.mtimeMs)}`;
-    } catch {
-      // keep base seed when file metadata is unavailable
-    }
+    const resolved = resolveExistingMediaFileSync(media.sourceValue);
+    if (resolved) seed = `${seed}:${resolved.stat.size}:${Math.floor(resolved.stat.mtimeMs)}`;
   }
   return createHash("sha1").update(seed).digest("hex").slice(0, 12);
 }
@@ -3298,18 +3299,20 @@ async function main(): Promise<void> {
       });
       return;
     }
-    const stat = await fs.promises.stat(normalizedPath).catch(() => null);
-    if (!stat || !stat.isFile()) {
+    const resolvedFile = await resolveExistingMediaFile(sourceValue);
+    if (!resolvedFile) {
       res.status(404).json({
         ok: false,
         error: "media_file_not_found",
+        candidates: mediaPathCandidates(sourceValue),
       });
       return;
     }
+    const normalizedResolvedPath = path.normalize(resolvedFile.path);
 
-    const total = stat.size;
+    const total = resolvedFile.stat.size;
     res.setHeader("Accept-Ranges", "bytes");
-    res.type(mediaContentTypeForPath(normalizedPath));
+    res.type(mediaContentTypeForPath(normalizedResolvedPath));
 
     const range = String(req.headers.range ?? "").trim();
     if (range) {
@@ -3336,11 +3339,11 @@ async function main(): Promise<void> {
       const clampedEnd = Math.min(end, total - 1);
       const chunkSize = clampedEnd - start + 1;
       res.status(206);
-      res.header("Content-Type", mediaContentTypeForPath(normalizedPath));
+      res.header("Content-Type", mediaContentTypeForPath(normalizedResolvedPath));
       res.header("Accept-Ranges", "bytes");
       res.header("Content-Range", `bytes ${start}-${clampedEnd}/${total}`);
       res.header("Content-Length", String(chunkSize));
-      const fileStream = fs.createReadStream(normalizedPath, {
+      const fileStream = fs.createReadStream(normalizedResolvedPath, {
         start,
         end: clampedEnd,
       });
@@ -3348,10 +3351,10 @@ async function main(): Promise<void> {
     }
 
     res.status(200);
-    res.header("Content-Type", mediaContentTypeForPath(normalizedPath));
+    res.header("Content-Type", mediaContentTypeForPath(normalizedResolvedPath));
     res.header("Accept-Ranges", "bytes");
     res.header("Content-Length", String(total));
-    const fileStream = fs.createReadStream(normalizedPath);
+    const fileStream = fs.createReadStream(normalizedResolvedPath);
     return res.send(fileStream);
   });
 

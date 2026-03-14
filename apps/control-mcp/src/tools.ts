@@ -877,7 +877,11 @@ async function runQueuedJob(args: {
 }
 
 async function fetchSnapshot(): Promise<JsonRecord> {
-  return (await fetchJson({ path: "/api/v1/resources/snapshot" })) as JsonRecord;
+  const payload = (await fetchJson({ path: "/api/v1/resources/snapshot" })) as JsonRecord;
+  if (payload && typeof payload === "object" && payload.snapshot && typeof payload.snapshot === "object") {
+    return payload.snapshot as JsonRecord;
+  }
+  return payload;
 }
 
 function toSearchableText(row: JsonRecord): string[] {

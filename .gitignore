@@ -8,6 +8,7 @@ node_modules/
 apps/*/dist/
 packages/*/dist/
 coverage/
+.local/
 
 .DS_Store
 .turbo

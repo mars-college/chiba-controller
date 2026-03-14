@@ -82,7 +82,7 @@ services:
     ports:
       - "${CHIBA3_DEV_CONTROL_API_PORT:-8795}:8795"
     volumes:
-      - chiba_controller_share_root:/share
+      - ./.local/share-root:/share
 
   ops:
     build:
@@ -121,7 +121,7 @@ services:
       - "${CHIBA3_DEV_NODE_RUNTIME_GUIDE_PORT:-8080}:8080"
       - "${CHIBA3_DEV_NODE_RUNTIME_API_PORT:-8787}:8787"
     volumes:
-      - chiba_controller_share_root:/share
+      - ./.local/share-root:/share
 
   control-mcp:
     build:
@@ -139,4 +139,3 @@ services:
 volumes:
   chiba_controller_postgres_data:
   chiba_controller_minio_data:
-  chiba_controller_share_root:
