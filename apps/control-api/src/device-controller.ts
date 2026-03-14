@@ -140,7 +140,20 @@ const CreatePresetRequestSchema = z
           })
           .strict()
       )
-      .default([]),
+      .min(1),
+  })
+  .strict();
+
+const ManualLightInputSchema = z
+  .object({
+    id: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    ip: z.string().min(1).optional(),
+    ipAddress: z.string().min(1).optional(),
+    port: z.number().int().min(1).max(65535).optional(),
+    deviceId: z.string().min(1).optional(),
+    sku: z.string().min(1).optional(),
+    deviceType: z.string().min(1).optional(),
   })
   .strict();
 
@@ -287,6 +300,25 @@ function toSlug(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
+}
+
+function cleanOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function cleanPort(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.min(65535, Math.round(value)));
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(1, Math.min(65535, Math.round(parsed)));
+    }
+  }
+  return fallback;
 }
 
 function parseJsonFile<T>(filePath: string): T | null {
@@ -621,6 +653,20 @@ async function getAllLights(db: Cable3Db): Promise<Array<typeof schema.lights.$i
   return db.select().from(schema.lights).orderBy(asc(schema.lights.name));
 }
 
+async function getLightByDeviceId(
+  db: Cable3Db,
+  deviceId: string
+): Promise<typeof schema.lights.$inferSelect | null> {
+  const trimmed = deviceId.trim();
+  if (!trimmed) return null;
+  const rows = await db
+    .select()
+    .from(schema.lights)
+    .where(eq(schema.lights.deviceId, trimmed))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 async function getLightById(
   db: Cable3Db,
   lightId: string
@@ -642,6 +688,191 @@ async function getLightById(
 
   const byName = allLights.find((row) => row.name.toLowerCase() === lightId.toLowerCase());
   return byName ?? null;
+}
+
+function fallbackLightName(args: {
+  name?: string | null;
+  sku?: string | null;
+  id?: string | null;
+  deviceId?: string | null;
+  ipAddress: string;
+}): string {
+  const explicit = args.name?.trim();
+  if (explicit) return explicit;
+  const sku = args.sku?.trim();
+  if (sku) return `Light (${sku})`;
+  const id = args.id?.trim();
+  if (id) return id;
+  const deviceId = args.deviceId?.trim();
+  if (deviceId) return `Light ${deviceId.slice(-6)}`;
+  return args.ipAddress;
+}
+
+async function allocateLightId(db: Cable3Db, preferred?: string | null): Promise<string> {
+  const base = toSlug(preferred?.trim() || "") || `light-${Date.now()}`;
+  let candidate = base;
+  let suffix = 2;
+  while (true) {
+    const existing = await db
+      .select({ id: schema.lights.id })
+      .from(schema.lights)
+      .where(eq(schema.lights.id, candidate))
+      .limit(1);
+    if (!existing[0]) return candidate;
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+}
+
+function serializeLightRecord(args: {
+  light: typeof schema.lights.$inferSelect;
+  state?: typeof schema.lightState.$inferSelect | LightState | null;
+  reachable: boolean;
+}) {
+  const state = args.state;
+  return {
+    id: args.light.id,
+    name: args.light.name,
+    ipAddress: args.light.ipAddress,
+    port: args.light.port,
+    ...(args.light.deviceId ? { deviceId: args.light.deviceId } : {}),
+    ...(args.light.sku ? { sku: args.light.sku } : {}),
+    ...(args.light.deviceType ? { deviceType: args.light.deviceType } : {}),
+    createdAt: args.light.createdAt,
+    updatedAt: args.light.updatedAt,
+    state: state
+      ? {
+          lightId: args.light.id,
+          power: state.power,
+          hue: state.hue,
+          saturation: state.saturation,
+          brightness: state.brightness,
+          ...(typeof state.kelvin === "number" ? { kelvin: state.kelvin } : {}),
+          updatedAt: state.updatedAt,
+        }
+      : null,
+    reachable: args.reachable,
+  };
+}
+
+async function createManualLight(args: {
+  db: Cable3Db;
+  input: z.infer<typeof ManualLightInputSchema>;
+}): Promise<typeof schema.lights.$inferSelect> {
+  const ipAddress = cleanOptionalString(args.input.ipAddress ?? args.input.ip);
+  if (!ipAddress) {
+    throw new Error("ip_address_required");
+  }
+
+  const name = fallbackLightName({
+    name: cleanOptionalString(args.input.name),
+    sku: cleanOptionalString(args.input.sku),
+    id: cleanOptionalString(args.input.id),
+    deviceId: cleanOptionalString(args.input.deviceId),
+    ipAddress,
+  });
+  const preferredId = cleanOptionalString(args.input.id) ?? toSlug(name);
+  const id = await allocateLightId(args.db, preferredId);
+  const now = nowMs();
+
+  await args.db.insert(schema.lights).values({
+    id,
+    name,
+    ipAddress,
+    port: cleanPort(args.input.port, DEFAULT_LIGHT_PORT),
+    deviceId: cleanOptionalString(args.input.deviceId),
+    sku: cleanOptionalString(args.input.sku),
+    deviceType: cleanOptionalString(args.input.deviceType),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const created = await getLightById(args.db, id);
+  if (!created) {
+    throw new Error("light_create_failed");
+  }
+  return created;
+}
+
+async function updateManualLight(args: {
+  db: Cable3Db;
+  lightId: string;
+  input: z.infer<typeof ManualLightInputSchema>;
+}): Promise<typeof schema.lights.$inferSelect | null> {
+  const existing = await getLightById(args.db, args.lightId);
+  if (!existing) return null;
+
+  const nextName =
+    cleanOptionalString(args.input.name) ?? existing.name;
+  const nextIpAddress =
+    cleanOptionalString(args.input.ipAddress ?? args.input.ip) ?? existing.ipAddress;
+
+  if (!nextName.trim()) {
+    throw new Error("name_required");
+  }
+  if (!nextIpAddress.trim()) {
+    throw new Error("ip_address_required");
+  }
+
+  await args.db
+    .update(schema.lights)
+    .set({
+      name: nextName,
+      ipAddress: nextIpAddress,
+      port: cleanPort(args.input.port, existing.port),
+      deviceId:
+        args.input.deviceId !== undefined
+          ? cleanOptionalString(args.input.deviceId)
+          : existing.deviceId,
+      sku: args.input.sku !== undefined ? cleanOptionalString(args.input.sku) : existing.sku,
+      deviceType:
+        args.input.deviceType !== undefined
+          ? cleanOptionalString(args.input.deviceType)
+          : existing.deviceType,
+      updatedAt: nowMs(),
+    })
+    .where(eq(schema.lights.id, existing.id));
+
+  return await getLightById(args.db, existing.id);
+}
+
+async function importLightRecord(args: {
+  db: Cable3Db;
+  input: z.infer<typeof ManualLightInputSchema>;
+}): Promise<"added" | "updated"> {
+  const input = args.input;
+  const requestedId = cleanOptionalString(input.id);
+  const requestedDeviceId = cleanOptionalString(input.deviceId);
+  const requestedIp =
+    cleanOptionalString(input.ipAddress ?? input.ip);
+
+  let existing: typeof schema.lights.$inferSelect | null = null;
+  if (requestedId) {
+    existing = await getLightById(args.db, requestedId);
+  }
+  if (!existing && requestedDeviceId) {
+    existing = await getLightByDeviceId(args.db, requestedDeviceId);
+  }
+  if (!existing && requestedIp) {
+    const rows = await args.db
+      .select()
+      .from(schema.lights)
+      .where(eq(schema.lights.ipAddress, requestedIp))
+      .limit(1);
+    existing = rows[0] ?? null;
+  }
+
+  if (existing) {
+    await updateManualLight({
+      db: args.db,
+      lightId: existing.id,
+      input,
+    });
+    return "updated";
+  }
+
+  await createManualLight({ db: args.db, input });
+  return "added";
 }
 
 async function getAllPlugs(db: Cable3Db): Promise<Array<typeof schema.plugs.$inferSelect>> {
@@ -2571,31 +2802,42 @@ export async function registerDeviceController(args: {
       .leftJoin(schema.lightState, eq(schema.lights.id, schema.lightState.lightId))
       .orderBy(asc(schema.lights.name));
 
-    const data = rows.map((row) => ({
-      id: row.light.id,
-      name: row.light.name,
-      ipAddress: row.light.ipAddress,
-      port: row.light.port,
-      ...(row.light.deviceId ? { deviceId: row.light.deviceId } : {}),
-      ...(row.light.sku ? { sku: row.light.sku } : {}),
-      ...(row.light.deviceType ? { deviceType: row.light.deviceType } : {}),
-      createdAt: row.light.createdAt,
-      updatedAt: row.light.updatedAt,
-      state: row.state
-        ? {
-            lightId: row.light.id,
-            power: row.state.power,
-            hue: row.state.hue,
-            saturation: row.state.saturation,
-            brightness: row.state.brightness,
-            ...(typeof row.state.kelvin === "number" ? { kelvin: row.state.kelvin } : {}),
-            updatedAt: row.state.updatedAt,
-          }
-        : null,
-      reachable: reachability.get(row.light.id) !== null,
-    }));
+    const data = rows.map((row) =>
+      serializeLightRecord({
+        light: row.light,
+        state: row.state,
+        reachable: reachability.get(row.light.id) !== null,
+      })
+    );
 
     responseSuccess(res, { data });
+  });
+
+  args.app.post("/api/lights", async (req, res) => {
+    const parsed = ManualLightInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      responseError(res, "Invalid light payload", 400);
+      return;
+    }
+
+    try {
+      const created = await createManualLight({ db: args.db, input: parsed.data });
+      const state = await refreshLightState({ db: args.db, light: created });
+      responseSuccess(
+        res,
+        {
+          data: serializeLightRecord({
+            light: created,
+            state,
+            reachable: state !== null,
+          }),
+        },
+        201
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      responseError(res, `Create failed: ${message}`, 400);
+    }
   });
 
   args.app.post("/api/lights/discover", async (req, res) => {
@@ -2651,28 +2893,24 @@ export async function registerDeviceController(args: {
       return;
     }
 
-    const parsed: DiscoveredLight[] = [];
+    const parsed: Array<z.infer<typeof ManualLightInputSchema>> = [];
     for (const row of lights) {
-      if (!row || typeof row !== "object") {
-        responseError(res, "Each light must have ip, deviceId, and sku", 400);
+      const item = ManualLightInputSchema.safeParse(row);
+      if (!item.success) {
+        responseError(res, "Each light must have at least ip/ipAddress and optional metadata", 400);
         return;
       }
-      const item = row as Record<string, unknown>;
-      const ip = typeof item.ip === "string" ? item.ip.trim() : "";
-      const deviceId = typeof item.deviceId === "string" ? item.deviceId.trim() : "";
-      const sku = typeof item.sku === "string" ? item.sku.trim() : "";
-      if (!ip || !deviceId || !sku) {
-        responseError(res, "Each light must have ip, deviceId, and sku", 400);
-        return;
-      }
-      parsed.push({ ip, deviceId, sku });
+      parsed.push(item.data);
     }
 
     try {
-      const { added, updated } = await syncDiscoveredLights({
-        db: args.db,
-        discovered: parsed,
-      });
+      let added = 0;
+      let updated = 0;
+      for (const item of parsed) {
+        const result = await importLightRecord({ db: args.db, input: item });
+        if (result === "added") added += 1;
+        if (result === "updated") updated += 1;
+      }
       responseSuccess(res, {
         data: {
           imported: parsed.length,
@@ -2696,25 +2934,35 @@ export async function registerDeviceController(args: {
       return;
     }
 
-    const body = bodyOf(req);
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) {
-      responseError(res, "Name is required", 400);
+    const parsed = ManualLightInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      responseError(res, "Invalid light payload", 400);
       return;
     }
 
     try {
-      const updated = await renameLight({ db: args.db, lightId, name });
+      const updated = await updateManualLight({
+        db: args.db,
+        lightId,
+        input: parsed.data,
+      });
       if (!updated) {
         responseError(res, "Light not found", 404);
         return;
       }
-      responseSuccess(res, { data: updated });
+      const state = await refreshLightState({ db: args.db, light: updated });
+      responseSuccess(res, {
+        data: serializeLightRecord({
+          light: updated,
+          state,
+          reachable: state !== null,
+        }),
+      });
     } catch (error) {
       responseError(
         res,
-        `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
-        500
+        `Update failed: ${error instanceof Error ? error.message : String(error)}`,
+        400
       );
     }
   });
@@ -2829,6 +3077,36 @@ export async function registerDeviceController(args: {
     responseSuccess(res, { data });
   });
 
+  args.app.get("/api/presets/:id", async (req, res) => {
+    const presetId = requestParam(req, "id");
+    if (!presetId) {
+      responseError(res, "Missing preset ID", 400);
+      return;
+    }
+
+    const rows = await args.db
+      .select()
+      .from(schema.lightPresets)
+      .where(eq(schema.lightPresets.id, presetId))
+      .limit(1);
+    const preset = rows[0];
+    if (!preset) {
+      responseError(res, "Preset not found", 404);
+      return;
+    }
+
+    responseSuccess(res, {
+      data: {
+        id: preset.id,
+        name: preset.name,
+        isPredefined: preset.isPredefined,
+        settings: Array.isArray(preset.settings) ? preset.settings : [],
+        createdAt: preset.createdAt,
+        updatedAt: preset.updatedAt,
+      },
+    });
+  });
+
   args.app.post("/api/presets", async (req, res) => {
     const parsed = CreatePresetRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -2866,6 +3144,65 @@ export async function registerDeviceController(args: {
         return;
       }
       responseError(res, `Create failed: ${message}`, 500);
+    }
+  });
+
+  args.app.put("/api/presets/:id", async (req, res) => {
+    const presetId = requestParam(req, "id");
+    if (!presetId) {
+      responseError(res, "Missing preset ID", 400);
+      return;
+    }
+
+    const parsed = CreatePresetRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      responseError(res, "Name and settings are required", 400);
+      return;
+    }
+
+    const rows = await args.db
+      .select()
+      .from(schema.lightPresets)
+      .where(eq(schema.lightPresets.id, presetId))
+      .limit(1);
+    const preset = rows[0];
+    if (!preset) {
+      responseError(res, "Preset not found", 404);
+      return;
+    }
+    if (preset.isPredefined) {
+      responseError(res, "Cannot edit predefined presets", 403);
+      return;
+    }
+
+    const updatedAt = nowMs();
+    try {
+      await args.db
+        .update(schema.lightPresets)
+        .set({
+          name: parsed.data.name.trim(),
+          settings: parsed.data.settings,
+          updatedAt,
+        })
+        .where(eq(schema.lightPresets.id, presetId));
+
+      responseSuccess(res, {
+        data: {
+          id: presetId,
+          name: parsed.data.name.trim(),
+          isPredefined: false,
+          settings: parsed.data.settings,
+          createdAt: preset.createdAt,
+          updatedAt,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("unique")) {
+        responseError(res, "A preset with that name already exists", 409);
+        return;
+      }
+      responseError(res, `Update failed: ${message}`, 500);
     }
   });
 

@@ -11,6 +11,8 @@ test("exposes required control tools", () => {
   assert.equal(names.includes("query_nodes"), true);
   assert.equal(names.includes("list_lights"), true);
   assert.equal(names.includes("control_lights"), true);
+  assert.equal(names.includes("list_light_presets"), true);
+  assert.equal(names.includes("apply_light_preset"), true);
   assert.equal(names.includes("mpbcp_snapshot"), true);
   assert.equal(names.includes("node_state"), true);
   assert.equal(names.includes("apply_mpbcp_to_nodes"), true);
@@ -36,6 +38,18 @@ test("rejects light control requests without a setting payload", async () => {
   assert.equal(result.isError, true);
   assert.equal(
     result.content[0]?.text.includes("at_least_one_setting_required"),
+    true
+  );
+});
+
+test("rejects preset apply requests without a selector", async () => {
+  const result = await handleToolCall({
+    name: "apply_light_preset",
+    input: {},
+  });
+  assert.equal(result.isError, true);
+  assert.equal(
+    result.content[0]?.text.includes("presetId_or_presetName_required"),
     true
   );
 });

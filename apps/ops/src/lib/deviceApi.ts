@@ -22,6 +22,16 @@ export type LightRecord = {
   reachable: boolean
 }
 
+export type LightUpsertInput = {
+  id?: string
+  name: string
+  ipAddress: string
+  port?: number
+  deviceId?: string
+  sku?: string
+  deviceType?: string
+}
+
 export type LightControlRequest = {
   power?: boolean
   hue?: number
@@ -46,6 +56,17 @@ export type LightPreset = {
   settings: PresetLightSetting[]
   createdAt: number
   updatedAt: number
+}
+
+export type LightImportInput = {
+  id?: string
+  name?: string
+  ip?: string
+  ipAddress?: string
+  port?: number
+  deviceId?: string
+  sku?: string
+  deviceType?: string
 }
 
 export type DiscoveryResult = {
@@ -95,6 +116,58 @@ export async function fetchLights(signal?: AbortSignal): Promise<LightRecord[]> 
   return parseEnvelopeOrThrow<LightRecord[]>({
     res,
     errorPrefix: 'lights_fetch_failed',
+  })
+}
+
+export async function createLight(input: LightUpsertInput): Promise<LightRecord> {
+  const res = await fetch('/api/lights', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  return parseEnvelopeOrThrow<LightRecord>({
+    res,
+    errorPrefix: 'lights_create_failed',
+  })
+}
+
+export async function updateLight(lightId: string, input: Partial<LightUpsertInput>): Promise<LightRecord> {
+  const id = lightId.trim()
+  if (!id) throw new Error('lights_update_failed:400:light_id_required')
+  const res = await fetch(`/api/lights/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  return parseEnvelopeOrThrow<LightRecord>({
+    res,
+    errorPrefix: 'lights_update_failed',
+  })
+}
+
+export async function deleteLight(lightId: string): Promise<void> {
+  const id = lightId.trim()
+  if (!id) throw new Error('lights_delete_failed:400:light_id_required')
+  const res = await fetch(`/api/lights/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  await parseEnvelopeOrThrow<unknown>({
+    res,
+    errorPrefix: 'lights_delete_failed',
+  })
+}
+
+export async function importLights(payload: {
+  lights: LightImportInput[]
+}): Promise<{ imported: number; added: number; updated: number }> {
+  const res = await fetch('/api/lights/import', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return parseEnvelopeOrThrow<{ imported: number; added: number; updated: number }>({
+    res,
+    errorPrefix: 'lights_import_failed',
   })
 }
 
@@ -165,15 +238,35 @@ export async function applyPreset(presetId: string): Promise<void> {
 export async function createPreset(payload: {
   name: string
   settings: PresetLightSetting[]
-}): Promise<void> {
+}): Promise<LightPreset> {
   const res = await fetch('/api/presets', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  await parseEnvelopeOrThrow<unknown>({
+  return parseEnvelopeOrThrow<LightPreset>({
     res,
     errorPrefix: 'preset_create_failed',
+  })
+}
+
+export async function updatePreset(
+  presetId: string,
+  payload: {
+    name: string
+    settings: PresetLightSetting[]
+  }
+): Promise<LightPreset> {
+  const id = presetId.trim()
+  if (!id) throw new Error('preset_update_failed:400:preset_id_required')
+  const res = await fetch(`/api/presets/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return parseEnvelopeOrThrow<LightPreset>({
+    res,
+    errorPrefix: 'preset_update_failed',
   })
 }
 

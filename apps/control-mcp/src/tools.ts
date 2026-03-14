@@ -121,6 +121,17 @@ type ControlLightsInput = {
   kelvin?: number;
 };
 
+type ListLightPresetsInput = {
+  query?: string;
+  includeSystem?: boolean;
+  limit?: number;
+};
+
+type ApplyLightPresetInput = {
+  presetId?: string;
+  presetName?: string;
+};
+
 type JsonRecord = Record<string, unknown>;
 
 const TARGET_KINDS = ["media", "playlist", "block", "channel", "profile"] as const;
@@ -575,6 +586,31 @@ function parseControlLightsInput(input: unknown): ControlLightsInput {
   return out;
 }
 
+function parseListLightPresetsInput(input: unknown): ListLightPresetsInput {
+  const obj = ensureObject(input, "list_light_presets");
+  const query = readOptionalString(obj, "query", "list_light_presets");
+  const includeSystem = readOptionalBoolean(obj, "includeSystem", "list_light_presets");
+  const limit = readOptionalPositiveInt(obj, "limit", "list_light_presets", 200);
+  const out: ListLightPresetsInput = {};
+  if (query !== undefined) out.query = query;
+  if (includeSystem !== undefined) out.includeSystem = includeSystem;
+  if (limit !== undefined) out.limit = limit;
+  return out;
+}
+
+function parseApplyLightPresetInput(input: unknown): ApplyLightPresetInput {
+  const obj = ensureObject(input, "apply_light_preset");
+  const presetId = readOptionalString(obj, "presetId", "apply_light_preset");
+  const presetName = readOptionalString(obj, "presetName", "apply_light_preset");
+  if (!presetId && !presetName) {
+    throw new Error("invalid_args:apply_light_preset:presetId_or_presetName_required");
+  }
+  return {
+    ...(presetId ? { presetId } : {}),
+    ...(presetName ? { presetName } : {}),
+  };
+}
+
 export const TOOLS: McpTool[] = [
   {
     name: "create_upload_request",
@@ -681,6 +717,29 @@ export const TOOLS: McpTool[] = [
         saturation: { type: "number" },
         brightness: { type: "number" },
         kelvin: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "list_light_presets",
+    description: "List available light presets and their per-light settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        includeSystem: { type: "boolean" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "apply_light_preset",
+    description: "Apply a light preset by preset id or exact preset name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presetId: { type: "string" },
+        presetName: { type: "string" },
       },
     },
   },
@@ -1135,6 +1194,11 @@ async function fetchLightsData(): Promise<JsonRecord[]> {
   return Array.isArray(data) ? (data as JsonRecord[]) : [];
 }
 
+async function fetchLightPresetsData(): Promise<JsonRecord[]> {
+  const data = await fetchEnvelope({ path: "/api/presets" });
+  return Array.isArray(data) ? (data as JsonRecord[]) : [];
+}
+
 function matchesLightQuery(row: JsonRecord, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
@@ -1278,6 +1342,63 @@ async function controlLights(input: ControlLightsInput): Promise<unknown> {
   };
 }
 
+function matchesPresetQuery(row: JsonRecord, query: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return [
+    String(row.id ?? ""),
+    String(row.name ?? ""),
+  ].some((value) => value.toLowerCase().includes(q));
+}
+
+async function listLightPresets(input: ListLightPresetsInput): Promise<unknown> {
+  const presets = await fetchLightPresetsData();
+  const query = input.query?.trim().toLowerCase() ?? "";
+  const filtered = presets.filter((row) => {
+    if (!matchesPresetQuery(row, query)) return false;
+    if (input.includeSystem === false && row.isPredefined === true) return false;
+    return true;
+  });
+  const limit = input.limit ?? 50;
+  return {
+    ok: true,
+    totalPresets: presets.length,
+    matched: filtered.length,
+    returned: Math.min(filtered.length, limit),
+    presets: filtered.slice(0, limit),
+  };
+}
+
+async function applyLightPreset(input: ApplyLightPresetInput): Promise<unknown> {
+  const presets = await fetchLightPresetsData();
+  const resolved = input.presetId
+    ? presets.find((row) => String(row.id ?? "") === input.presetId)
+    : presets.find(
+        (row) =>
+          String(row.name ?? "")
+            .trim()
+            .toLowerCase() === String(input.presetName ?? "").trim().toLowerCase()
+      );
+  if (!resolved) {
+    throw new Error("preset_not_found");
+  }
+  const presetId = String(resolved.id ?? "").trim();
+  if (!presetId) {
+    throw new Error("preset_id_missing");
+  }
+  const result = await fetchEnvelope({
+    path: `/api/presets/${encodeURIComponent(presetId)}/apply`,
+    method: "POST",
+    body: {},
+  });
+  return {
+    ok: true,
+    presetId,
+    presetName: resolved.name,
+    result,
+  };
+}
+
 async function applyTarget(input: ApplyInput): Promise<unknown> {
   return fetchJson({
     path: "/api/ops/apply-target",
@@ -1353,6 +1474,18 @@ export async function handleToolCall(args: {
     if (args.name === "control_lights") {
       const parsed = parseControlLightsInput(args.input ?? {});
       const data = await controlLights(parsed);
+      return asText(data);
+    }
+
+    if (args.name === "list_light_presets") {
+      const parsed = parseListLightPresetsInput(args.input ?? {});
+      const data = await listLightPresets(parsed);
+      return asText(data);
+    }
+
+    if (args.name === "apply_light_preset") {
+      const parsed = parseApplyLightPresetInput(args.input ?? {});
+      const data = await applyLightPreset(parsed);
       return asText(data);
     }
 
