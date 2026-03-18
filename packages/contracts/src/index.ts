@@ -49,6 +49,9 @@ export const LaunchOptionsSchema = z
     hudSec: z.number().positive().optional(),
     theme: z.string().min(1).optional(),
     displayRotate: DisplayRotateSchema.optional(),
+    infoTitle: z.string().min(1).optional(),
+    infoArtist: z.string().min(1).optional(),
+    infoDescription: z.string().min(1).optional(),
   })
   .strict();
 export type LaunchOptions = z.infer<typeof LaunchOptionsSchema>;

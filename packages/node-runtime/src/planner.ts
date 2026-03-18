@@ -27,7 +27,10 @@ export type PlanAssignmentsResult = {
 
 function sanitizeLaunch(input: unknown): LaunchOptions {
   const parsed = LaunchOptionsSchema.safeParse(input);
-  return parsed.success ? parsed.data : {};
+  if (!parsed.success) return {};
+  return Object.fromEntries(
+    Object.entries(parsed.data).filter(([, value]) => value !== undefined)
+  ) as LaunchOptions;
 }
 
 function mergeLaunch(...parts: unknown[]): LaunchOptions {

@@ -56,10 +56,29 @@ export type DraftChannel = {
   blockIds: string[];
 };
 
+export type DraftLaunchOptions = {
+  mode?: "guide" | "gallery";
+  lock?: boolean;
+  qr?: boolean;
+  nosplash?: boolean;
+  remoteInput?: boolean;
+  remoteApp?: boolean;
+  remoteMic?: boolean;
+  remoteGuide?: boolean;
+  hudMode?: "always" | "start" | "never";
+  hudSec?: number;
+  theme?: string;
+  displayRotate?: 0 | 90 | 180 | 270;
+  infoTitle?: string;
+  infoArtist?: string;
+  infoDescription?: string;
+};
+
 export type DraftProfileNodeAssignment = {
   nodeId: string;
   targetKind: TargetKind;
   targetId: string;
+  launch: DraftLaunchOptions;
 };
 
 export type DraftProfile = {
@@ -67,6 +86,7 @@ export type DraftProfile = {
   title: string;
   defaultTargetKind: TargetKind;
   defaultTargetId: string;
+  defaultLaunch: DraftLaunchOptions;
   nodeAssignments: DraftProfileNodeAssignment[];
 };
 
@@ -134,6 +154,7 @@ export const EMPTY_PROFILE_DRAFT: DraftProfile = {
   title: "",
   defaultTargetKind: "channel",
   defaultTargetId: "",
+  defaultLaunch: {},
   nodeAssignments: [],
 };
 
@@ -554,6 +575,189 @@ export function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+export function playlistDraftToResource(
+  playlist: DraftPlaylist
+): ResourcePayload["playlists"][number] {
+  const mediaIds = playlist.mediaIds
+    .map((mediaId) => mediaId.trim())
+    .filter((mediaId) => mediaId.length > 0);
+  return {
+    id: playlist.id.trim(),
+    title: playlist.title.trim() || undefined,
+    artist: playlist.artist.trim() || undefined,
+    description: playlist.description.trim() || undefined,
+    items: mediaIds.map((mediaId, index) => ({
+      index,
+      mediaId,
+    })),
+  };
+}
+
+export function blockDraftToResource(
+  block: DraftBlock
+): ResourcePayload["blocks"][number] {
+  const items = block.items
+    .map((item) => ({ ...item, id: item.id.trim() }))
+    .filter((item) => item.id.length > 0);
+  return {
+    id: block.id.trim(),
+    title: block.title.trim() || undefined,
+    mode: block.mode,
+    items: items.map((item, index) => ({
+      index,
+      ...(item.kind === "media" ? { mediaId: item.id } : { playlistId: item.id }),
+    })),
+  };
+}
+
+export function channelDraftToResource(
+  channel: DraftChannel
+): ResourcePayload["channels"][number] {
+  return {
+    id: channel.id.trim(),
+    name: channel.title.trim() || undefined,
+    blockIds: channel.blockIds
+      .map((blockId) => blockId.trim())
+      .filter((blockId) => blockId.length > 0),
+  };
+}
+
+export function launchDraftToResource(
+  launch: DraftLaunchOptions | null | undefined
+): ResourcePayload["profiles"][number]["defaults"] {
+  const next: ResourcePayload["profiles"][number]["defaults"] = {};
+  if (launch?.mode === "guide" || launch?.mode === "gallery") {
+    next.mode = launch.mode;
+  }
+  if (typeof launch?.lock === "boolean") next.lock = launch.lock;
+  if (typeof launch?.qr === "boolean") next.qr = launch.qr;
+  if (typeof launch?.nosplash === "boolean") next.nosplash = launch.nosplash;
+  if (typeof launch?.remoteInput === "boolean") {
+    next.remoteInput = launch.remoteInput;
+  }
+  if (typeof launch?.remoteApp === "boolean") next.remoteApp = launch.remoteApp;
+  if (typeof launch?.remoteMic === "boolean") next.remoteMic = launch.remoteMic;
+  if (typeof launch?.remoteGuide === "boolean") {
+    next.remoteGuide = launch.remoteGuide;
+  }
+  if (
+    launch?.hudMode === "always" ||
+    launch?.hudMode === "start" ||
+    launch?.hudMode === "never"
+  ) {
+    next.hudMode = launch.hudMode;
+  }
+  if (
+    typeof launch?.hudSec === "number" &&
+    Number.isFinite(launch.hudSec) &&
+    launch.hudSec > 0
+  ) {
+    next.hudSec = launch.hudSec;
+  }
+  if (typeof launch?.theme === "string" && launch.theme.trim()) {
+    next.theme = launch.theme.trim();
+  }
+  if (
+    launch?.displayRotate === 0 ||
+    launch?.displayRotate === 90 ||
+    launch?.displayRotate === 180 ||
+    launch?.displayRotate === 270
+  ) {
+    next.displayRotate = launch.displayRotate;
+  }
+  if (typeof launch?.infoTitle === "string" && launch.infoTitle.trim()) {
+    next.infoTitle = launch.infoTitle.trim();
+  }
+  if (typeof launch?.infoArtist === "string" && launch.infoArtist.trim()) {
+    next.infoArtist = launch.infoArtist.trim();
+  }
+  if (
+    typeof launch?.infoDescription === "string" &&
+    launch.infoDescription.trim()
+  ) {
+    next.infoDescription = launch.infoDescription.trim();
+  }
+  return next;
+}
+
+export function launchResourceToDraft(
+  launch: ResourcePayload["profiles"][number]["defaults"] | null | undefined
+): DraftLaunchOptions {
+  if (!launch || typeof launch !== "object") return {};
+  const source = launch as Record<string, unknown>;
+  const next: DraftLaunchOptions = {};
+  if (source.mode === "guide" || source.mode === "gallery") {
+    next.mode = source.mode;
+  }
+  if (typeof source.lock === "boolean") next.lock = source.lock;
+  if (typeof source.qr === "boolean") next.qr = source.qr;
+  if (typeof source.nosplash === "boolean") next.nosplash = source.nosplash;
+  if (typeof source.remoteInput === "boolean") next.remoteInput = source.remoteInput;
+  if (typeof source.remoteApp === "boolean") next.remoteApp = source.remoteApp;
+  if (typeof source.remoteMic === "boolean") next.remoteMic = source.remoteMic;
+  if (typeof source.remoteGuide === "boolean") {
+    next.remoteGuide = source.remoteGuide;
+  }
+  if (
+    source.hudMode === "always" ||
+    source.hudMode === "start" ||
+    source.hudMode === "never"
+  ) {
+    next.hudMode = source.hudMode;
+  }
+  if (
+    typeof source.hudSec === "number" &&
+    Number.isFinite(source.hudSec) &&
+    source.hudSec > 0
+  ) {
+    next.hudSec = source.hudSec;
+  }
+  const theme = readString(source.theme);
+  if (theme) next.theme = theme;
+  if (
+    source.displayRotate === 0 ||
+    source.displayRotate === 90 ||
+    source.displayRotate === 180 ||
+    source.displayRotate === 270
+  ) {
+    next.displayRotate = source.displayRotate;
+  }
+  const infoTitle = readString(source.infoTitle);
+  if (infoTitle) next.infoTitle = infoTitle;
+  const infoArtist = readString(source.infoArtist);
+  if (infoArtist) next.infoArtist = infoArtist;
+  const infoDescription = readString(source.infoDescription);
+  if (infoDescription) next.infoDescription = infoDescription;
+  return next;
+}
+
+export function profileDraftToResource(
+  profile: DraftProfile
+): ResourcePayload["profiles"][number] {
+  return {
+    id: profile.id.trim(),
+    title: profile.title.trim() || undefined,
+    defaults: launchDraftToResource(profile.defaultLaunch),
+    defaultTarget:
+      profile.defaultTargetKind && profile.defaultTargetId.trim()
+        ? {
+            kind: profile.defaultTargetKind,
+            id: profile.defaultTargetId.trim(),
+          }
+        : undefined,
+    nodes: profile.nodeAssignments
+      .map((node) => ({
+        nodeId: node.nodeId.trim(),
+        target: {
+          kind: node.targetKind,
+          id: node.targetId.trim(),
+        },
+        launch: launchDraftToResource(node.launch),
+      }))
+      .filter((row) => row.nodeId.length > 0 && row.target.id.length > 0),
+  };
+}
+
 export function toResourcePayload(store: DraftStore): ResourcePayload {
   return {
     media: store.media.map((m) => ({
@@ -568,57 +772,10 @@ export function toResourcePayload(store: DraftStore): ResourcePayload {
       web: m.web,
       cache: m.cache,
     })),
-    playlists: store.playlists.map((p) => ({
-      id: p.id.trim(),
-      title: p.title.trim() || undefined,
-      artist: p.artist.trim() || undefined,
-      description: p.description.trim() || undefined,
-      items: p.mediaIds.map((mediaId, index) => ({
-        index,
-        mediaId: mediaId.trim(),
-      })),
-    })),
-    blocks: store.blocks.map((b) => ({
-      id: b.id.trim(),
-      title: b.title.trim() || undefined,
-      mode: b.mode,
-      items: b.items
-        .map((item) => ({ ...item, id: item.id.trim() }))
-        .filter((item) => item.id.length > 0)
-        .map((item, index) => ({
-          index,
-          ...(item.kind === "media"
-            ? { mediaId: item.id }
-            : { playlistId: item.id }),
-        })),
-    })),
-    channels: store.channels.map((c) => ({
-      id: c.id.trim(),
-      name: c.title.trim() || undefined,
-      blockIds: c.blockIds.map((blockId) => blockId.trim()),
-    })),
-    profiles: store.profiles.map((p) => ({
-      id: p.id.trim(),
-      title: p.title.trim() || undefined,
-      defaults: {},
-      defaultTarget:
-        p.defaultTargetKind && p.defaultTargetId.trim()
-          ? {
-              kind: p.defaultTargetKind,
-              id: p.defaultTargetId.trim(),
-            }
-          : undefined,
-      nodes: p.nodeAssignments
-        .map((node) => ({
-          nodeId: node.nodeId.trim(),
-          target: {
-            kind: node.targetKind,
-            id: node.targetId.trim(),
-          },
-          launch: {},
-        }))
-        .filter((row) => row.nodeId.length > 0 && row.target.id.length > 0),
-    })),
+    playlists: store.playlists.map((playlist) => playlistDraftToResource(playlist)),
+    blocks: store.blocks.map((block) => blockDraftToResource(block)),
+    channels: store.channels.map((channel) => channelDraftToResource(channel)),
+    profiles: store.profiles.map((profile) => profileDraftToResource(profile)),
   };
 }
 
@@ -670,6 +827,7 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
           ? p.defaultTarget.kind
           : "channel",
       defaultTargetId: p.defaultTarget?.id || "",
+      defaultLaunch: launchResourceToDraft(p.defaults),
       nodeAssignments: p.nodes
         .map((node) => ({
           nodeId: node.nodeId,
@@ -681,6 +839,7 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
               ? node.target.kind
               : "channel",
           targetId: node.target.id,
+          launch: launchResourceToDraft(node.launch),
         }))
         .filter((node) => node.nodeId.trim().length > 0 && node.targetId.trim().length > 0),
     })),

@@ -298,6 +298,9 @@ export type OpsApplyTargetRequest = {
   remoteGuide?: boolean
   hudMode?: 'always' | 'start' | 'never'
   hudShowSec?: number
+  infoTitle?: string
+  infoArtist?: string
+  infoDescription?: string
   theme?: string
   displayRotate?: 0 | 90 | 180 | 270
   scale?: number
@@ -326,6 +329,9 @@ export type DesiredScreenAssignment = {
     remoteGuide?: boolean
     hudMode?: 'always' | 'start' | 'never'
     hudSec?: number
+    infoTitle?: string
+    infoArtist?: string
+    infoDescription?: string
     theme?: string
     displayRotate?: 0 | 90 | 180 | 270
   }

@@ -55,6 +55,9 @@ function createSnapshot(): ResourceSnapshot {
             },
             launch: {
               qr: true,
+              infoTitle: "Node B Override",
+              infoArtist: "Node Artist",
+              infoDescription: "Node description",
             },
           },
         ],
@@ -130,7 +133,38 @@ test("plans profile assignments across multiple nodes with override + defaults",
     mode: "gallery",
     nosplash: true,
     qr: true,
+    infoTitle: "Node B Override",
+    infoArtist: "Node Artist",
+    infoDescription: "Node description",
     theme: "amber",
+  });
+});
+
+test("does not let undefined launch fields erase profile node metadata", () => {
+  const snapshot = createSnapshot();
+  const result = planNodeAssignments({
+    nodeIds: ["node-b"],
+    target: { kind: "profile", id: "profile-main" },
+    launch: {
+      mode: "gallery",
+      qr: false,
+      hudMode: "always",
+      infoTitle: undefined,
+      infoArtist: undefined,
+      infoDescription: undefined,
+    } as any,
+    snapshot,
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.assignments[0]?.launch, {
+    mode: "gallery",
+    qr: false,
+    nosplash: true,
+    hudMode: "always",
+    infoTitle: "Node B Override",
+    infoArtist: "Node Artist",
+    infoDescription: "Node description",
   });
 });
 

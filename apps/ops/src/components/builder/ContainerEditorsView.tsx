@@ -16,6 +16,7 @@ import {
   SegmentedControl,
   SimpleGrid,
   Stack,
+  Textarea,
   Text,
   TextInput,
 } from "@mantine/core";
@@ -56,14 +57,9 @@ type RegistryNodeRow = {
 export type ContainerEditorsVm = {
   builderTab: BuilderMode;
   draftStore: DraftStore;
-  syncDraftStoreToControlDb: (
-    nextStore: DraftStore,
-    options?: {
-      successTitle?: string;
-      successMessage?: string;
-      quietSuccess?: boolean;
-    }
-  ) => Promise<boolean>;
+  saveBlockDraftToControlDb: (block: DraftBlock) => Promise<boolean>;
+  saveChannelDraftToControlDb: (channel: DraftChannel) => Promise<boolean>;
+  saveProfileDraftToControlDb: (profile: DraftProfile) => Promise<boolean>;
   deleteBlockDraft: (blockId: string) => Promise<boolean>;
   deleteChannelDraft: (channelId: string) => Promise<boolean>;
   deleteProfileDraft: (profileId: string) => Promise<boolean>;
@@ -126,15 +122,24 @@ function tableRowStyle(isSelected: boolean): CSSProperties {
 function upsertNodeAssignment(
   profile: DraftProfile,
   nodeId: string,
-  next: { targetKind?: TargetKind; targetId?: string }
+  next: {
+    targetKind?: TargetKind;
+    targetId?: string;
+    launch?: Partial<DraftProfile["defaultLaunch"]>;
+  }
 ): DraftProfile {
   const id = nodeId.trim();
   if (!id) return profile;
   const existing = profile.nodeAssignments.find((row) => row.nodeId === id);
   const targetKind =
     next.targetKind || existing?.targetKind || profile.defaultTargetKind;
-  const targetId = (next.targetId ?? existing?.targetId ?? "").trim();
-  const nextRow = { nodeId: id, targetKind, targetId };
+  const targetId = (
+    next.targetId ?? existing?.targetId ?? profile.defaultTargetId ?? ""
+  ).trim();
+  const nextLaunch = next.launch
+    ? { ...(existing?.launch ?? {}), ...next.launch }
+    : (existing?.launch ?? {});
+  const nextRow = { nodeId: id, targetKind, targetId, launch: nextLaunch };
   const without = profile.nodeAssignments.filter((row) => row.nodeId !== id);
   return {
     ...profile,
@@ -146,7 +151,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
   const {
     builderTab,
     draftStore,
-    syncDraftStoreToControlDb,
+    saveBlockDraftToControlDb,
+    saveChannelDraftToControlDb,
+    saveProfileDraftToControlDb,
     deleteBlockDraft,
     deleteChannelDraft,
     deleteProfileDraft,
@@ -301,6 +308,57 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     );
   };
 
+  const renderPickerItemVisualPreview = (
+    item: ResourcePickerItem | undefined,
+    height: number
+  ) => {
+    const previewTiles = item?.previewTiles || [];
+    const previewSrc = item?.previewUrl || item?.thumbnailUrl || "";
+    const isVideo = (item?.badge || "").toLowerCase() === "video";
+    const label = item?.title || item?.id || "Preview";
+    if (previewTiles.length > 0) {
+      return (
+        <PreviewTileCluster
+          tiles={previewTiles}
+          totalCount={item?.previewTilesTotalCount}
+          height={height}
+        />
+      );
+    }
+    if (previewSrc) {
+      return isVideo ? (
+        <video
+          className="ops-media-thumb-video"
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          poster={item?.thumbnailUrl}
+          src={previewSrc}
+          style={{ width: "100%", height, borderRadius: 8, objectFit: "cover" }}
+          onMouseEnter={(event) => {
+            void event.currentTarget.play().catch(() => {});
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.pause();
+            event.currentTarget.currentTime = 0;
+          }}
+        />
+      ) : (
+        <Image src={previewSrc} alt={label} radius="sm" h={height} fit="cover" />
+      );
+    }
+    return (
+      <Paper withBorder h={height} radius="sm" p="sm">
+        <Group justify="center" align="center" h="100%">
+          <Text size="xs" c="dimmed">
+            No preview
+          </Text>
+        </Group>
+      </Paper>
+    );
+  };
+
   const deleteBlockResource = async (blockId: string) => {
     const id = blockId.trim();
     if (!id) return;
@@ -344,20 +402,11 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     const normalizedItems = blockDraft.items
       .map((item) => ({ ...item, id: item.id.trim() }))
       .filter((item) => item.id.length > 0);
-    const nextStore: DraftStore = {
-      ...draftStore,
-      blocks: [
-        ...draftStore.blocks.filter((row) => row.id !== blockId),
-        {
-          ...blockDraft,
-          id: blockId,
-          mode: blockDraft.mode,
-          items: normalizedItems,
-        },
-      ],
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
+    const synced = await saveBlockDraftToControlDb({
+      ...blockDraft,
+      id: blockId,
+      mode: blockDraft.mode,
+      items: normalizedItems,
     });
     if (!synced) return;
     setSelectedBlockId(blockId);
@@ -380,19 +429,10 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
     const normalizedBlockIds = channelDraft.blockIds
       .map((id) => id.trim())
       .filter((id) => id.length > 0);
-    const nextStore: DraftStore = {
-      ...draftStore,
-      channels: [
-        ...draftStore.channels.filter((row) => row.id !== channelId),
-        {
-          ...channelDraft,
-          id: channelId,
-          blockIds: normalizedBlockIds,
-        },
-      ],
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
+    const synced = await saveChannelDraftToControlDb({
+      ...channelDraft,
+      id: channelId,
+      blockIds: normalizedBlockIds,
     });
     if (!synced) return;
     setSelectedChannelId(channelId);
@@ -417,21 +457,13 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
         nodeId: row.nodeId.trim(),
         targetKind: row.targetKind,
         targetId: row.targetId.trim(),
+        launch: row.launch,
       }))
       .filter((row) => row.nodeId.length > 0 && row.targetId.length > 0);
-    const nextStore: DraftStore = {
-      ...draftStore,
-      profiles: [
-        ...draftStore.profiles.filter((row) => row.id !== profileId),
-        {
-          ...profileDraft,
-          id: profileId,
-          nodeAssignments: normalizedNodes,
-        },
-      ],
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
+    const synced = await saveProfileDraftToControlDb({
+      ...profileDraft,
+      id: profileId,
+      nodeAssignments: normalizedNodes,
     });
     if (!synced) return;
     setSelectedProfileId(profileId);
@@ -1325,6 +1357,62 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                 kindLabel="Default kind"
                 targetLabel="Default target"
               />
+              {profileDraft.defaultTargetId.trim() ? (
+                <div style={{ maxWidth: isMobile ? "100%" : 320 }}>
+                  {renderPickerItemVisualPreview(
+                    pickerByKind[profileDraft.defaultTargetKind].get(
+                      profileDraft.defaultTargetId
+                    ),
+                    160
+                  )}
+                </div>
+              ) : null}
+              <SimpleGrid cols={isMobile ? 1 : 2}>
+                <TextInput
+                  label="Info Box Title"
+                  value={profileDraft.defaultLaunch.infoTitle ?? ""}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setProfileDraft((current) => ({
+                      ...current,
+                      defaultLaunch: {
+                        ...current.defaultLaunch,
+                        infoTitle: value,
+                      },
+                    }));
+                  }}
+                />
+                <TextInput
+                  label="Info Box Artist"
+                  value={profileDraft.defaultLaunch.infoArtist ?? ""}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setProfileDraft((current) => ({
+                      ...current,
+                      defaultLaunch: {
+                        ...current.defaultLaunch,
+                        infoArtist: value,
+                      },
+                    }));
+                  }}
+                />
+              </SimpleGrid>
+              <Textarea
+                label="Info Box Description"
+                minRows={2}
+                autosize
+                value={profileDraft.defaultLaunch.infoDescription ?? ""}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setProfileDraft((current) => ({
+                    ...current,
+                    defaultLaunch: {
+                      ...current.defaultLaunch,
+                      infoDescription: value,
+                    },
+                  }));
+                }}
+              />
             </Stack>
           </Paper>
 
@@ -1351,6 +1439,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                           nodeId: node.nodeId,
                           targetKind: current.defaultTargetKind,
                           targetId: defaultTargetId,
+                          launch: { ...current.defaultLaunch },
                         })),
                       }));
                     }}
@@ -1369,6 +1458,9 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     const kind =
                       assigned?.targetKind || profileDraft.defaultTargetKind;
                     const targetId = assigned?.targetId || "";
+                    const launch = assigned
+                      ? assigned.launch
+                      : profileDraft.defaultLaunch;
                     return (
                       <Paper key={node.nodeId} withBorder p="sm">
                         <Stack gap="xs">
@@ -1398,6 +1490,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                                     upsertNodeAssignment(current, node.nodeId, {
                                       targetKind: current.defaultTargetKind,
                                       targetId: defaultTargetId,
+                                      launch: { ...current.defaultLaunch },
                                     })
                                   );
                                 }}
@@ -1452,6 +1545,54 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                             pickerItemsByKind={targetPickerItemsByKind}
                             kindLabel="Target kind"
                             targetLabel="Target"
+                          />
+                          {targetId.trim() ? (
+                            <div style={{ maxWidth: isMobile ? "100%" : 320 }}>
+                              {renderPickerItemVisualPreview(
+                                pickerByKind[kind].get(targetId),
+                                132
+                              )}
+                            </div>
+                          ) : null}
+                          <SimpleGrid cols={isMobile ? 1 : 2}>
+                            <TextInput
+                              label="Info Box Title"
+                              value={launch.infoTitle ?? ""}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                setProfileDraft((current) =>
+                                  upsertNodeAssignment(current, node.nodeId, {
+                                    launch: { infoTitle: value },
+                                  })
+                                );
+                              }}
+                            />
+                            <TextInput
+                              label="Info Box Artist"
+                              value={launch.infoArtist ?? ""}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                setProfileDraft((current) =>
+                                  upsertNodeAssignment(current, node.nodeId, {
+                                    launch: { infoArtist: value },
+                                  })
+                                );
+                              }}
+                            />
+                          </SimpleGrid>
+                          <Textarea
+                            label="Info Box Description"
+                            minRows={2}
+                            autosize
+                            value={launch.infoDescription ?? ""}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              setProfileDraft((current) =>
+                                upsertNodeAssignment(current, node.nodeId, {
+                                  launch: { infoDescription: value },
+                                })
+                              );
+                            }}
                           />
                         </Stack>
                       </Paper>

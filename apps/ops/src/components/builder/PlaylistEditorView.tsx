@@ -16,21 +16,16 @@ import type { Media } from "../../lib/controlApi";
 import {
   generateAutoResourceId,
   type DraftPlaylist,
-  type DraftStore,
 } from "../../lib/opsModel";
 import { ReorderableSequenceItem } from "./ReorderableSequenceItem";
 
 export type PlaylistEditorViewVm = {
   isMobile: boolean;
-  draftStore: DraftStore;
   playlistDraft: DraftPlaylist;
   setPlaylistDraft: Dispatch<SetStateAction<DraftPlaylist>>;
   closePlaylistEditorRoute: () => void;
   setMediaPickerOpen: (open: boolean) => void;
-  syncDraftStoreToControlDb: (
-    nextStore: DraftStore,
-    options?: { successTitle?: string; successMessage?: string; quietSuccess?: boolean }
-  ) => Promise<boolean>;
+  savePlaylistDraftToControlDb: (playlist: DraftPlaylist) => Promise<boolean>;
   setSelectedPlaylistId: (id: string | null) => void;
   existingPlaylistIds: string[];
   mergedMedia: Media[];
@@ -44,12 +39,11 @@ export type PlaylistEditorViewVm = {
 export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
   const {
     isMobile,
-    draftStore,
     playlistDraft,
     setPlaylistDraft,
     closePlaylistEditorRoute,
     setMediaPickerOpen,
-    syncDraftStoreToControlDb,
+    savePlaylistDraftToControlDb,
     setSelectedPlaylistId,
     existingPlaylistIds,
     mergedMedia,
@@ -72,15 +66,9 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
         playlistDraft.title || "playlist",
         existingPlaylistIds
       );
-    const nextStore: DraftStore = {
-      ...draftStore,
-      playlists: [
-        ...draftStore.playlists.filter((playlist) => playlist.id !== playlistId),
-        { ...playlistDraft, id: playlistId },
-      ],
-    };
-    const synced = await syncDraftStoreToControlDb(nextStore, {
-      quietSuccess: true,
+    const synced = await savePlaylistDraftToControlDb({
+      ...playlistDraft,
+      id: playlistId,
     });
     if (!synced) return;
     setSelectedPlaylistId(playlistId);

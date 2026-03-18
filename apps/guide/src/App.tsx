@@ -151,6 +151,14 @@ type CatalogPayload = {
   };
 };
 
+type ScreenAssignmentStatusPayload = {
+  desired?: {
+    updatedAt?: unknown;
+    target?: { kind?: unknown; id?: unknown } | null;
+    launch?: Record<string, unknown> | null;
+  } | null;
+};
+
 type CacheStatusPayload = {
   ok?: boolean;
   cached?: number;
@@ -174,6 +182,74 @@ function parseNonNegativeNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   if (value < 0) return null;
   return Math.floor(value);
+}
+
+function toKioskRecordFromScreenAssignment(
+  payload: ScreenAssignmentStatusPayload | null | undefined
+): KioskStateRecord | null {
+  const desired =
+    payload?.desired && typeof payload.desired === "object"
+      ? payload.desired
+      : null;
+  if (!desired) return null;
+  const target =
+    desired.target && typeof desired.target === "object" ? desired.target : null;
+  const targetKind = parseRuntimeTargetKind(target?.kind);
+  const targetId = normalizeTargetId(target?.id);
+  const launch =
+    desired.launch && typeof desired.launch === "object" ? desired.launch : null;
+  const rotate = parseRotateValue(launch?.displayRotate);
+  const updatedAt =
+    typeof desired.updatedAt === "number" && Number.isFinite(desired.updatedAt)
+      ? desired.updatedAt
+      : Date.now();
+  return {
+    updatedAt,
+    state: {
+      ...(launch?.mode === "guide" || launch?.mode === "gallery"
+        ? { mode: launch.mode }
+        : {}),
+      ...(targetKind && targetId ? { targetKind, targetId } : {}),
+      ...(typeof launch?.lock === "boolean" ? { lock: launch.lock } : {}),
+      ...(typeof launch?.qr === "boolean" ? { qr: launch.qr } : {}),
+      ...(typeof launch?.nosplash === "boolean"
+        ? { nosplash: launch.nosplash }
+        : {}),
+      ...(typeof launch?.remoteInput === "boolean"
+        ? { remoteInput: launch.remoteInput }
+        : {}),
+      ...(typeof launch?.remoteApp === "boolean"
+        ? { remoteApp: launch.remoteApp }
+        : {}),
+      ...(typeof launch?.remoteMic === "boolean"
+        ? { remoteMic: launch.remoteMic }
+        : {}),
+      ...(typeof launch?.remoteGuide === "boolean"
+        ? { remoteGuide: launch.remoteGuide }
+        : {}),
+      ...(launch?.hudMode === "always" ||
+      launch?.hudMode === "start" ||
+      launch?.hudMode === "never"
+        ? { hudMode: launch.hudMode }
+        : {}),
+      ...(typeof launch?.hudSec === "number" && Number.isFinite(launch.hudSec)
+        ? { hudShowSec: launch.hudSec }
+        : {}),
+      ...(typeof launch?.theme === "string" && launch.theme.trim()
+        ? { theme: launch.theme.trim() }
+        : {}),
+      ...(rotate !== null ? { rotate } : {}),
+      ...(readOptionalString(launch?.infoTitle)
+        ? { infoTitle: readOptionalString(launch?.infoTitle) }
+        : {}),
+      ...(readOptionalString(launch?.infoArtist)
+        ? { infoArtist: readOptionalString(launch?.infoArtist) }
+        : {}),
+      ...(readOptionalString(launch?.infoDescription)
+        ? { infoDescription: readOptionalString(launch?.infoDescription) }
+        : {}),
+    },
+  };
 }
 
 function buildCacheWarmStatus(args: {
@@ -674,16 +750,29 @@ function App() {
   useEffect(() => {
     const sid = (screenId ?? "").trim();
     if (!sid) return;
-    const ac = new AbortController();
-    void fetch(`/api/kiosk/state?screenId=${encodeURIComponent(sid)}`, { signal: ac.signal })
-      .then(async (r) => (r.ok ? ((await r.json()) as any) : null))
-      .then((json) => {
-        if (json?.ok) {
-          setKioskRecord((json.record ?? null) as KioskStateRecord | null);
+    let cancelled = false;
+    const updateFromAssignment = async () => {
+      try {
+        const response = await fetch(
+          `/api/v1/screen-assignment/${encodeURIComponent(sid)}`
+        );
+        if (!response.ok) {
+          if (!cancelled) setKioskRecord(null);
+          return;
         }
-      })
-      .catch(() => {});
-    return () => ac.abort();
+        const payload = (await response.json()) as ScreenAssignmentStatusPayload;
+        if (cancelled) return;
+        setKioskRecord(toKioskRecordFromScreenAssignment(payload));
+      } catch {
+        // best-effort; websocket updates can still carry managed state
+      }
+    };
+    void updateFromAssignment();
+    const timer = window.setInterval(updateFromAssignment, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [screenId]);
 
   const galleryEnabledEffective =
@@ -796,6 +885,18 @@ function App() {
     if (!Number.isFinite(n) || n < 0) return null;
     return n;
   }, [hudSecParam, kioskState?.hudShowSec]);
+  const infoTitleOverride = useMemo(
+    () => readOptionalString(kioskState?.infoTitle),
+    [kioskState?.infoTitle]
+  );
+  const infoArtistOverride = useMemo(
+    () => readOptionalString(kioskState?.infoArtist),
+    [kioskState?.infoArtist]
+  );
+  const infoDescriptionOverride = useMemo(
+    () => readOptionalString(kioskState?.infoDescription),
+    [kioskState?.infoDescription]
+  );
   const [displaySettings, setDisplaySettings] = useState<DisplaySettings>(() =>
     loadDisplaySettings()
   );
@@ -1111,6 +1212,7 @@ function App() {
   const pauseUntilRef = useRef(0);
   const didGalleryAutoplayRef = useRef(false);
   const galleryAutoplayTargetRef = useRef<string | null>(null);
+  const overlayAutoplayTargetRef = useRef<string | null>(null);
   const pinWaitUntilRef = useRef<number | null>(null);
   const autoHoldUntilRef = useRef(0);
   const autoResetPendingRef = useRef(false);
@@ -1120,6 +1222,7 @@ function App() {
   useEffect(() => {
     if (!kioskRecord) return;
     galleryAutoplayTargetRef.current = null;
+    overlayAutoplayTargetRef.current = null;
     if (typeof kioskState?.qr === "boolean") {
       setShowQr(kioskState.qr);
     }
@@ -1617,10 +1720,10 @@ function App() {
       const channelIndex = channels.findIndex((item) => item.id === channel.id);
       setPlayerChannelIndex(channelIndex >= 0 ? channelIndex : activeRow);
       setPlayerMeta({
-        title: program.infoTitle ?? program.title,
+        title: infoTitleOverride ?? program.infoTitle ?? program.title,
         subtitle: program.subtitle,
-        artist: program.artist,
-        description: program.description,
+        artist: infoArtistOverride ?? program.artist,
+        description: infoDescriptionOverride ?? program.description,
         hudShowSec,
         hudMode: hudMode ?? undefined,
         channelName: channel.name,
@@ -1630,7 +1733,7 @@ function App() {
         type: "now",
         channelId: channel.id,
         number: channel.number,
-        title: program.title,
+        title: infoTitleOverride ?? program.title,
         url: program.url,
       });
     },
@@ -1641,6 +1744,9 @@ function App() {
       activeRow,
       hudModeOverride,
       hudShowSecOverride,
+      infoArtistOverride,
+      infoDescriptionOverride,
+      infoTitleOverride,
       viewMode,
       galleryEnabledEffective,
       playlistEnabledEffective,
@@ -1891,6 +1997,68 @@ function App() {
     playlistEnabledEffective,
     galleryPlaylist,
     galleryPlaylistIndex,
+  ]);
+
+  useEffect(() => {
+    if (galleryEnabledEffective) return;
+    if (viewMode !== "guide") return;
+    if (!runtimeTarget || runtimeTarget.kind === "channel") return;
+
+    const wantsGuidePlaybackOverlay =
+      hudModeOverride === "always" ||
+      hudModeOverride === "start" ||
+      hudShowSecOverride !== null ||
+      Boolean(infoTitleOverride) ||
+      Boolean(infoArtistOverride) ||
+      Boolean(infoDescriptionOverride);
+    if (!wantsGuidePlaybackOverlay) return;
+
+    const targetChannel = syntheticTargetChannelId
+      ? channels.find((channel) => channel.id === syntheticTargetChannelId) ?? null
+      : null;
+    if (!targetChannel) return;
+
+    const autoplayKey = [
+      kioskRecord?.updatedAt ?? 0,
+      runtimeTarget.kind,
+      runtimeTarget.id,
+      hudModeOverride ?? "",
+      hudShowSecOverride ?? "",
+      infoTitleOverride ?? "",
+      infoArtistOverride ?? "",
+      infoDescriptionOverride ?? "",
+    ].join("|");
+    if (overlayAutoplayTargetRef.current === autoplayKey) return;
+    overlayAutoplayTargetRef.current = autoplayKey;
+
+    const visibleIndex = channels.findIndex(
+      (channel) => channel.id === targetChannel.id
+    );
+    if (visibleIndex >= 0) {
+      setSelectedRow(visibleIndex);
+    }
+    setSelectedCol(currentSlotIndex);
+    pauseUntilRef.current = Date.now() + USER_PAUSE_MS;
+
+    const program = getProgramForChannel(targetChannel);
+    if (program?.url) {
+      openProgram(program, targetChannel);
+    }
+  }, [
+    channels,
+    currentSlotIndex,
+    galleryEnabledEffective,
+    getProgramForChannel,
+    hudModeOverride,
+    hudShowSecOverride,
+    infoArtistOverride,
+    infoDescriptionOverride,
+    infoTitleOverride,
+    kioskRecord?.updatedAt,
+    openProgram,
+    runtimeTarget,
+    syntheticTargetChannelId,
+    viewMode,
   ]);
 
   const stashErrorRetryRef = useRef<Record<string, { attempts: number; lastAt: number }>>({});

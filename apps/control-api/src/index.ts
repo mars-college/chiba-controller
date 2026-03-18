@@ -379,6 +379,9 @@ const OpsApplyTargetRequestSchema = z
     remoteGuide: z.boolean().optional(),
     hudMode: z.enum(["always", "start", "never"]).optional(),
     hudShowSec: z.number().positive().optional(),
+    infoTitle: z.string().min(1).optional(),
+    infoArtist: z.string().min(1).optional(),
+    infoDescription: z.string().min(1).optional(),
     theme: z.string().min(1).optional(),
     displayRotate: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
     namespace: z.string().min(1).optional(),
@@ -445,12 +448,43 @@ const OpsNodeDisplayModeRequestSchema = z
 
 function sanitizeLaunch(input: unknown): LaunchOptions {
   const parsed = LaunchOptionsSchema.safeParse(input);
-  return parsed.success ? parsed.data : {};
+  if (!parsed.success) return {};
+  return Object.fromEntries(
+    Object.entries(parsed.data).filter(([, value]) => value !== undefined)
+  ) as LaunchOptions;
 }
 
 function mergeLaunch(...inputs: Array<unknown>): LaunchOptions {
   const merged = Object.assign({}, ...inputs);
   return sanitizeLaunch(merged);
+}
+
+function readLaunchInfoString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function applyLaunchInfoOverridesToItems(args: {
+  items: ResolvedPlaybackItem[];
+  launch: LaunchOptions;
+}): ResolvedPlaybackItem[] {
+  const infoTitle = readLaunchInfoString(
+    (args.launch as Record<string, unknown>).infoTitle
+  );
+  const infoArtist = readLaunchInfoString(
+    (args.launch as Record<string, unknown>).infoArtist
+  );
+  const infoDescription = readLaunchInfoString(
+    (args.launch as Record<string, unknown>).infoDescription
+  );
+  if (!infoTitle && !infoArtist && !infoDescription) return args.items;
+  return args.items.map((item) => ({
+    ...item,
+    ...(infoTitle ? { title: infoTitle } : {}),
+    ...(infoArtist ? { artist: infoArtist } : {}),
+    ...(infoDescription ? { description: infoDescription } : {}),
+  }));
 }
 
 function withNodeLaunchDefaults(args: {
@@ -2987,9 +3021,17 @@ async function main(): Promise<void> {
       guideBaseUrl,
       remoteWsUrl,
     });
-    const cacheable = resolved.items.filter((item) => item.cache).length;
-    const mpvCount = resolved.items.filter((item) => item.renderer === "mpv").length;
-    const webCount = resolved.items.length - mpvCount;
+    const launch = withNodeLaunchDefaults({
+      node,
+      launch: desired.launch,
+    });
+    const resolvedItems = applyLaunchInfoOverridesToItems({
+      items: resolved.items,
+      launch,
+    });
+    const cacheable = resolvedItems.filter((item) => item.cache).length;
+    const mpvCount = resolvedItems.filter((item) => item.renderer === "mpv").length;
+    const webCount = resolvedItems.length - mpvCount;
 
     res.json({
       ok: true,
@@ -2998,16 +3040,13 @@ async function main(): Promise<void> {
       desired: {
         revision: desired.revision,
         target,
-        launch: withNodeLaunchDefaults({
-          node,
-          launch: desired.launch,
-        }),
+        launch,
       },
       resolved: {
-        items: resolved.items,
+        items: resolvedItems,
         warnings: resolved.warnings,
         cache: {
-          total: resolved.items.length,
+          total: resolvedItems.length,
           cacheable,
         },
         renderers: {
@@ -4875,6 +4914,9 @@ async function main(): Promise<void> {
       remoteGuide: parsed.data.remoteGuide,
       hudMode: parsed.data.hudMode,
       hudSec: parsed.data.hudShowSec,
+      infoTitle: parsed.data.infoTitle,
+      infoArtist: parsed.data.infoArtist,
+      infoDescription: parsed.data.infoDescription,
       theme: parsed.data.theme,
       displayRotate: parsed.data.displayRotate,
     });

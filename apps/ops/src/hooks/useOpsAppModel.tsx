@@ -49,6 +49,7 @@ import {
   type ResourcePayload,
 } from "../lib/controlApi";
 import type {
+  DesiredScreenAssignment,
   FleetPi,
   FleetPiHealth,
   OpsNodeRecord,
@@ -68,6 +69,8 @@ import {
   type BuilderMode,
 } from "../store/uiStore";
 import {
+  blockDraftToResource,
+  channelDraftToResource,
   EMPTY_BLOCK_DRAFT,
   EMPTY_CHANNEL_DRAFT,
   EMPTY_DRAFTS,
@@ -87,6 +90,8 @@ import {
   paginateRows,
   parseTargetFromKioskUrl,
   playlistMediaIdsFromSnapshot,
+  playlistDraftToResource,
+  profileDraftToResource,
   readOpsViewFromUrl,
   readString,
   statusBadge,
@@ -460,6 +465,13 @@ export function useOpsAppModel() {
     },
     []
   );
+
+  const loadServerSnapshot = useCallback(async (): Promise<ResourcePayload> => {
+    const result = await fetchResourceSnapshot();
+    setDraftStore(fromResourcePayload(result.snapshot));
+    setServerSnapshot(result.snapshot);
+    return result.snapshot;
+  }, []);
 
   const refreshNodesInventory = useCallback(async () => {
     try {
@@ -1372,29 +1384,48 @@ export function useOpsAppModel() {
       hudSec?: number | "";
       theme?: string;
       rotate?: OptionRotate;
+      baseLaunch?: DesiredScreenAssignment["launch"];
     }) => {
+      const baseLaunch = args.baseLaunch ?? {};
+      const resolveBoolOption = (
+        value: OptionBool | undefined,
+        current: boolean | undefined
+      ): boolean | undefined => {
+        if (value === "inherit" || !value) return current;
+        return toOptionBool(value);
+      };
+      const resolvedTheme = args.theme?.trim();
       return applyTarget({
         target: args.target,
         id: args.id.trim(),
         piIds: args.nodeIds,
-        mode: args.mode === "inherit" ? undefined : args.mode,
-        lock: toOptionBool(args.lock ?? "inherit"),
-        showQr: toOptionBool(args.qr ?? "inherit"),
+        mode:
+          args.mode === "inherit" || !args.mode
+            ? baseLaunch.mode
+            : args.mode,
+        lock: resolveBoolOption(args.lock, baseLaunch.lock),
+        showQr: resolveBoolOption(args.qr, baseLaunch.qr),
         playlist: toOptionBool(args.playlist ?? "inherit"),
-        nosplash: toOptionBool(args.nosplash ?? "inherit"),
-        remoteInput: toOptionBool(args.remoteInput ?? "inherit"),
-        remoteApp: toOptionBool(args.remoteApp ?? "inherit"),
-        remoteMic: toOptionBool(args.remoteMic ?? "inherit"),
-        remoteGuide: toOptionBool(args.remoteGuide ?? "inherit"),
-        hudMode: args.hud === "inherit" || !args.hud ? undefined : args.hud,
+        nosplash: resolveBoolOption(args.nosplash, baseLaunch.nosplash),
+        remoteInput: resolveBoolOption(args.remoteInput, baseLaunch.remoteInput),
+        remoteApp: resolveBoolOption(args.remoteApp, baseLaunch.remoteApp),
+        remoteMic: resolveBoolOption(args.remoteMic, baseLaunch.remoteMic),
+        remoteGuide: resolveBoolOption(args.remoteGuide, baseLaunch.remoteGuide),
+        hudMode:
+          args.hud === "inherit" || !args.hud
+            ? baseLaunch.hudMode
+            : args.hud,
         hudShowSec:
           typeof args.hudSec === "number" && Number.isFinite(args.hudSec)
             ? args.hudSec
-            : undefined,
-        theme: args.theme?.trim() || undefined,
+            : baseLaunch.hudSec,
+        infoTitle: baseLaunch.infoTitle,
+        infoArtist: baseLaunch.infoArtist,
+        infoDescription: baseLaunch.infoDescription,
+        theme: resolvedTheme || baseLaunch.theme,
         displayRotate:
           args.rotate === "inherit" || !args.rotate
-            ? undefined
+            ? baseLaunch.displayRotate
             : (Number(args.rotate) as 0 | 90 | 180 | 270),
       });
     },
@@ -1615,6 +1646,7 @@ export function useOpsAppModel() {
               hudSec: optHudSec,
               theme: optTheme,
               rotate: optRotate,
+              baseLaunch: assignment.launch,
             });
             return response.results;
           } catch (error) {
@@ -1845,8 +1877,7 @@ export function useOpsAppModel() {
         setBuilderBusy(true);
         const payload = toResourcePayload(nextStore);
         const result = await importResources(payload);
-        setDraftStore(nextStore);
-        await refreshServerSnapshot({ silent: true });
+        await loadServerSnapshot();
         if (!options?.quietSuccess) {
           notifications.show({
             color: "teal",
@@ -1868,14 +1899,118 @@ export function useOpsAppModel() {
         setBuilderBusy(false);
       }
     },
-    [refreshServerSnapshot]
+    [loadServerSnapshot]
+  );
+
+  const saveResourceSubsetToControlDb = useCallback(
+    async (args: {
+      payload: Partial<ResourcePayload>;
+      errorTitle: string;
+    }): Promise<boolean> => {
+      try {
+        setBuilderBusy(true);
+        await importResources({
+          media: args.payload.media ?? [],
+          playlists: args.payload.playlists ?? [],
+          blocks: args.payload.blocks ?? [],
+          channels: args.payload.channels ?? [],
+          profiles: args.payload.profiles ?? [],
+        });
+        await loadServerSnapshot();
+        return true;
+      } catch (error) {
+        notifications.show({
+          color: "red",
+          title: args.errorTitle,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      } finally {
+        setBuilderBusy(false);
+      }
+    },
+    [loadServerSnapshot]
+  );
+
+  const savePlaylistDraftToControlDb = useCallback(
+    async (playlist: DraftPlaylist): Promise<boolean> => {
+      const normalizedPlaylist = playlistDraftToResource(playlist);
+      if (!normalizedPlaylist.id) {
+        notifications.show({
+          color: "red",
+          title: "Playlist save failed",
+          message: "playlist_id_required",
+        });
+        return false;
+      }
+      return saveResourceSubsetToControlDb({
+        payload: { playlists: [normalizedPlaylist] },
+        errorTitle: "Playlist save failed",
+      });
+    },
+    [saveResourceSubsetToControlDb]
+  );
+
+  const saveBlockDraftToControlDb = useCallback(
+    async (block: DraftBlock): Promise<boolean> => {
+      const normalizedBlock = blockDraftToResource(block);
+      if (!normalizedBlock.id) {
+        notifications.show({
+          color: "red",
+          title: "Block save failed",
+          message: "block_id_required",
+        });
+        return false;
+      }
+      return saveResourceSubsetToControlDb({
+        payload: { blocks: [normalizedBlock] },
+        errorTitle: "Block save failed",
+      });
+    },
+    [saveResourceSubsetToControlDb]
+  );
+
+  const saveChannelDraftToControlDb = useCallback(
+    async (channel: DraftChannel): Promise<boolean> => {
+      const normalizedChannel = channelDraftToResource(channel);
+      if (!normalizedChannel.id) {
+        notifications.show({
+          color: "red",
+          title: "Channel save failed",
+          message: "channel_id_required",
+        });
+        return false;
+      }
+      return saveResourceSubsetToControlDb({
+        payload: { channels: [normalizedChannel] },
+        errorTitle: "Channel save failed",
+      });
+    },
+    [saveResourceSubsetToControlDb]
+  );
+
+  const saveProfileDraftToControlDb = useCallback(
+    async (profile: DraftProfile): Promise<boolean> => {
+      const normalizedProfile = profileDraftToResource(profile);
+      if (!normalizedProfile.id) {
+        notifications.show({
+          color: "red",
+          title: "Profile save failed",
+          message: "profile_id_required",
+        });
+        return false;
+      }
+      return saveResourceSubsetToControlDb({
+        payload: { profiles: [normalizedProfile] },
+        errorTitle: "Profile save failed",
+      });
+    },
+    [saveResourceSubsetToControlDb]
   );
 
   const refreshDraftsAfterIngest = useCallback(async () => {
-    const result = await fetchResourceSnapshot();
-    setDraftStore(fromResourcePayload(result.snapshot));
-    setServerSnapshot(result.snapshot);
-  }, []);
+    await loadServerSnapshot();
+  }, [loadServerSnapshot]);
 
   const upsertIngestJob = useCallback(
     (job: MediaIngestJob, options?: { notifyTransitions?: boolean }) => {
@@ -3751,6 +3886,7 @@ export function useOpsAppModel() {
         title: row.title,
         defaultTargetKind: row.defaultTargetKind,
         defaultTargetId: row.defaultTargetId,
+        defaultLaunch: { ...row.defaultLaunch },
         nodeAssignments: row.nodeAssignments.map((node) => ({ ...node })),
       });
       return true;
@@ -4141,7 +4277,7 @@ export function useOpsAppModel() {
     setPlaylistDraft,
     closePlaylistEditorRoute,
     setMediaPickerOpen,
-    syncDraftStoreToControlDb,
+    savePlaylistDraftToControlDb,
     setSelectedPlaylistId,
     existingPlaylistIds: draftStore.playlists.map((row) => row.id),
     mergedMedia,
@@ -4169,7 +4305,9 @@ export function useOpsAppModel() {
   const containerEditorsVm = {
     builderTab,
     draftStore,
-    syncDraftStoreToControlDb,
+    saveBlockDraftToControlDb,
+    saveChannelDraftToControlDb,
+    saveProfileDraftToControlDb,
     deleteBlockDraft,
     deleteChannelDraft,
     deleteProfileDraft,

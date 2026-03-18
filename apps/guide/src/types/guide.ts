@@ -96,6 +96,9 @@ export type KioskState = {
   scale?: number;
   textScale?: number;
   hours?: number;
+  infoTitle?: string;
+  infoArtist?: string;
+  infoDescription?: string;
 };
 
 export type KioskStateRecord = {

@@ -442,6 +442,17 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+function hasGuideInfoSurface(launch: LaunchOptions): boolean {
+  return (
+    launch.hudMode === "always" ||
+    launch.hudMode === "start" ||
+    typeof launch.hudSec === "number" ||
+    Boolean(launch.infoTitle?.trim()) ||
+    Boolean(launch.infoArtist?.trim()) ||
+    Boolean(launch.infoDescription?.trim())
+  );
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -2250,7 +2261,8 @@ async function main(): Promise<void> {
         const needsGuideSurface =
           runtimeState.launch.mode === "guide" ||
           runtimeState.launch.qr === true ||
-          runtimeState.launch.remoteInput === true;
+          runtimeState.launch.remoteInput === true ||
+          hasGuideInfoSurface(runtimeState.launch);
         const useGuideChromium =
           needsGuideSurface || resolved.resolved.items.length === 0;
         const hasWebOnlyItems =
