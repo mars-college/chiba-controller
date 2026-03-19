@@ -54,3 +54,37 @@ test("queue marks failed jobs and keeps error details", async () => {
   assert.equal(after.status, "failed");
   assert.equal(after.error, "downstream_error");
 });
+
+test("queue can expose a pending job before work starts", async () => {
+  const queue = new IngestJobQueue();
+  const job = queue.createPending({
+    kind: "upload",
+    message: "receiving_upload",
+  });
+
+  assert.equal(job.status, "queued");
+  assert.equal(job.progress.message, "receiving_upload");
+
+  const started = queue.start({
+    id: job.id,
+    runner: async ({ onProgress }) => {
+      onProgress({
+        current: 1,
+        total: 2,
+        percent: 50,
+        message: "processing",
+      });
+      await sleep(10);
+      return {
+        status: 200,
+        payload: { ok: true },
+      };
+    },
+  });
+
+  assert.equal(started, true);
+  await sleep(60);
+  const after = queue.get(job.id);
+  assert.ok(after);
+  assert.equal(after.status, "succeeded");
+});

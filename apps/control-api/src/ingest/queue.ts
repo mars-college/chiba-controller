@@ -34,7 +34,7 @@ export class IngestJobQueue {
     this.maxJobs = args?.maxJobs ?? 500;
   }
 
-  enqueue(args: { kind: IngestJobKind; runner: QueueRunner }): IngestJob {
+  createPending(args: { kind: IngestJobKind; message?: string }): IngestJob {
     const id = `ing-${randomUUID()}`;
     const job: IngestJob = {
       id,
@@ -46,18 +46,36 @@ export class IngestJobQueue {
         current: 0,
         total: 1,
         percent: 0,
-        message: "queued",
+        message: args.message ?? "queued",
       },
     };
     this.jobs.set(id, job);
     this.order.unshift(id);
     this.gc();
 
+    return job;
+  }
+
+  enqueue(args: { kind: IngestJobKind; runner: QueueRunner }): IngestJob {
+    const job = this.createPending({ kind: args.kind });
+
     void this.run({
-      id,
+      id: job.id,
       runner: args.runner,
     });
     return job;
+  }
+
+  start(args: { id: string; runner: QueueRunner }): boolean {
+    const job = this.jobs.get(args.id);
+    if (!job) return false;
+    if (job.startedAt || job.finishedAt) return false;
+
+    void this.run({
+      id: args.id,
+      runner: args.runner,
+    });
+    return true;
   }
 
   get(jobId: string): IngestJob | null {
@@ -89,6 +107,23 @@ export class IngestJobQueue {
       if (!id) break;
       this.jobs.delete(id);
     }
+  }
+
+  fail(args: {
+    id: string;
+    error: string;
+    result?: Record<string, unknown>;
+  }): boolean {
+    const current = this.jobs.get(args.id);
+    if (!current) return false;
+    if (current.finishedAt) return false;
+    this.update(args.id, {
+      status: "failed",
+      finishedAt: now(),
+      error: args.error,
+      ...(args.result ? { result: args.result } : {}),
+    });
+    return true;
   }
 
   private async run(args: { id: string; runner: QueueRunner }): Promise<void> {

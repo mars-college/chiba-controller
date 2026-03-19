@@ -13,6 +13,7 @@ Renderer policy:
 - Chromium only for guide/web targets
 
 Useful runtime knobs:
+- `CHIBA3_CACHE_DIR` (default: a user-persistent cache dir under XDG/home state): durable cache location for warmed media. Pi bootstrap pins deployed nodes to `/var/lib/chiba-cable3/cache/<node-id>`.
 - `CHIBA3_SWITCH_OVERLAP_MS` (default `700`): keeps the previous fullscreen backend alive briefly during `chromium <-> mpv` handoff to reduce desktop/window flicker. Set to `0` to disable.
 - `CHIBA3_WEB_READY_TIMEOUT_MS` (default `5000`): wait budget for web target HTTP readiness before Chromium switchover.
 - `CHIBA3_WEB_READY_POLL_MS` (default `200`): polling interval for web readiness checks.

@@ -489,6 +489,9 @@ HOME_ASSISTANT_PASS="${11:-}"
 HOME_ASSISTANT_URL="${12:-}"
 HOME_ASSISTANT_START_DELAY_MS="${13:-1800}"
 HOME_ASSISTANT_STEP_DELAY_MS="${14:-180}"
+RUNTIME_USER="$(id -un)"
+CACHE_DIR="/var/lib/chiba-cable3/cache/${NODE_ID}"
+LEGACY_CACHE_DIR="/tmp/chiba-cable3-cache/${NODE_ID}"
 
 tmp_env="$(mktemp)"
 {
@@ -506,9 +509,16 @@ tmp_env="$(mktemp)"
   printf 'CHIBA3_HOME_ASSISTANT_URL=%q\n' "${HOME_ASSISTANT_URL}"
   printf 'CHIBA3_HOME_ASSISTANT_START_DELAY_MS=%q\n' "${HOME_ASSISTANT_START_DELAY_MS}"
   printf 'CHIBA3_HOME_ASSISTANT_STEP_DELAY_MS=%q\n' "${HOME_ASSISTANT_STEP_DELAY_MS}"
+  printf 'CHIBA3_CACHE_DIR=%q\n' "${CACHE_DIR}"
 } > "${tmp_env}"
 sudo install -m 0600 "${tmp_env}" /etc/default/cable3-node-runtime
 rm -f "${tmp_env}"
+sudo install -d -m 0755 /var/lib/chiba-cable3/cache
+sudo install -d -m 0755 -o "${RUNTIME_USER}" -g "${RUNTIME_USER}" "${CACHE_DIR}"
+if [[ -d "${LEGACY_CACHE_DIR}" ]]; then
+  sudo cp -an "${LEGACY_CACHE_DIR}/." "${CACHE_DIR}/" >/dev/null 2>&1 || true
+  sudo chown -R "${RUNTIME_USER}:${RUNTIME_USER}" "${CACHE_DIR}" >/dev/null 2>&1 || true
+fi
 sudo install -d -m 0755 /etc/systemd/system/cable3-node-runtime.service.d
 sudo tee /etc/systemd/system/cable3-node-runtime.service.d/10-endpoints.conf >/dev/null <<'EOF'
 [Service]
@@ -603,6 +613,8 @@ HOME_ASSISTANT_PASS="${15:-}"
 HOME_ASSISTANT_URL="${16:-}"
 HOME_ASSISTANT_START_DELAY_MS="${17:-1800}"
 HOME_ASSISTANT_STEP_DELAY_MS="${18:-180}"
+CACHE_DIR="/var/lib/chiba-cable3/cache/${NODE_ID}"
+LEGACY_CACHE_DIR="/tmp/chiba-cable3-cache/${NODE_ID}"
 
 WATCHDOG_SCRIPT="${REMOTE_DIR}/scripts/pis/network-watchdog.sh"
 
@@ -718,6 +730,12 @@ ensure_graphical_session() {
 
 install_units() {
   sudo install -d -m 0755 /var/lib/chiba-cable3
+  sudo install -d -m 0755 /var/lib/chiba-cable3/cache
+  sudo install -d -m 0755 -o "${SSH_USER}" -g "${SSH_USER}" "${CACHE_DIR}"
+  if [[ -d "${LEGACY_CACHE_DIR}" ]]; then
+    sudo cp -an "${LEGACY_CACHE_DIR}/." "${CACHE_DIR}/" >/dev/null 2>&1 || true
+  fi
+  sudo chown -R "${SSH_USER}:${SSH_USER}" "${CACHE_DIR}" >/dev/null 2>&1 || true
   sudo rm -f /var/lib/chiba-cable3/network-watchdog.state
   sudo rm -f /etc/systemd/system/cable3-node-runtime.service.d/20-display.conf
   chmod +x "${WATCHDOG_SCRIPT}"
@@ -752,6 +770,7 @@ EOF
     printf 'CHIBA3_HOME_ASSISTANT_URL=%q\n' "${HOME_ASSISTANT_URL}"
     printf 'CHIBA3_HOME_ASSISTANT_START_DELAY_MS=%q\n' "${HOME_ASSISTANT_START_DELAY_MS}"
     printf 'CHIBA3_HOME_ASSISTANT_STEP_DELAY_MS=%q\n' "${HOME_ASSISTANT_STEP_DELAY_MS}"
+    printf 'CHIBA3_CACHE_DIR=%q\n' "${CACHE_DIR}"
   } > "${tmp_env}"
   sudo install -m 0600 "${tmp_env}" /etc/default/cable3-node-runtime
   rm -f "${tmp_env}"

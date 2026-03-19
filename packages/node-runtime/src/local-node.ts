@@ -166,6 +166,43 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function readEnvPath(name: string): string | null {
+  const raw = process.env[name];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function defaultCacheRoot(): string {
+  const xdgStateHome = readEnvPath("XDG_STATE_HOME");
+  if (xdgStateHome) return path.join(xdgStateHome, "chiba-cable3", "cache");
+
+  if (process.platform === "win32") {
+    const localAppData = readEnvPath("LOCALAPPDATA") ?? readEnvPath("APPDATA");
+    if (localAppData) return path.join(localAppData, "chiba-cable3", "cache");
+  }
+
+  let homeDir = "";
+  try {
+    homeDir = os.homedir().trim();
+  } catch {
+    homeDir = "";
+  }
+
+  if (homeDir) {
+    if (process.platform === "darwin") {
+      return path.join(homeDir, "Library", "Application Support", "chiba-cable3", "cache");
+    }
+    return path.join(homeDir, ".local", "state", "chiba-cable3", "cache");
+  }
+
+  return path.join(os.tmpdir(), "chiba-cable3-cache");
+}
+
+function defaultCacheDir(nodeId: string): string {
+  return path.join(defaultCacheRoot(), nodeId);
+}
+
 function normalizeDisplayHz(raw: string): string {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return raw;
@@ -1997,7 +2034,7 @@ async function main(): Promise<void> {
   const cacheDir =
     readArg("--cache-dir") ??
     process.env.CHIBA3_CACHE_DIR ??
-    path.join("/tmp/chiba-cable3-cache", nodeId);
+    defaultCacheDir(nodeId);
   const runtimeDir =
     readArg("--runtime-dir") ??
     process.env.CHIBA3_RUNTIME_DIR ??

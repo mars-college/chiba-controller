@@ -68,7 +68,6 @@ import {
 import {
   createIngestJobQueue,
   enqueueEdenCollectionIngest,
-  enqueueUploadIngest,
   enqueueYouTubeIngest,
 } from "./ingest/queue.js";
 import {
@@ -83,7 +82,10 @@ import {
   readMultipartUploadFromRequest,
   readThumbnail,
 } from "./ingest/runtime.js";
-import { parseEdenCollectionInput } from "./ingest/service.js";
+import {
+  INGEST_MAX_UPLOAD_BYTES,
+  parseEdenCollectionInput,
+} from "./ingest/service.js";
 import { normalizeOpsApplyLaunch } from "./launch-policy.js";
 import { buildConnectivitySummary, toRegistryToml } from "./nodes-utils.js";
 import { registerDeviceController } from "./device-controller.js";
@@ -2506,6 +2508,12 @@ function eventWrite(res: ServerResponse, type: string, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+function requestContentLength(raw: string | string[] | undefined): number {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const parsed = Number(value ?? "0");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 async function main(): Promise<void> {
   const app = Fastify({
     bodyLimit: 1 * 1024 * 1024,
@@ -3398,6 +3406,13 @@ async function main(): Promise<void> {
   });
 
   app.post("/api/v1/ingest/upload", async (req, res) => {
+    if (requestContentLength(req.headers["content-length"]) > INGEST_MAX_UPLOAD_BYTES) {
+      res.status(413).json({
+        ok: false,
+        error: "payload_too_large",
+      });
+      return;
+    }
     const parsed = await readMultipartUploadFromRequest(req.raw);
     const metadataParsed = IngestUploadMetadataSchema.safeParse(parsed.fields);
     if (!metadataParsed.success) {
@@ -3498,24 +3513,54 @@ async function main(): Promise<void> {
   });
 
   app.post("/api/v1/ingest/jobs/upload", async (req, res) => {
-    const parsed = await readMultipartUploadFromRequest(req.raw);
-    const metadataParsed = IngestUploadMetadataSchema.safeParse(parsed.fields);
-    if (!metadataParsed.success) {
-      res.status(400).json({
+    if (requestContentLength(req.headers["content-length"]) > INGEST_MAX_UPLOAD_BYTES) {
+      res.status(413).json({
         ok: false,
-        error: "invalid_upload_metadata",
-        issues: metadataParsed.error.issues,
+        error: "payload_too_large",
       });
       return;
     }
-    const job = enqueueUploadIngest({
-      queue: ingestQueue,
-      db,
-      contentLength: parsed.contentLength,
-      files: parsed.files,
-      metadata: metadataParsed.data,
+
+    const job = ingestQueue.createPending({
+      kind: "upload",
+      message: "receiving_upload",
     });
-    res.status(202).json({ ok: true, job });
+
+    try {
+      const parsed = await readMultipartUploadFromRequest(req.raw);
+      const metadataParsed = IngestUploadMetadataSchema.safeParse(parsed.fields);
+      if (!metadataParsed.success) {
+        ingestQueue.fail({
+          id: job.id,
+          error: "invalid_upload_metadata",
+          result: { issues: metadataParsed.error.issues },
+        });
+        res.status(400).json({
+          ok: false,
+          error: "invalid_upload_metadata",
+          issues: metadataParsed.error.issues,
+        });
+        return;
+      }
+      ingestQueue.start({
+        id: job.id,
+        runner: ({ onProgress }) =>
+          ingestUploadedFiles({
+            db,
+            contentLength: parsed.contentLength,
+            files: parsed.files,
+            metadata: metadataParsed.data,
+            onProgress,
+          }),
+      });
+      res.status(202).json({ ok: true, job: ingestQueue.get(job.id) ?? job });
+    } catch (error) {
+      ingestQueue.fail({
+        id: job.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   });
 
   app.post("/api/v1/ingest/jobs/youtube", async (req, res) => {
