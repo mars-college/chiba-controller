@@ -1656,6 +1656,61 @@ async function fetchResolved(args: {
   return payload;
 }
 
+function cacheableMediaItems(items: ResolvedPlaybackItem[]): ResolvedPlaybackItem[] {
+  return items.filter((item) => item.renderer === "mpv" && item.cache);
+}
+
+function cacheFileNameForItem(item: ResolvedPlaybackItem): string {
+  const ext = sourceExt(item.sourceValue);
+  return `${hashKey(`${item.mediaId}:${item.sourceValue}`)}${ext || ".bin"}`;
+}
+
+function cachePathForItem(args: {
+  cacheDir: string;
+  item: ResolvedPlaybackItem;
+}): string {
+  return path.join(args.cacheDir, cacheFileNameForItem(args.item));
+}
+
+async function warmCacheForItems(args: {
+  items: ResolvedPlaybackItem[];
+  cacheDir: string;
+  onProgress: (progress: {
+    ready: number;
+    total: number;
+    currentItemId: string | null;
+  }) => Promise<void>;
+}): Promise<void> {
+  await ensureDir(args.cacheDir);
+  const items = cacheableMediaItems(args.items);
+  const total = items.length;
+  let ready = 0;
+
+  for (const item of items) {
+    const cachePath = cachePathForItem({
+      cacheDir: args.cacheDir,
+      item,
+    });
+    if (item.sourceType === "path") {
+      await copyFileCached({
+        sourcePath: item.sourceValue,
+        destPath: cachePath,
+      });
+    } else {
+      await downloadFileCached({
+        url: item.sourceValue,
+        destPath: cachePath,
+      });
+    }
+    ready += 1;
+    await args.onProgress({
+      ready,
+      total,
+      currentItemId: item.itemId,
+    });
+  }
+}
+
 async function buildCachedSources(args: {
   items: ResolvedPlaybackItem[];
   cacheDir: string;
@@ -1663,7 +1718,7 @@ async function buildCachedSources(args: {
 }): Promise<Array<{ source: string; item: ResolvedPlaybackItem }>> {
   await ensureDir(args.cacheDir);
   const mediaItems = args.items.filter((item) => item.renderer === "mpv");
-  const total = mediaItems.filter((item) => item.cache).length;
+  const total = cacheableMediaItems(args.items).length;
   let ready = 0;
   const out: Array<{ source: string; item: ResolvedPlaybackItem }> = [];
 
@@ -1673,9 +1728,10 @@ async function buildCachedSources(args: {
       continue;
     }
 
-    const ext = sourceExt(item.sourceValue);
-    const cacheName = `${hashKey(`${item.mediaId}:${item.sourceValue}`)}${ext || ".bin"}`;
-    const cachePath = path.join(args.cacheDir, cacheName);
+    const cachePath = cachePathForItem({
+      cacheDir: args.cacheDir,
+      item,
+    });
     if (item.sourceType === "path") {
       await copyFileCached({
         sourcePath: item.sourceValue,
@@ -2287,7 +2343,9 @@ async function main(): Promise<void> {
       if (runtimeState.activeRevision !== runtimeState.desiredRevision) {
         runtimeState.phase = "warming";
         runtimeState.cacheReady = 0;
-        runtimeState.cacheTotal = resolved.resolved.cache.cacheable;
+        runtimeState.cacheTotal = cacheableMediaItems(
+          resolved.resolved.items
+        ).length;
         runtimeState.currentItemId = null;
         await emitRuntime({
           phase: "warming",
@@ -2383,6 +2441,33 @@ async function main(): Promise<void> {
             allowInputAnyPlatform,
           });
           if (activateDelayMs > 0) await sleep(activateDelayMs);
+          try {
+            await warmCacheForItems({
+              items: resolved.resolved.items,
+              cacheDir,
+              onProgress: async ({ ready, total, currentItemId }) => {
+                runtimeState.cacheReady = ready;
+                runtimeState.cacheTotal = total;
+                runtimeState.currentItemId = currentItemId;
+                await emitRuntime({
+                  cacheReady: ready,
+                  cacheTotal: total,
+                  currentItemId: currentItemId ?? undefined,
+                });
+              },
+            });
+          } catch (error) {
+            toLog("warn", "chromium_cache_warm_failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } finally {
+            runtimeState.currentItemId = null;
+            await refreshCacheSummary();
+            await emitRuntime({
+              cacheReady: runtimeState.cacheReady,
+              cacheTotal: runtimeState.cacheTotal,
+            });
+          }
         } else {
           stopChromiumDiagnostics();
           const playableEntries = await buildCachedSources({

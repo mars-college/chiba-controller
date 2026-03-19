@@ -4080,6 +4080,68 @@ async function main(): Promise<void> {
   });
 
   app.get("/api/ops/nodes/:nodeId/cache", async (req, res) => {
+    const cacheFileNameForResolvedItem = (item: ResolvedPlaybackItem): string | null => {
+      if (!item.cache || item.renderer !== "mpv") return null;
+      const ext = getSourceExt(item.sourceValue) || ".bin";
+      return `${createHash("sha1")
+        .update(`${item.mediaId}:${item.sourceValue}`)
+        .digest("hex")}${ext}`;
+    };
+
+    const resolveCurrentNodeCache = async (args: {
+      req: { headers?: Record<string, unknown> };
+      nodeId: string;
+      namespace: string;
+      node: typeof schema.registryNodes.$inferSelect | null;
+      guideBaseUrl?: string | null;
+    }) => {
+      const desired = await getDesiredScreenState({
+        db,
+        screenId: args.nodeId,
+        namespace: args.namespace,
+      });
+      if (!desired) return null;
+      const snapshot = await getResourceSnapshot({ db });
+      const target: DesiredTarget = {
+        kind: desired.targetKind as DesiredTarget["kind"],
+        id: desired.targetId,
+      };
+      const launch = withNodeLaunchDefaults({
+        node: args.node,
+        launch: desired.launch,
+      });
+      const resolved = resolveTargetMedia({
+        snapshot,
+        target,
+        screenId: args.nodeId,
+        streamBaseUrl: readPublicApiBaseUrl(args.req),
+        guideBaseUrl:
+          normalizeGuideBaseUrl(args.guideBaseUrl ?? "") ??
+          DEFAULT_GUIDE_BASE_URL,
+      });
+      const items = applyLaunchInfoOverridesToItems({
+        items: resolved.items,
+        launch,
+      });
+      return {
+        target,
+        files: items.flatMap((item) => {
+          const fileName = cacheFileNameForResolvedItem(item);
+          if (!fileName) return [];
+          return [
+            {
+              fileName,
+              itemId: item.itemId,
+              mediaId: item.mediaId,
+              ...(item.title ? { title: item.title } : {}),
+              ...(item.artist ? { artist: item.artist } : {}),
+              ...(item.description ? { description: item.description } : {}),
+            },
+          ];
+        }),
+      };
+    };
+
     const params = paramsOf(req);
     const query = queryOf(req);
     const nodeId = String(params.nodeId ?? "").trim();
@@ -4136,6 +4198,25 @@ async function main(): Promise<void> {
       });
       return;
     }
+    let current: Awaited<ReturnType<typeof resolveCurrentNodeCache>> | null =
+      null;
+    try {
+      current = await resolveCurrentNodeCache({
+        req: req as { headers?: Record<string, unknown> },
+        nodeId,
+        namespace,
+        node,
+        guideBaseUrl: String(query.guideBaseUrl ?? "").trim() || null,
+      });
+    } catch (error) {
+      req.log.warn(
+        {
+          nodeId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "ops_node_cache_current_resolve_failed"
+      );
+    }
     res.json(
       OpsNodeCacheInspectResponseSchema.parse({
         ok: true,
@@ -4145,6 +4226,7 @@ async function main(): Promise<void> {
         host: hostResolved,
         nodePort,
         cache: parsed.data.cache,
+        ...(current ? { current } : {}),
       })
     );
   });

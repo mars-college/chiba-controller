@@ -610,6 +610,28 @@ export type NodeRuntimeCacheDeleteResponse = z.infer<
   typeof NodeRuntimeCacheDeleteResponseSchema
 >;
 
+export const OpsNodeCacheCurrentFileSchema = z
+  .object({
+    fileName: z.string().min(1),
+    itemId: z.string().min(1),
+    mediaId: z.string().min(1),
+    title: z.string().min(1).optional(),
+    artist: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+  })
+  .strict();
+export type OpsNodeCacheCurrentFile = z.infer<
+  typeof OpsNodeCacheCurrentFileSchema
+>;
+
+export const OpsNodeCacheCurrentSchema = z
+  .object({
+    target: DesiredTargetSchema,
+    files: z.array(OpsNodeCacheCurrentFileSchema),
+  })
+  .strict();
+export type OpsNodeCacheCurrent = z.infer<typeof OpsNodeCacheCurrentSchema>;
+
 export const OpsNodeCacheInspectResponseSchema = z
   .object({
     ok: z.literal(true),
@@ -619,6 +641,7 @@ export const OpsNodeCacheInspectResponseSchema = z
     host: z.string().min(1),
     nodePort: z.number().int().positive(),
     cache: NodeCacheSummarySchema,
+    current: OpsNodeCacheCurrentSchema.optional(),
   })
   .strict();
 export type OpsNodeCacheInspectResponse = z.infer<

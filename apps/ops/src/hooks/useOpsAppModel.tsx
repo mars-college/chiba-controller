@@ -1115,7 +1115,7 @@ export function useOpsAppModel() {
       });
       notifications.show({
         color: "teal",
-        title: "Node stash cleared",
+        title: "Node cache cleared",
         message: `${result.deletedFiles} file(s) removed • ${formatBytes(
           result.deletedBytes
         )} reclaimed`,
@@ -1125,7 +1125,7 @@ export function useOpsAppModel() {
       setNodeStashError(message);
       notifications.show({
         color: "red",
-        title: "Failed to clear node stash",
+        title: "Failed to clear node cache",
         message,
       });
     } finally {

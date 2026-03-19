@@ -18,6 +18,7 @@ import {
   Progress,
   ScrollArea,
   Select,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
@@ -735,9 +736,81 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
         label: string;
         subtitle: string;
         previewSrc: string | null;
+        matchKind: "catalog" | "current";
       }
     >
   >({});
+  const [nodeCacheScopeOverride, setNodeCacheScopeOverride] = useState<
+    "current" | "all" | null
+  >(null);
+
+  useEffect(() => {
+    setNodeCacheScopeOverride(null);
+  }, [nodeWorkspaceFocus?.id]);
+
+  const currentCachePreviewEntries = (
+    Array.isArray(
+      (nodeStash as { current?: { files?: unknown[] } } | null)?.current?.files
+    )
+      ? (nodeStash as { current?: { files?: unknown[] } }).current?.files ?? []
+      : []
+  ).flatMap((file) => {
+    const fileName =
+      typeof (file as { fileName?: unknown }).fileName === "string"
+        ? (file as { fileName: string }).fileName.trim()
+        : "";
+    const mediaId =
+      typeof (file as { mediaId?: unknown }).mediaId === "string"
+        ? (file as { mediaId: string }).mediaId.trim()
+        : "";
+    if (!fileName || !mediaId) return [];
+    const media = mergedMediaById.get(mediaId);
+    const title =
+      typeof (file as { title?: unknown }).title === "string"
+        ? (file as { title: string }).title.trim()
+        : "";
+    const artist =
+      typeof (file as { artist?: unknown }).artist === "string"
+        ? (file as { artist: string }).artist.trim()
+        : "";
+    const label =
+      title ||
+      media?.title?.trim() ||
+      mediaId;
+    const subtitle =
+      artist ||
+      media?.artist?.trim() ||
+      (media ? mediaDisplaySubtitle(media) : mediaId);
+    return [
+      [
+        fileName,
+        {
+          mediaId,
+          label,
+          subtitle,
+          previewSrc: media ? media.thumbnailUrl || mediaPreviewSource(media) : null,
+          matchKind: "current" as const,
+        },
+      ] as const,
+    ];
+  });
+  const currentCachePreviewMap = Object.fromEntries(currentCachePreviewEntries);
+  const currentCacheFileNames = new Set(
+    currentCachePreviewEntries.map(([fileName]) => fileName)
+  );
+  const nodeCacheScope =
+    nodeCacheScopeOverride ??
+    (currentCacheFileNames.size > 0 ? "current" : "all");
+  const displayedNodeCacheItems =
+    nodeCacheScope === "current"
+      ? filteredNodeStashItems.filter((file) =>
+          currentCacheFileNames.has(file.fileName)
+        )
+      : filteredNodeStashItems;
+  const cachePreviewMap = {
+    ...stashPreviewMap,
+    ...currentCachePreviewMap,
+  };
 
   useEffect(() => {
     const fileNames = new Set(
@@ -770,28 +843,18 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                 label: media.title || media.id,
                 subtitle: media.artist || media.id,
                 previewSrc: media.thumbnailUrl || mediaPreviewSource(media),
+                matchKind: "catalog" as const,
               },
             ] as const;
           })
         );
         if (cancelled) return;
-        setStashPreviewMap(
-          Object.fromEntries(
-            nextEntries.filter(
-              (
-                entry
-              ): entry is readonly [
-                string,
-                {
-                  mediaId: string;
-                  label: string;
-                  subtitle: string;
-                  previewSrc: string | null;
-                }
-              ] => Boolean(entry)
-            )
-          )
-        );
+        const nextPreviewMap: typeof stashPreviewMap = {};
+        for (const entry of nextEntries) {
+          if (!entry) continue;
+          nextPreviewMap[entry[0]] = entry[1];
+        }
+        setStashPreviewMap(nextPreviewMap);
       } catch {
         if (!cancelled) setStashPreviewMap({});
       }
@@ -833,7 +896,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                       : workspacePanel === "edit"
                       ? [{ label: editingNodeId ? "Edit Node" : "Add Node" }]
                       : workspacePanel === "stash"
-                      ? [{ label: "Media Stash" }]
+                      ? [{ label: "Node Cache" }]
                       : workspacePanel === "runtime"
                       ? [{ label: "Runtime" }]
                       : []),
@@ -1117,7 +1180,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                           leftSection={<IconDownload size={14} />}
                           onClick={openStashPanel}
                         >
-                          Media Stash
+                          Node Cache
                         </Button>
                       </Stack>
                     </Stack>
@@ -1271,7 +1334,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                   <Paper withBorder p="sm" radius="md">
                     <Stack gap="xs">
                       <Group justify="space-between" align="center" wrap="wrap">
-                        <Text fw={700}>Media Stash</Text>
+                        <Text fw={700}>Node Cache</Text>
                         <Group gap={8}>
                           <Button
                             size="xs"
@@ -1297,14 +1360,35 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             }
                             onClick={() => void clearNodeStash()}
                           >
-                            Clear Stash
+                            Clear Cache
                           </Button>
                         </Group>
                       </Group>
+                      {currentCacheFileNames.size > 0 ? (
+                        <SegmentedControl
+                          size="xs"
+                          value={nodeCacheScope}
+                          onChange={(value) =>
+                            setNodeCacheScopeOverride(
+                              value === "all" ? "all" : "current"
+                            )
+                          }
+                          data={[
+                            {
+                              label: `Current Target (${currentCacheFileNames.size})`,
+                              value: "current",
+                            },
+                            {
+                              label: `All Cache Files (${nodeStash?.cache?.fileCount ?? 0})`,
+                              value: "all",
+                            },
+                          ]}
+                        />
+                      ) : null}
                       <SimpleGrid cols={{ base: 1, sm: 2 }}>
                         <TextInput
                           leftSection={<IconSearch size={14} />}
-                          placeholder="Filter stash files"
+                          placeholder="Filter cache files"
                           value={nodeStashFilterQuery}
                           onChange={(event) =>
                             setNodeStashFilterQuery(event.currentTarget.value)
@@ -1338,7 +1422,7 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                         <Text c="red">{nodeStashError}</Text>
                       ) : null}
                       {nodeStashBusy && !nodeStash ? (
-                        <SectionLoader label="Loading node stash..." />
+                        <SectionLoader label="Loading node cache..." />
                       ) : nodeStash ? (
                         <>
                           <Group gap="xs">
@@ -1348,8 +1432,14 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                             <Badge variant="light">
                               {formatBytes(nodeStash.cache.bytes)}
                             </Badge>
+                            {nodeCacheScope === "current" &&
+                            currentCacheFileNames.size > 0 ? (
+                              <Badge variant="light" color="teal">
+                                showing {displayedNodeCacheItems.length} current
+                              </Badge>
+                            ) : null}
                           </Group>
-                          {filteredNodeStashItems.length > 0 ? (
+                          {displayedNodeCacheItems.length > 0 ? (
                             <ScrollArea h={260}>
                               <Table
                                 striped
@@ -1367,10 +1457,13 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                   </Table.Tr>
                                 </Table.Thead>
                                 <Table.Tbody>
-                                  {filteredNodeStashItems.map((file) => {
-                                    const preview = stashPreviewMap[file.fileName];
+                                  {displayedNodeCacheItems.map((file) => {
+                                    const preview = cachePreviewMap[file.fileName];
+                                    const isCurrent = currentCacheFileNames.has(
+                                      file.fileName
+                                    );
                                     return (
-                                    <Table.Tr key={`stash-${file.fileName}`}>
+                                    <Table.Tr key={`cache-${file.fileName}`}>
                                       <Table.Td>
                                         {preview?.previewSrc ? (
                                           <Image
@@ -1396,9 +1489,24 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                           </Text>
                                           {preview ? (
                                             <Group gap={8} wrap="nowrap">
-                                              <Badge size="sm" variant="light" color="blue">
-                                                matched
-                                              </Badge>
+                                              {isCurrent ? (
+                                                <Badge
+                                                  size="sm"
+                                                  variant="light"
+                                                  color="teal"
+                                                >
+                                                  current
+                                                </Badge>
+                                              ) : preview.matchKind ===
+                                                "catalog" ? (
+                                                <Badge
+                                                  size="sm"
+                                                  variant="light"
+                                                  color="blue"
+                                                >
+                                                  matched
+                                                </Badge>
+                                              ) : null}
                                               <Text
                                                 size="xs"
                                                 c="dimmed"
@@ -1466,17 +1574,17 @@ export function FleetScreen({ vm }: { vm: FleetScreenVm }) {
                                     </Table.Tr>
                                   )})}
                                 </Table.Tbody>
-                              </Table>
-                            </ScrollArea>
+                                </Table>
+                              </ScrollArea>
                           ) : (
                             <Text size="sm" c="dimmed">
-                              No files in stash.
+                              No files in cache.
                             </Text>
                           )}
                         </>
                       ) : (
                         <Text size="sm" c="dimmed">
-                          No stash data loaded yet.
+                          No cache data loaded yet.
                         </Text>
                       )}
                     </Stack>

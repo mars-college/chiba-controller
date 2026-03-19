@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -90,6 +91,7 @@ test("qr overlay forces guide surface for gallery media", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "c3-node-qr-guide-"));
   const cacheDir = path.join(tempRoot, "cache");
   const runtimeDir = path.join(tempRoot, "runtime");
+  const mediaPath = path.join(tempRoot, "qr-media.mp4");
   const chromiumLog = path.join(tempRoot, "mock-chromium.log");
   const mpvLog = path.join(tempRoot, "mock-mpv.log");
   const chromiumBinPath = path.join(tempRoot, "mock-chromium.sh");
@@ -107,6 +109,7 @@ test("qr overlay forces guide surface for gallery media", async () => {
   try {
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.mkdir(runtimeDir, { recursive: true });
+    await fs.writeFile(mediaPath, Buffer.from("qr-guide-media", "utf8"));
 
     await fs.writeFile(
       chromiumBinPath,
@@ -165,7 +168,7 @@ sleep 3600
                 itemId: "m-qr-1:0",
                 mediaId: "m-qr-1",
                 sourceType: "path",
-                sourceValue: "/tmp/does-not-matter.mp4",
+                sourceValue: mediaPath,
                 cache: true,
                 renderer: "mpv",
                 title: "QR Media",
@@ -242,10 +245,19 @@ sleep 3600
       async () => {
         const statusRes = await fetch(`http://127.0.0.1:${nodePort}/status`);
         return (await statusRes.json()) as {
-          runtime: { backend: string; activeRevision: number | null };
+          runtime: {
+            backend: string;
+            activeRevision: number | null;
+            cacheReady: number;
+            cacheTotal: number;
+          };
         };
       },
-      (json) => json.runtime.backend === "chromium" && json.runtime.activeRevision === 1,
+      (json) =>
+        json.runtime.backend === "chromium" &&
+        json.runtime.activeRevision === 1 &&
+        json.runtime.cacheReady === 1 &&
+        json.runtime.cacheTotal === 1,
       10_000,
       "chromium_backend_active"
     );
@@ -261,6 +273,12 @@ sleep 3600
 
     const mpvArgs = (await fs.readFile(mpvLog, "utf8").catch(() => "")).trim();
     assert.equal(mpvArgs, "");
+
+    const cacheEntries = await fs.readdir(cacheDir);
+    const expectedCacheFile = `${createHash("sha1")
+      .update(`m-qr-1:${mediaPath}`)
+      .digest("hex")}.mp4`;
+    assert.deepEqual(cacheEntries, [expectedCacheFile]);
   } finally {
     if (nodeProcess) await stopChild(nodeProcess);
     if (controlServer) await closeServer(controlServer);

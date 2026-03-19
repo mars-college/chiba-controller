@@ -68,8 +68,8 @@
   --text-scale: 1;
   position: relative;
   min-height: 100%;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   padding: calc(12px * var(--ui-scale))
     calc(16px * var(--ui-scale))
     calc(10px * var(--ui-scale));
@@ -2164,8 +2164,8 @@
 
 .art-shell {
   position: relative;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   background: #05060c;
   overflow: hidden;
 }
