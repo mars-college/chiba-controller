@@ -157,6 +157,12 @@ export function PlayerOverlay({
   }, [playlistForcesNoLoop, resolvedPlayerKind]);
 
   const effectiveLoopVideo = playlistForcesNoLoop ? false : loopVideo;
+  const hudChannelLabel = useMemo(() => {
+    const raw = (playerMeta?.callSign ?? selectedChannel?.callSign ?? "").trim();
+    if (!raw) return "";
+    return raw.toUpperCase() === "TARGET" ? "" : raw;
+  }, [playerMeta?.callSign, selectedChannel?.callSign]);
+
   useEffect(() => {
     if (!playerUrl) return;
     log.info("mount", { url: playerUrl, kind: resolvedPlayerKind, open: playerOpen });
@@ -459,9 +465,9 @@ export function PlayerOverlay({
         </div>
         {showPlayerHud ? (
           <div className="player-hud">
-            <div className="player-channel">
-              {playerMeta?.callSign ?? selectedChannel?.callSign ?? "CH"}
-            </div>
+            {hudChannelLabel ? (
+              <div className="player-channel">{hudChannelLabel}</div>
+            ) : null}
             <div className="player-title">
               {playerMeta?.title ?? selectedProgram?.title}
             </div>
