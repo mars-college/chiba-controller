@@ -65,16 +65,16 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 The prod compose stack includes one-shot init jobs/services:
 
 - DB migrations (`db-migrate`)
-- registry import (`db-import-registries`)
 
-Normal `start` and `restart` no longer re-import registries, so Ops edits to node inventory persist in the database.
+The registry import job (`db-import-registries`) is behind the `registry-import` Compose profile and does not run during normal `start`, `restart`, or `docker compose ... up`.
+That keeps Ops edits to node inventory in Postgres across stack recreates.
 When you intentionally want to replace node inventory from `config/registry.prod.toml`, run:
 
 ```bash
 pnpm prod:import-registries
 ```
 
-That import uses `config/registry.prod.toml` with `registryId=prod`.
+That explicit import uses `config/registry.prod.toml` with `registryId=prod`.
 
 3. Check status:
 

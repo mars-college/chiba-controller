@@ -317,7 +317,13 @@ case "${ACTION}" in
     echo "Running DB migrations..."
     compose_cmd run --rm db-migrate
     echo "Importing registries from compose config..."
-    compose_cmd run --rm db-import-registries
+    "${DOCKER_CMD[@]}" compose \
+      --project-name "${PROJECT_NAME}" \
+      --env-file "${ENV_FILE}" \
+      -f "${COMPOSE_FILE}" \
+      "${PROFILE_ARGS[@]}" \
+      --profile registry-import \
+      run --rm db-import-registries
     ;;
   status)
     compose_cmd ps

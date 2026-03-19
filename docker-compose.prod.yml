@@ -68,6 +68,7 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: chiba-controller-prod-db-import-registries
+    profiles: ["registry-import"]
     depends_on:
       db-migrate:
         condition: service_completed_successfully
@@ -94,6 +95,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
     restart: unless-stopped
