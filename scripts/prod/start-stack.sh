@@ -167,12 +167,18 @@ if [[ "${WITH_MCP}" -eq 1 ]]; then
 fi
 
 compose_cmd() {
-  "${DOCKER_CMD[@]}" compose \
-    --project-name "${PROJECT_NAME}" \
-    --env-file "${ENV_FILE}" \
-    -f "${COMPOSE_FILE}" \
-    "${PROFILE_ARGS[@]}" \
-    "$@"
+  local cmd=(
+    "${DOCKER_CMD[@]}"
+    compose
+    --project-name "${PROJECT_NAME}"
+    --env-file "${ENV_FILE}"
+    -f "${COMPOSE_FILE}"
+  )
+  if ((${#PROFILE_ARGS[@]})); then
+    cmd+=("${PROFILE_ARGS[@]}")
+  fi
+  cmd+=("$@")
+  "${cmd[@]}"
 }
 
 list_named_service_containers() {
@@ -317,13 +323,21 @@ case "${ACTION}" in
     echo "Running DB migrations..."
     compose_cmd run --rm db-migrate
     echo "Importing registries from compose config..."
-    "${DOCKER_CMD[@]}" compose \
-      --project-name "${PROJECT_NAME}" \
-      --env-file "${ENV_FILE}" \
-      -f "${COMPOSE_FILE}" \
-      "${PROFILE_ARGS[@]}" \
-      --profile registry-import \
+    import_args=(
+      "${DOCKER_CMD[@]}"
+      compose
+      --project-name "${PROJECT_NAME}"
+      --env-file "${ENV_FILE}"
+      -f "${COMPOSE_FILE}"
+    )
+    if ((${#PROFILE_ARGS[@]})); then
+      import_args+=("${PROFILE_ARGS[@]}")
+    fi
+    import_args+=(
+      --profile registry-import
       run --rm db-import-registries
+    )
+    "${import_args[@]}"
     ;;
   status)
     compose_cmd ps
