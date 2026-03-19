@@ -10,7 +10,7 @@ type Props = {
   badgeLabel?: string;
   badgeColor?: string;
   onRemove: () => void;
-  onDragStart: () => void;
+  onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;

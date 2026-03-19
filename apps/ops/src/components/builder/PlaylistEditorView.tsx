@@ -18,6 +18,7 @@ import {
   type DraftPlaylist,
 } from "../../lib/opsModel";
 import { ReorderableSequenceItem } from "./ReorderableSequenceItem";
+import { resolveReorderDropIndexFromEvent } from "./reordering";
 
 export type PlaylistEditorViewVm = {
   isMobile: boolean;
@@ -220,24 +221,34 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                         mediaIds: draft.mediaIds.filter((_, i) => i !== index),
                       }))
                     }
-                    onDragStart={() => {
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", String(index));
                       setPlaylistDragIndex(index);
                       setPlaylistDropIndex(index);
                     }}
                     onDragOver={(event) => {
                       event.preventDefault();
                       if (playlistDragIndex === null) return;
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const midpoint = rect.top + rect.height / 2;
-                      const nextDropIndex =
-                        event.clientY < midpoint ? index : index + 1;
+                      event.dataTransfer.dropEffect = "move";
+                      const nextDropIndex = resolveReorderDropIndexFromEvent({
+                        dragIndex: playlistDragIndex,
+                        hoverIndex: index,
+                        event,
+                      });
                       setPlaylistDropIndex((prev) =>
                         prev === nextDropIndex ? prev : nextDropIndex
                       );
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      commitPlaylistDrop(playlistDropIndex ?? index);
+                      commitPlaylistDrop(
+                        resolveReorderDropIndexFromEvent({
+                          dragIndex: playlistDragIndex,
+                          hoverIndex: index,
+                          event,
+                        })
+                      );
                     }}
                     onDragEnd={() => {
                       setPlaylistDragIndex(null);
@@ -252,6 +263,7 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
                 className="ops-playlist-drop-tail is-active"
                 onDragOver={(event) => {
                   event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
                   setPlaylistDropIndex((prev) =>
                     prev === playlistDraft.mediaIds.length
                       ? prev

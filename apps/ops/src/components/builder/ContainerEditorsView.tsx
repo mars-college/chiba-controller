@@ -46,6 +46,7 @@ import {
   OpsToolbar,
 } from "../ui/OpsSurface";
 import { ReorderableSequenceItem } from "./ReorderableSequenceItem";
+import { resolveReorderDropIndexFromEvent } from "./reordering";
 import { TargetPickerRow } from "./TargetPickerRow";
 
 type RegistryNodeRow = {
@@ -780,25 +781,34 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                             ),
                           }));
                         }}
-                        onDragStart={() => {
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", String(index));
                           setBlockDragIndex(index);
                           setBlockDropIndex(index);
                         }}
                         onDragOver={(event) => {
                           event.preventDefault();
                           if (blockDragIndex === null) return;
-                          const rect =
-                            event.currentTarget.getBoundingClientRect();
-                          const midpoint = rect.top + rect.height / 2;
-                          const nextIndex =
-                            event.clientY < midpoint ? index : index + 1;
+                          event.dataTransfer.dropEffect = "move";
+                          const nextIndex = resolveReorderDropIndexFromEvent({
+                            dragIndex: blockDragIndex,
+                            hoverIndex: index,
+                            event,
+                          });
                           setBlockDropIndex((prev) =>
                             prev === nextIndex ? prev : nextIndex
                           );
                         }}
                         onDrop={(event) => {
                           event.preventDefault();
-                          commitBlockDrop(blockDropIndex ?? index);
+                          commitBlockDrop(
+                            resolveReorderDropIndexFromEvent({
+                              dragIndex: blockDragIndex,
+                              hoverIndex: index,
+                              event,
+                            })
+                          );
                         }}
                         onDragEnd={() => {
                           setBlockDragIndex(null);
@@ -813,6 +823,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     className="ops-playlist-drop-tail is-active"
                     onDragOver={(event) => {
                       event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
                       setBlockDropIndex((prev) =>
                         prev === blockDraft.items.length
                           ? prev
@@ -1080,25 +1091,34 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                             ),
                           }));
                         }}
-                        onDragStart={() => {
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", String(index));
                           setChannelDragIndex(index);
                           setChannelDropIndex(index);
                         }}
                         onDragOver={(event) => {
                           event.preventDefault();
                           if (channelDragIndex === null) return;
-                          const rect =
-                            event.currentTarget.getBoundingClientRect();
-                          const midpoint = rect.top + rect.height / 2;
-                          const nextIndex =
-                            event.clientY < midpoint ? index : index + 1;
+                          event.dataTransfer.dropEffect = "move";
+                          const nextIndex = resolveReorderDropIndexFromEvent({
+                            dragIndex: channelDragIndex,
+                            hoverIndex: index,
+                            event,
+                          });
                           setChannelDropIndex((prev) =>
                             prev === nextIndex ? prev : nextIndex
                           );
                         }}
                         onDrop={(event) => {
                           event.preventDefault();
-                          commitChannelDrop(channelDropIndex ?? index);
+                          commitChannelDrop(
+                            resolveReorderDropIndexFromEvent({
+                              dragIndex: channelDragIndex,
+                              hoverIndex: index,
+                              event,
+                            })
+                          );
                         }}
                         onDragEnd={() => {
                           setChannelDragIndex(null);
@@ -1113,6 +1133,7 @@ export function ContainerEditorsView({ vm }: { vm: ContainerEditorsVm }) {
                     className="ops-playlist-drop-tail is-active"
                     onDragOver={(event) => {
                       event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
                       setChannelDropIndex((prev) =>
                         prev === channelDraft.blockIds.length
                           ? prev
