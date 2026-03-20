@@ -382,6 +382,31 @@ function isLocalPlayableUrl(url: string | null | undefined): boolean {
   );
 }
 
+function normalizePlayableUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, window.location.href);
+    parsed.searchParams.delete("fetch");
+    parsed.searchParams.delete("retry");
+    parsed.searchParams.delete("ts");
+    if (url.startsWith("/")) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    if (parsed.origin === window.location.origin) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function isWarmablePlayableUrl(url: string | null | undefined): boolean {
+  const normalized = normalizePlayableUrl(url);
+  if (!normalized) return false;
+  return normalized.startsWith("/cache/") || normalized.startsWith("/stash/");
+}
+
 function hasQueryParam(url: string, key: string): boolean {
   try {
     const parsed = new URL(url, window.location.href);
@@ -1286,6 +1311,12 @@ function App() {
       return;
     }
 
+    const currentUrl = normalizePlayableUrl(playerUrl);
+    if (!isWarmablePlayableUrl(currentUrl)) {
+      setCacheWarmStatus(null);
+      return;
+    }
+
     let cancelled = false;
     const targetRef = `${runtimeTarget.kind}:${runtimeTarget.id}`;
 
@@ -1318,13 +1349,7 @@ function App() {
         setCacheWarmStatus(next);
         return;
       }
-      setCacheWarmStatus({
-        target: targetRef,
-        source: "mixed",
-        label: "Checking Dependencies",
-        detail: "Waiting for cache + stash status",
-        updatedAt: Date.now(),
-      });
+      setCacheWarmStatus(null);
     };
 
     void pullStatus();
@@ -1336,7 +1361,7 @@ function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [playerOpen, playerReady, runtimeTarget?.id, runtimeTarget?.kind]);
+  }, [playerOpen, playerReady, playerUrl, runtimeTarget?.id, runtimeTarget?.kind]);
 
   useEffect(() => {
     // If a pinned channel was requested, wait briefly for the real index to load
@@ -1476,7 +1501,8 @@ function App() {
   ]);
 
   const [galleryPlaylistIndex, setGalleryPlaylistIndex] = useState(0);
-  const stashPrefetchRef = useRef<{ at: number; forUrl: string; nextUrl: string } | null>(null);
+  const playlistWarmRef = useRef<Record<string, number>>({});
+  const playlistFailureCooldownRef = useRef<Record<string, number>>({});
   const playerChannel = useMemo(() => {
     if (playerChannelIndex === null) return selectedChannel;
     return channels[playerChannelIndex] ?? selectedChannel;
@@ -1923,7 +1949,7 @@ function App() {
 
   const galleryAdvanceCooldownRef = useRef(0);
   const advanceGalleryPlaylist = useCallback(
-    (reason: string) => {
+    (reason: string, options?: { failedUrl?: string | null }) => {
       if (!galleryEnabledEffective || !playlistEnabledEffective) return;
       if (viewMode !== "guide") return;
       // Avoid tight error loops if the stash cache is cold or the NAS is down.
@@ -1935,8 +1961,25 @@ function App() {
       const targetChannel = pinnedChannel ?? selectedChannel ?? channels[0] ?? null;
       if (!targetChannel) return;
       if (!galleryPlaylist.length) return;
+      const failedUrlKey = normalizePlayableUrl(options?.failedUrl ?? null);
+      const cooldowns = playlistFailureCooldownRef.current;
+      for (const [key, until] of Object.entries(cooldowns)) {
+        if (until <= nowMs) delete cooldowns[key];
+      }
       setGalleryPlaylistIndex((prev) => {
-        const next = (prev + 1) % Math.max(1, galleryPlaylist.length);
+        const playlistLength = Math.max(1, galleryPlaylist.length);
+        let next = (prev + 1) % playlistLength;
+        for (let offset = 1; offset < playlistLength; offset += 1) {
+          const candidate = (prev + offset) % playlistLength;
+          const program = galleryPlaylist[candidate];
+          const candidateKey = normalizePlayableUrl(decorateProgramUrl(program?.url ?? null));
+          if (!candidateKey) continue;
+          if (failedUrlKey && candidateKey === failedUrlKey) continue;
+          const skipUntil = cooldowns[candidateKey] ?? 0;
+          if (skipUntil > nowMs) continue;
+          next = candidate;
+          break;
+        }
         const program = galleryPlaylist[next];
         if (program?.url) {
           openProgram(program, targetChannel);
@@ -1953,6 +1996,8 @@ function App() {
       selectedChannel,
       channels,
       galleryPlaylist.length,
+      galleryPlaylist,
+      decorateProgramUrl,
       openProgram,
     ]
   );
@@ -2087,45 +2132,48 @@ function App() {
         return;
       }
 
-      const effectiveUrl = (playerUrlRef.current ?? url ?? "").trim();
-      const isStash = effectiveUrl.startsWith("/stash/");
-      if (!isStash) {
+      const effectiveUrl = normalizePlayableUrl((playerUrlRef.current ?? url ?? "").trim());
+      if (!effectiveUrl) {
         advanceGalleryPlaylist("error");
         return;
       }
 
-      // If this is a stash-backed media item and it's not cached yet, browsers can emit
-      // rapid error events (404 while warming). Instead of skipping through the whole
-      // playlist and snapping back to the one cached item, retry a few times with a delay.
+      const warmable = isWarmablePlayableUrl(effectiveUrl);
+
+      // Cache-backed media can emit rapid error events while Chromium races the warmer.
+      // Keep retries keyed to the canonical URL so transient retry params do not reset
+      // the budget and trap the playlist on a bad item.
       const nowMs = Date.now();
       const prev = stashErrorRetryRef.current[effectiveUrl] ?? { attempts: 0, lastAt: 0 };
       const attempts = prev.attempts + 1;
       stashErrorRetryRef.current[effectiveUrl] = { attempts, lastAt: nowMs };
 
-      // Kick off a warm in the background.
-      const joiner = effectiveUrl.includes("?") ? "&" : "?";
-      void fetch(`${effectiveUrl}${joiner}fetch=1`, { method: "GET" }).catch(() => {});
+      if (warmable) {
+        const joiner = effectiveUrl.includes("?") ? "&" : "?";
+        void fetch(`${effectiveUrl}${joiner}fetch=1`, { method: "GET" }).catch(() => {});
+      }
 
       // Retry this same URL a few times before giving up and advancing.
-      const maxAttempts = 4;
+      const maxAttempts = warmable ? 4 : 2;
       if (attempts <= maxAttempts) {
         if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
         const urlKey = effectiveUrl;
         retryTimerRef.current = window.setTimeout(() => {
           const current = playerUrlRef.current;
-          // Only retry if we're still on the same failing URL.
-          if (current && current === urlKey) {
+          // Only retry if we're still on the same failing media.
+          if (normalizePlayableUrl(current) === urlKey) {
             // Force a reload attempt by mutating the URL (React ignores setState to same value).
-            const joiner2 = current.includes("?") ? "&" : "?";
-            const retryUrl = `${current}${joiner2}retry=${attempts}&ts=${Date.now()}`;
+            const joiner2 = urlKey.includes("?") ? "&" : "?";
+            const retryUrl = `${urlKey}${joiner2}retry=${attempts}&ts=${Date.now()}`;
             setPlayerReady(false);
             setPlayerUrl(retryUrl);
           }
-        }, 1500);
+        }, warmable ? 1500 : 1000);
         return;
       }
 
-      advanceGalleryPlaylist("error");
+      playlistFailureCooldownRef.current[effectiveUrl] = nowMs + 60_000;
+      advanceGalleryPlaylist("error", { failedUrl: effectiveUrl });
     },
     [
       galleryEnabledEffective,
@@ -2135,6 +2183,22 @@ function App() {
       setPlayerReady,
     ]
   );
+
+  useEffect(() => {
+    if (!playerReady) return;
+    const currentUrl = normalizePlayableUrl(playerUrl);
+    if (!currentUrl) return;
+    delete stashErrorRetryRef.current[currentUrl];
+    delete playlistFailureCooldownRef.current[currentUrl];
+  }, [playerReady, playerUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        window.clearTimeout(retryTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     // Defensive fallback: some Chromium/X11 states can drop image onload/onended
@@ -2165,39 +2229,42 @@ function App() {
   ]);
 
   useEffect(() => {
-    // Playlist lookahead: while one item is playing, warm the next stash item
-    // so we don't stall/skip on cache misses.
+    // Warm the whole warmable playlist up front. Gallery playback exists to show
+    // the HUD for direct targets, so transitions need to feel like the native
+    // playlist engine instead of re-entering a cold fetch path on every item.
     if (!galleryEnabledEffective || !playlistEnabledEffective) return;
-    if (!playerOpen || !playerUrl) return;
     if (viewMode !== "guide") return;
     if (!galleryPlaylist.length) return;
 
-    const currentIdx = galleryPlaylist.findIndex((slot) => {
-      if (!slot.url) return false;
-      const decorated = decorateProgramUrl(slot.url);
-      return decorated === playerUrl;
-    });
-    const idx = currentIdx >= 0 ? currentIdx : 0;
-    const next = galleryPlaylist[(idx + 1) % galleryPlaylist.length];
-    if (!next?.url) return;
-
-    const url = next.url;
-    if (!url.startsWith("/stash/")) return;
-    const joiner = url.includes("?") ? "&" : "?";
-    const prefetchUrl = `${url}${joiner}fetch=1`;
-
     const nowMs = Date.now();
-    const prev = stashPrefetchRef.current;
-    if (prev && prev.nextUrl === prefetchUrl && nowMs - prev.at < 15_000) return;
-    stashPrefetchRef.current = { at: nowMs, forUrl: playerUrl, nextUrl: prefetchUrl };
+    const timerIds: number[] = [];
+    const warmableUrls = Array.from(
+      new Set(
+        galleryPlaylist
+          .map((slot) => normalizePlayableUrl(decorateProgramUrl(slot.url ?? null)))
+          .filter((url): url is string => isWarmablePlayableUrl(url))
+      )
+    );
+    for (const [index, url] of warmableUrls.entries()) {
+      const lastAt = playlistWarmRef.current[url] ?? 0;
+      if (nowMs - lastAt < 60_000) continue;
+      playlistWarmRef.current[url] = nowMs;
+      timerIds.push(
+        window.setTimeout(() => {
+          const joiner = url.includes("?") ? "&" : "?";
+          void fetch(`${url}${joiner}fetch=1`, { method: "GET" }).catch(() => {});
+        }, index * 150)
+      );
+    }
 
-    // Fire-and-forget. Ignore errors; /stash may return 404 while warming.
-    void fetch(prefetchUrl, { method: "GET" }).catch(() => {});
+    return () => {
+      for (const timerId of timerIds) {
+        window.clearTimeout(timerId);
+      }
+    };
   }, [
     galleryEnabledEffective,
     playlistEnabledEffective,
-    playerOpen,
-    playerUrl,
     viewMode,
     galleryPlaylist,
     decorateProgramUrl,
