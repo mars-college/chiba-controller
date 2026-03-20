@@ -761,7 +761,13 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
       :root {
         color-scheme: dark;
         --hud-left: 24px;
+        --hud-right: 24px;
+        --hud-top: 20px;
         --hud-bottom: 20px;
+        --hud-max-width: min(68vw, 36rem);
+        --hud-title-size: 1.6rem;
+        --hud-artist-size: 1.02rem;
+        --hud-description-size: 0.94rem;
       }
       html, body {
         width: 100%;
@@ -853,7 +859,7 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         position: absolute;
         left: var(--hud-left);
         bottom: var(--hud-bottom);
-        max-width: min(68vw, 36rem);
+        max-width: min(var(--hud-max-width), calc(100vw - var(--hud-left) - var(--hud-right)));
         padding: 14px 18px;
         border-radius: 14px;
         background: rgba(6, 10, 18, 0.78);
@@ -871,20 +877,44 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         opacity: 1;
         transform: translateY(0);
       }
+      body[data-rotate="90"] {
+        --hud-max-width: min(62vh, 28rem);
+        --hud-title-size: 1.38rem;
+        --hud-artist-size: 0.96rem;
+        --hud-description-size: 0.88rem;
+      }
+      body[data-rotate="90"] #hud {
+        top: var(--hud-top);
+        right: auto;
+        bottom: auto;
+        left: var(--hud-left);
+      }
+      body[data-rotate="270"] {
+        --hud-max-width: min(62vh, 28rem);
+        --hud-title-size: 1.38rem;
+        --hud-artist-size: 0.96rem;
+        --hud-description-size: 0.88rem;
+      }
+      body[data-rotate="270"] #hud {
+        top: auto;
+        right: var(--hud-right);
+        bottom: var(--hud-bottom);
+        left: auto;
+      }
       #hud-title {
-        font-size: 1.6rem;
+        font-size: var(--hud-title-size);
         line-height: 1.02;
         font-weight: 700;
         letter-spacing: 0.01em;
       }
       #hud-artist {
-        font-size: 1.02rem;
+        font-size: var(--hud-artist-size);
         line-height: 1.15;
         font-weight: 600;
         color: rgba(229, 239, 255, 0.82);
       }
       #hud-description {
-        font-size: 0.94rem;
+        font-size: var(--hud-description-size);
         line-height: 1.24;
         color: rgba(204, 220, 244, 0.72);
         display: -webkit-box;
@@ -939,6 +969,11 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         advanceTimer: 0,
         hudTimer: 0,
       };
+
+      function applyRotateLayout() {
+        const rotate = normalizeRotate(state.manifest && state.manifest.rotate);
+        document.body.dataset.rotate = String(rotate);
+      }
 
       function clearAdvanceTimer() {
         if (state.advanceTimer) {
@@ -1062,6 +1097,7 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         const shell = document.createElement('div');
         shell.className = 'media-shell';
         shell.dataset.rotate = String(normalizeRotate(state.manifest && state.manifest.rotate));
+        applyRotateLayout();
         return shell;
       }
 
@@ -1180,6 +1216,7 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
             setStatus('Playlist Empty');
             return;
           }
+          applyRotateLayout();
           playAt(0);
         } catch (error) {
           setStatus('Playlist Unavailable');
