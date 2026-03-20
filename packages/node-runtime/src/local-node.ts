@@ -794,6 +794,31 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         inset: 0;
         background: #000;
       }
+      #hud-layer {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      body[data-rotate="90"] #hud-layer,
+      body[data-rotate="270"] #hud-layer {
+        inset: auto;
+        top: 50%;
+        left: 50%;
+        width: 100vh;
+        height: 100vw;
+        transform-origin: center center;
+      }
+      body[data-rotate="90"] #hud-layer {
+        transform: translate(-50%, -50%) rotate(90deg);
+      }
+      body[data-rotate="180"] #hud-layer {
+        transform-origin: center center;
+        transform: rotate(180deg);
+      }
+      body[data-rotate="270"] #hud-layer {
+        transform: translate(-50%, -50%) rotate(270deg);
+      }
       .media-shell {
         position: absolute;
         inset: 0;
@@ -859,7 +884,7 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
         position: absolute;
         left: var(--hud-left);
         bottom: var(--hud-bottom);
-        max-width: min(var(--hud-max-width), calc(100vw - var(--hud-left) - var(--hud-right)));
+        max-width: min(var(--hud-max-width), calc(100% - var(--hud-left) - var(--hud-right)));
         padding: 14px 18px;
         border-radius: 14px;
         background: rgba(6, 10, 18, 0.78);
@@ -948,10 +973,12 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
   <body>
     <div id="app">
       <div id="stage"></div>
-      <div id="hud" class="hidden">
-        <div id="hud-title"></div>
-        <div id="hud-artist" class="hidden"></div>
-        <div id="hud-description" class="hidden"></div>
+      <div id="hud-layer">
+        <div id="hud" class="hidden">
+          <div id="hud-title"></div>
+          <div id="hud-artist" class="hidden"></div>
+          <div id="hud-description" class="hidden"></div>
+        </div>
       </div>
       <div id="status">Preparing Playlist</div>
     </div>
