@@ -490,6 +490,57 @@ function hasGuideInfoSurface(launch: LaunchOptions): boolean {
   );
 }
 
+function isExplicitGuideMode(launch: LaunchOptions): boolean {
+  return launch.mode === "guide" || launch.mode === "gallery";
+}
+
+function shouldUseMpvHudOverlay(args: {
+  launch: LaunchOptions;
+  items: ResolvedPlaybackItem[];
+}): boolean {
+  if (isExplicitGuideMode(args.launch)) return false;
+  if (!hasGuideInfoSurface(args.launch)) return false;
+  return args.items.length > 0 && args.items.every((item) => item.renderer === "mpv");
+}
+
+function shouldShowMpvHud(launch: LaunchOptions): boolean {
+  if (launch.hudMode === "never") return false;
+  if (launch.hudMode === "always" || launch.hudMode === "start") return true;
+  return typeof launch.hudSec === "number" && launch.hudSec > 0;
+}
+
+function mpvHudDurationMs(launch: LaunchOptions): number {
+  if (launch.hudMode === "always") return 60 * 60 * 1000;
+  if (typeof launch.hudSec === "number" && launch.hudSec > 0) {
+    return Math.round(launch.hudSec * 1000);
+  }
+  if (launch.hudMode === "start") return 5_000;
+  return 0;
+}
+
+function escapeAssText(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("{", "\\{")
+    .replaceAll("}", "\\}")
+    .replaceAll("\n", "\\N");
+}
+
+function formatMpvHudText(meta: ActivePlaybackMeta | null | undefined): string | null {
+  if (!meta) return null;
+  const title = String(meta.title ?? "").trim();
+  const artist = String(meta.artist ?? "").trim();
+  const description = String(meta.description ?? "").trim();
+  const lines = [title, artist, description].filter((line) => line.length > 0);
+  if (!lines.length) return null;
+  const [first = "", ...rest] = lines;
+  const body = [
+    `{\\an1\\fs30\\bord2\\shad1}${escapeAssText(first)}`,
+    ...rest.map((line) => `{\\fs22}${escapeAssText(line)}`),
+  ].join("\\N");
+  return body;
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -1225,6 +1276,59 @@ async function waitForSpawn(child: ChildProcess, name: string): Promise<void> {
   });
 }
 
+async function sendMpvCommand(args: {
+  ipcPath: string;
+  command: unknown[];
+  timeoutMs: number;
+}): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    let buffer = "";
+    let settled = false;
+
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => finish(false), Math.max(100, args.timeoutMs));
+    const socket = net.createConnection(args.ipcPath);
+
+    socket.once("error", () => finish(false));
+    socket.once("connect", () => {
+      const cmd = JSON.stringify({
+        command: args.command,
+        request_id: 1,
+      });
+      socket.write(`${cmd}\n`);
+    });
+    socket.on("data", (chunk) => {
+      buffer += String(chunk);
+      while (true) {
+        const idx = buffer.indexOf("\n");
+        if (idx < 0) break;
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        let payload: unknown;
+        try {
+          payload = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!payload || typeof payload !== "object") continue;
+        const entry = payload as Record<string, unknown>;
+        if (Number(entry.request_id) !== 1) continue;
+        finish(entry.error === "success");
+        return;
+      }
+    });
+  });
+}
+
 async function queryMpvPlayback(args: {
   ipcPath: string;
   timeoutMs: number;
@@ -1390,6 +1494,27 @@ async function waitForMpvReady(args: {
     observedSource,
     elapsedMs: Date.now() - startedAt,
   };
+}
+
+async function showMpvHud(args: {
+  ipcPath: string;
+  launch: LaunchOptions;
+  meta: ActivePlaybackMeta | null | undefined;
+}): Promise<void> {
+  if (!shouldShowMpvHud(args.launch)) return;
+  const text = formatMpvHudText(args.meta);
+  if (!text) return;
+  const ok = await sendMpvCommand({
+    ipcPath: args.ipcPath,
+    command: ["show-text", text, mpvHudDurationMs(args.launch), 0],
+    timeoutMs: 400,
+  });
+  if (!ok) {
+    toLog("warn", "mpv_hud_show_failed", {
+      itemId: args.meta?.itemId ?? null,
+      mediaId: args.meta?.mediaId ?? null,
+    });
+  }
 }
 
 async function spawnMpv(args: {
@@ -2185,6 +2310,7 @@ async function main(): Promise<void> {
   let chromiumSessionCounter = 0;
   const mpvIpcPath = path.join(runtimeDir, "mpv.sock");
   let playbackMetaBySource = new Map<string, ActivePlaybackMeta>();
+  let lastMpvHudItemId: string | null = null;
 
   const stopChromiumDiagnostics = () => {
     if (!chromiumDiagnosticsStop) return;
@@ -2327,6 +2453,7 @@ async function main(): Promise<void> {
         runtimeState.currentItemId = null;
         runtimeState.playback = null;
         playbackMetaBySource = new Map();
+        lastMpvHudItemId = null;
         stopChromiumDiagnostics();
         await terminateChild(mpvChild, "mpv");
         mpvChild = null;
@@ -2353,11 +2480,15 @@ async function main(): Promise<void> {
           activeRevision: runtimeState.activeRevision,
         });
 
+        const useMpvHudOverlay = shouldUseMpvHudOverlay({
+          launch: runtimeState.launch,
+          items: resolved.resolved.items,
+        });
         const needsGuideSurface =
-          runtimeState.launch.mode === "guide" ||
+          isExplicitGuideMode(runtimeState.launch) ||
           runtimeState.launch.qr === true ||
           runtimeState.launch.remoteInput === true ||
-          hasGuideInfoSurface(runtimeState.launch);
+          (hasGuideInfoSurface(runtimeState.launch) && !useMpvHudOverlay);
         const useGuideChromium =
           needsGuideSurface || resolved.resolved.items.length === 0;
         const hasWebOnlyItems =
@@ -2423,6 +2554,7 @@ async function main(): Promise<void> {
           runtimeState.phase = "ready";
           runtimeState.playback = null;
           playbackMetaBySource = new Map();
+          lastMpvHudItemId = null;
           await emitRuntime({
             phase: "ready",
             desiredRevision: runtimeState.desiredRevision,
@@ -2573,12 +2705,39 @@ async function main(): Promise<void> {
               : {}),
             updatedAt: Date.now(),
           };
+          lastMpvHudItemId = null;
           await emitRuntime({
             phase: "ready",
             cacheReady: runtimeState.cacheReady,
             cacheTotal: runtimeState.cacheTotal,
             currentItemId: runtimeState.currentItemId ?? undefined,
           });
+          const initialHudMeta = playableEntries[0]
+            ? ({
+                itemId: playableEntries[0].item.itemId,
+                mediaId: playableEntries[0].item.mediaId,
+                ...(playableEntries[0].item.title
+                  ? { title: playableEntries[0].item.title }
+                  : {}),
+                ...(playableEntries[0].item.artist
+                  ? { artist: playableEntries[0].item.artist }
+                  : {}),
+                ...(playableEntries[0].item.description
+                  ? { description: playableEntries[0].item.description }
+                  : {}),
+              } as ActivePlaybackMeta)
+            : null;
+          if (initialHudMeta && shouldUseMpvHudOverlay({
+            launch: runtimeState.launch,
+            items: resolved.resolved.items,
+          })) {
+            await showMpvHud({
+              ipcPath: mpvIpcPath,
+              launch: runtimeState.launch,
+              meta: initialHudMeta,
+            });
+            lastMpvHudItemId = initialHudMeta.itemId;
+          }
           if (warmDelayMs > 0) await sleep(warmDelayMs);
           if (activateDelayMs > 0) await sleep(activateDelayMs);
         }
@@ -2623,6 +2782,21 @@ async function main(): Promise<void> {
             ...(byPath?.description ? { description: byPath.description } : {}),
             updatedAt: Date.now(),
           };
+          if (
+            byPath?.itemId &&
+            byPath.itemId !== lastMpvHudItemId &&
+            shouldUseMpvHudOverlay({
+              launch: runtimeState.launch,
+              items: resolved.resolved.items,
+            })
+          ) {
+            await showMpvHud({
+              ipcPath: mpvIpcPath,
+              launch: runtimeState.launch,
+              meta: byPath,
+            });
+            lastMpvHudItemId = byPath.itemId;
+          }
         } else if (runtimeState.playback) {
           runtimeState.playback = {
             ...runtimeState.playback,
@@ -2632,6 +2806,7 @@ async function main(): Promise<void> {
         }
       } else {
         runtimeState.playback = null;
+        lastMpvHudItemId = null;
       }
 
       runtimeState.phase = "active";

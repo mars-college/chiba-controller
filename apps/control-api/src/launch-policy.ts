@@ -13,7 +13,11 @@ export function normalizeOpsApplyLaunch(args: {
   modeExplicit: boolean;
 }): LaunchOptions {
   const next: LaunchOptions = { ...args.launch };
-  if (!args.modeExplicit && args.target !== "profile" && !next.mode) {
+  if (
+    !args.modeExplicit &&
+    !next.mode &&
+    (args.target === "channel" || args.target === "block")
+  ) {
     next.mode = "gallery";
   }
   return next;

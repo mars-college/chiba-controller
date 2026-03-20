@@ -1523,7 +1523,29 @@ function resolveTargetMedia(args: {
   const warnings: string[] = [];
   const items: ResolvedPlaybackItem[] = [];
 
-  const pushMedia = (mediaId: string, durationSec?: number) => {
+  type PlaylistInfoOverride = {
+    title?: string;
+    artist?: string;
+    description?: string;
+  };
+
+  const playlistInfoOverrideFor = (playlistId: string): PlaylistInfoOverride => {
+    const playlist = playlistById.get(playlistId);
+    if (!playlist) return {};
+    return {
+      ...(playlist.infoTitleSource === "playlist" && playlist.title
+        ? { title: playlist.title }
+        : {}),
+      ...(playlist.artist ? { artist: playlist.artist } : {}),
+      ...(playlist.description ? { description: playlist.description } : {}),
+    };
+  };
+
+  const pushMedia = (
+    mediaId: string,
+    durationSec?: number,
+    infoOverride?: PlaylistInfoOverride | null
+  ) => {
     const media = mediaById.get(mediaId);
     if (!media) {
       warnings.push(`missing_media:${mediaId}`);
@@ -1592,13 +1614,20 @@ function resolveTargetMedia(args: {
       renderer,
     };
     if (typeof durationSec === "number") item.durationSec = durationSec;
-    if (media.title) item.title = media.title;
-    if (media.artist) item.artist = media.artist;
-    if (media.description) item.description = media.description;
+    const resolvedTitle = infoOverride?.title ?? media.title;
+    const resolvedArtist = infoOverride?.artist ?? media.artist;
+    const resolvedDescription = infoOverride?.description ?? media.description;
+    if (resolvedTitle) item.title = resolvedTitle;
+    if (resolvedArtist) item.artist = resolvedArtist;
+    if (resolvedDescription) item.description = resolvedDescription;
     items.push(item);
   };
 
-  const walkPlaylist = (playlistId: string, seen: Set<string>) => {
+  const walkPlaylist = (
+    playlistId: string,
+    seen: Set<string>,
+    infoOverride: PlaylistInfoOverride | null = null
+  ) => {
     if (seen.has(playlistId)) {
       warnings.push(`playlist_cycle:${playlistId}`);
       return;
@@ -1612,11 +1641,11 @@ function resolveTargetMedia(args: {
     const sortedItems = [...playlist.items].sort((a, b) => a.index - b.index);
     for (const item of sortedItems) {
       if (item.mediaId) {
-        pushMedia(item.mediaId, item.durationSec);
+        pushMedia(item.mediaId, item.durationSec, infoOverride);
         continue;
       }
       if (item.playlistId) {
-        walkPlaylist(item.playlistId, seen);
+        walkPlaylist(item.playlistId, seen, infoOverride);
         continue;
       }
       warnings.push(`playlist_item_missing_target:${playlistId}:${item.index}`);
@@ -1650,7 +1679,7 @@ function resolveTargetMedia(args: {
       return;
     }
     if (target.kind === "playlist") {
-      walkPlaylist(target.id, new Set<string>());
+      walkPlaylist(target.id, new Set<string>(), playlistInfoOverrideFor(target.id));
       return;
     }
     if (target.kind === "block") {
