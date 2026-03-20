@@ -101,6 +101,14 @@ type DisplayTelemetry = {
   error?: string;
 };
 
+type OverlayCardState = {
+  visible: boolean;
+  title?: string;
+  artist?: string;
+  description?: string;
+  updatedAt: number;
+};
+
 const MEDIA_URL_EXTENSIONS = new Set([
   ".mp4",
   ".mov",
@@ -479,6 +487,12 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+function sendHtml(res: ServerResponse, status: number, html: string): void {
+  res.statusCode = status;
+  res.setHeader("content-type", "text/html; charset=utf-8");
+  res.end(html);
+}
+
 function hasGuideInfoSurface(launch: LaunchOptions): boolean {
   return (
     launch.hudMode === "always" ||
@@ -518,14 +532,6 @@ function mpvHudDurationMs(launch: LaunchOptions): number {
   return 0;
 }
 
-function escapeAssText(value: string): string {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll("{", "\\{")
-    .replaceAll("}", "\\}")
-    .replaceAll("\n", "\\N");
-}
-
 function formatMpvHudText(meta: ActivePlaybackMeta | null | undefined): string | null {
   if (!meta) return null;
   const title = String(meta.title ?? "").trim();
@@ -533,12 +539,151 @@ function formatMpvHudText(meta: ActivePlaybackMeta | null | undefined): string |
   const description = String(meta.description ?? "").trim();
   const lines = [title, artist, description].filter((line) => line.length > 0);
   if (!lines.length) return null;
-  const [first = "", ...rest] = lines;
-  const body = [
-    `{\\an1\\fs30\\bord2\\shad1}${escapeAssText(first)}`,
-    ...rest.map((line) => `{\\fs22}${escapeAssText(line)}`),
-  ].join("\\N");
-  return body;
+  return lines.join("\n");
+}
+
+function parseDisplaySize(mode: string | null | undefined): { width: number; height: number } | null {
+  const raw = String(mode ?? "").trim();
+  const match = /^([0-9]+)x([0-9]+)/.exec(raw);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { width, height };
+}
+
+function computeOverlayWindowBounds(display: DisplayTelemetry): {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+} {
+  const size = parseDisplaySize(display.mode) ?? { width: 1920, height: 1080 };
+  const margin = 24;
+  const width = Math.max(340, Math.min(520, Math.floor(size.width * 0.38)));
+  const height = Math.max(118, Math.min(170, Math.floor(size.height * 0.16)));
+  return {
+    width,
+    height,
+    x: margin,
+    y: Math.max(margin, size.height - height - margin),
+  };
+}
+
+function renderOverlayPage(args: { nodeId: string }): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chiba HUD ${args.nodeId}</title>
+    <style>
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+        font-family: "Alegreya Sans", "Segoe UI", sans-serif;
+      }
+      body.hidden #card {
+        opacity: 0;
+      }
+      #card {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 14px 18px;
+        border-radius: 16px;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(126, 215, 255, 0.16), transparent 42%),
+          linear-gradient(160deg, rgba(12, 18, 30, 0.96), rgba(6, 10, 18, 0.98));
+        border: 1px solid rgba(126, 215, 255, 0.26);
+        box-shadow:
+          0 16px 32px rgba(0, 0, 0, 0.38),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        color: rgba(236, 243, 255, 0.96);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 4px;
+        opacity: 1;
+        transition: opacity 180ms ease;
+      }
+      .title {
+        font-size: 28px;
+        line-height: 1.08;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-wrap: balance;
+      }
+      .artist {
+        font-size: 18px;
+        line-height: 1.15;
+        font-weight: 600;
+        color: rgba(229, 239, 255, 0.82);
+      }
+      .description {
+        font-size: 15px;
+        line-height: 1.22;
+        color: rgba(204, 220, 244, 0.68);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .artist.hidden, .description.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="hidden">
+    <div id="card">
+      <div id="title" class="title"></div>
+      <div id="artist" class="artist hidden"></div>
+      <div id="description" class="description hidden"></div>
+    </div>
+    <script>
+      const titleEl = document.getElementById("title");
+      const artistEl = document.getElementById("artist");
+      const descriptionEl = document.getElementById("description");
+
+      const apply = (payload) => {
+        const title = String(payload?.title ?? "").trim();
+        const artist = String(payload?.artist ?? "").trim();
+        const description = String(payload?.description ?? "").trim();
+        const visible = Boolean(payload?.visible) && Boolean(title || artist || description);
+        document.body.classList.toggle("hidden", !visible);
+        titleEl.textContent = title;
+        artistEl.textContent = artist;
+        descriptionEl.textContent = description;
+        artistEl.classList.toggle("hidden", !artist);
+        descriptionEl.classList.toggle("hidden", !description);
+      };
+
+      let lastKey = "";
+      const refresh = async () => {
+        try {
+          const response = await fetch("/api/overlay-state?ts=" + Date.now(), { cache: "no-store" });
+          if (!response.ok) throw new Error("overlay_state_" + response.status);
+          const payload = await response.json();
+          const key = JSON.stringify(payload);
+          if (key !== lastKey) {
+            apply(payload);
+            lastKey = key;
+          }
+        } catch {
+          document.body.classList.add("hidden");
+        }
+      };
+
+      refresh();
+      window.setInterval(refresh, 500);
+    </script>
+  </body>
+</html>`;
 }
 
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
@@ -1522,6 +1667,7 @@ async function spawnMpv(args: {
   playlistFile: string | null;
   singleSource: string | null;
   imageDurationSec: number;
+  hudEnabled: boolean;
   hwdec: string;
   framedrop: string;
   maxHeight: number | null;
@@ -1541,6 +1687,17 @@ async function spawnMpv(args: {
     "--vd-lavc-threads=2",
     "--input-ipc-server=" + args.ipcPath,
   ];
+  if (args.hudEnabled) {
+    baseArgs.push("--osd-level=1");
+    baseArgs.push("--osd-align-x=left");
+    baseArgs.push("--osd-align-y=bottom");
+    baseArgs.push("--osd-margin-x=24");
+    baseArgs.push("--osd-margin-y=20");
+    baseArgs.push("--osd-font-size=28");
+    baseArgs.push("--osd-outline-size=2");
+    baseArgs.push("--osd-shadow-offset=0");
+    baseArgs.push("--osd-border-style=background-box");
+  }
   if (typeof args.maxHeight === "number" && args.maxHeight > 0) {
     baseArgs.push(`--vf=scale=-2:${args.maxHeight}`);
   }
@@ -1622,6 +1779,55 @@ async function spawnChromium(args: {
     toLog("warn", "chromium_exit", { code, signal });
   });
   await waitForSpawn(child, "chromium");
+  return child;
+}
+
+async function spawnOverlayChromium(args: {
+  binary: string;
+  url: string;
+  explicitBinary: string | null;
+  profileDir: string | null;
+  bounds: { width: number; height: number; x: number; y: number };
+}): Promise<ChildProcess> {
+  const launchArgs = [
+    `--app=${args.url}`,
+    "--new-window",
+    "--disable-features=Translate",
+    "--disable-pinch",
+    `--window-size=${args.bounds.width},${args.bounds.height}`,
+    `--window-position=${args.bounds.x},${args.bounds.y}`,
+  ];
+  if (args.profileDir) {
+    await ensureDir(args.profileDir);
+    launchArgs.push(`--user-data-dir=${args.profileDir}`);
+  }
+
+  if (process.platform === "darwin" && !args.explicitBinary) {
+    const child = spawn(args.binary, ["-a", "Google Chrome", "--args", ...launchArgs], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr?.on("data", (chunk) => {
+      const line = String(chunk).trim();
+      if (line) toLog("warn", "overlay_chromium_stderr", { line });
+    });
+    child.once("exit", (code, signal) => {
+      toLog("warn", "overlay_chromium_exit", { code, signal });
+    });
+    await waitForSpawn(child, "overlay_chromium");
+    return child;
+  }
+
+  const child = spawn(args.binary, launchArgs, {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  child.stderr?.on("data", (chunk) => {
+    const line = String(chunk).trim();
+    if (line) toLog("warn", "overlay_chromium_stderr", { line });
+  });
+  child.once("exit", (code, signal) => {
+    toLog("warn", "overlay_chromium_exit", { code, signal });
+  });
+  await waitForSpawn(child, "overlay_chromium");
   return child;
 }
 
@@ -1885,6 +2091,7 @@ function createNodeApiServer(args: {
   state: RuntimeState;
   cacheDir: string;
   getCacheSummary: () => Promise<CacheSummary>;
+  getOverlayState: () => OverlayCardState;
   inputBinary: string;
   allowInputAnyPlatform: boolean;
 }): http.Server {
@@ -1965,6 +2172,16 @@ function createNodeApiServer(args: {
           memory: process.memoryUsage(),
         },
       });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/overlay") {
+      sendHtml(res, 200, renderOverlayPage({ nodeId: args.nodeId }));
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/overlay-state") {
+      sendJson(res, 200, args.getOverlayState());
       return;
     }
 
@@ -2306,11 +2523,41 @@ async function main(): Promise<void> {
   let mpvChild: ChildProcess | null = null;
   let chromiumChild: ChildProcess | null = null;
   let chromiumProfileDir: string | null = null;
+  let overlayChromiumChild: ChildProcess | null = null;
+  let overlayChromiumProfileDir: string | null = null;
   let chromiumDiagnosticsStop: (() => void) | null = null;
   let chromiumSessionCounter = 0;
   const mpvIpcPath = path.join(runtimeDir, "mpv.sock");
+  let resolvedItemsSnapshot: ResolvedPlaybackItem[] = [];
   let playbackMetaBySource = new Map<string, ActivePlaybackMeta>();
   let lastMpvHudItemId: string | null = null;
+  let overlayMeta: ActivePlaybackMeta | null = null;
+  let overlayVisibleUntilMs = 0;
+  let overlayEnabled = false;
+
+  const clearOverlayState = () => {
+    overlayMeta = null;
+    overlayVisibleUntilMs = 0;
+    overlayEnabled = false;
+    lastMpvHudItemId = null;
+  };
+
+  const updateOverlayState = (meta: ActivePlaybackMeta | null | undefined) => {
+    overlayMeta = meta ?? null;
+    overlayEnabled = Boolean(meta) && shouldUseMpvHudOverlay({
+      launch: runtimeState.launch,
+      items: resolvedItemsSnapshot,
+    });
+    if (!overlayEnabled || !meta) {
+      overlayVisibleUntilMs = 0;
+      return;
+    }
+    if (runtimeState.launch.hudMode === "always") {
+      overlayVisibleUntilMs = Number.POSITIVE_INFINITY;
+      return;
+    }
+    overlayVisibleUntilMs = Date.now() + Math.max(1_500, mpvHudDurationMs(runtimeState.launch));
+  };
 
   const stopChromiumDiagnostics = () => {
     if (!chromiumDiagnosticsStop) return;
@@ -2361,6 +2608,19 @@ async function main(): Promise<void> {
     state: runtimeState,
     cacheDir,
     getCacheSummary: refreshCacheSummary,
+    getOverlayState: () => {
+      const visible =
+        overlayEnabled &&
+        overlayMeta !== null &&
+        (runtimeState.launch.hudMode === "always" || Date.now() < overlayVisibleUntilMs);
+      return {
+        visible,
+        ...(overlayMeta?.title ? { title: overlayMeta.title } : {}),
+        ...(overlayMeta?.artist ? { artist: overlayMeta.artist } : {}),
+        ...(overlayMeta?.description ? { description: overlayMeta.description } : {}),
+        updatedAt: Date.now(),
+      } satisfies OverlayCardState;
+    },
     inputBinary,
     allowInputAnyPlatform,
   });
@@ -2411,8 +2671,11 @@ async function main(): Promise<void> {
     stopChromiumDiagnostics();
     await terminateChild(mpvChild, "mpv");
     await terminateChild(chromiumChild, "chromium");
+    await terminateChild(overlayChromiumChild, "overlay_chromium");
     await cleanupProfileDir(chromiumProfileDir);
+    await cleanupProfileDir(overlayChromiumProfileDir);
     chromiumProfileDir = null;
+    overlayChromiumProfileDir = null;
     nodeApi.close();
     serverApi.close();
   };
@@ -2436,6 +2699,7 @@ async function main(): Promise<void> {
       runtimeState.lastError = null;
       runtimeState.launch = resolved.desired?.launch ?? {};
       runtimeState.currentTarget = resolved.desired?.target ?? null;
+      resolvedItemsSnapshot = resolved.resolved.items;
       runtimeState.desiredRevision = resolved.desired?.revision ?? null;
       runtimeState.kioskUrl = buildKioskUrl({
         guideBaseUrl,
@@ -2453,14 +2717,18 @@ async function main(): Promise<void> {
         runtimeState.currentItemId = null;
         runtimeState.playback = null;
         playbackMetaBySource = new Map();
-        lastMpvHudItemId = null;
+        clearOverlayState();
         stopChromiumDiagnostics();
         await terminateChild(mpvChild, "mpv");
         mpvChild = null;
         await terminateChild(chromiumChild, "chromium");
         chromiumChild = null;
+        await terminateChild(overlayChromiumChild, "overlay_chromium");
+        overlayChromiumChild = null;
         await cleanupProfileDir(chromiumProfileDir);
+        await cleanupProfileDir(overlayChromiumProfileDir);
         chromiumProfileDir = null;
+        overlayChromiumProfileDir = null;
         await refreshCacheSummary();
         await emitRuntime({});
         await sleep(pollMs);
@@ -2498,6 +2766,8 @@ async function main(): Promise<void> {
         const previousMpv: ChildProcess | null = mpvChild;
         const previousChromium: ChildProcess | null = chromiumChild;
         const previousChromiumProfileDir = chromiumProfileDir;
+        const previousOverlayChromium: ChildProcess | null = overlayChromiumChild;
+        const previousOverlayChromiumProfileDir: string | null = overlayChromiumProfileDir;
 
         if (wantsChromium) {
           const firstWebItem = useGuideChromium
@@ -2542,6 +2812,14 @@ async function main(): Promise<void> {
             await terminateChild(previousChromium, "chromium");
             await cleanupProfileDir(previousChromiumProfileDir);
           }
+          if (previousOverlayChromium) {
+            await terminateChild(previousOverlayChromium, "overlay_chromium");
+            await cleanupProfileDir(previousOverlayChromiumProfileDir);
+            if (overlayChromiumChild === previousOverlayChromium) overlayChromiumChild = null;
+            if (overlayChromiumProfileDir === previousOverlayChromiumProfileDir) {
+              overlayChromiumProfileDir = null;
+            }
+          }
           stopChromiumDiagnostics();
           if (chromiumDiagnosticsEnabled && stagedChromiumProfileDir) {
             chromiumDiagnosticsStop = startChromiumDiagnostics({
@@ -2554,7 +2832,7 @@ async function main(): Promise<void> {
           runtimeState.phase = "ready";
           runtimeState.playback = null;
           playbackMetaBySource = new Map();
-          lastMpvHudItemId = null;
+          clearOverlayState();
           await emitRuntime({
             phase: "ready",
             desiredRevision: runtimeState.desiredRevision,
@@ -2647,6 +2925,7 @@ async function main(): Promise<void> {
             playlistFile: playableSources.length > 1 ? playlistFile : null,
             singleSource: single,
             imageDurationSec,
+            hudEnabled: false,
             hwdec: mpvHwdec,
             framedrop: mpvFramedrop,
             maxHeight: mpvMaxHeight,
@@ -2683,6 +2962,14 @@ async function main(): Promise<void> {
             if (chromiumChild === previousChromium) chromiumChild = null;
             if (chromiumChild === null) chromiumProfileDir = null;
           }
+          if (previousOverlayChromium) {
+            await terminateChild(previousOverlayChromium, "overlay_chromium");
+            await cleanupProfileDir(previousOverlayChromiumProfileDir);
+            if (overlayChromiumChild === previousOverlayChromium) overlayChromiumChild = null;
+            if (overlayChromiumProfileDir === previousOverlayChromiumProfileDir) {
+              overlayChromiumProfileDir = null;
+            }
+          }
           runtimeState.backend = "mpv";
           runtimeState.phase = "ready";
           runtimeState.currentItemId = playableEntries[0]?.item.itemId ?? null;
@@ -2705,7 +2992,7 @@ async function main(): Promise<void> {
               : {}),
             updatedAt: Date.now(),
           };
-          lastMpvHudItemId = null;
+          clearOverlayState();
           await emitRuntime({
             phase: "ready",
             cacheReady: runtimeState.cacheReady,
@@ -2727,16 +3014,21 @@ async function main(): Promise<void> {
                   : {}),
               } as ActivePlaybackMeta)
             : null;
-          if (initialHudMeta && shouldUseMpvHudOverlay({
-            launch: runtimeState.launch,
-            items: resolved.resolved.items,
-          })) {
-            await showMpvHud({
-              ipcPath: mpvIpcPath,
-              launch: runtimeState.launch,
-              meta: initialHudMeta,
-            });
+          if (initialHudMeta && useMpvHudOverlay) {
+            updateOverlayState(initialHudMeta);
             lastMpvHudItemId = initialHudMeta.itemId;
+            const overlayBounds = computeOverlayWindowBounds(probeDisplayTelemetry());
+            const stagedOverlayProfileDir = allocateChromiumProfileDir();
+            overlayChromiumChild = await spawnOverlayChromium({
+              binary: chromiumBin,
+              url: `http://127.0.0.1:${nodePort}/overlay`,
+              explicitBinary: chromiumExplicit,
+              profileDir: stagedOverlayProfileDir,
+              bounds: overlayBounds,
+            });
+            overlayChromiumProfileDir = stagedOverlayProfileDir;
+          } else {
+            clearOverlayState();
           }
           if (warmDelayMs > 0) await sleep(warmDelayMs);
           if (activateDelayMs > 0) await sleep(activateDelayMs);
@@ -2782,6 +3074,9 @@ async function main(): Promise<void> {
             ...(byPath?.description ? { description: byPath.description } : {}),
             updatedAt: Date.now(),
           };
+          if (byPath) {
+            overlayMeta = byPath;
+          }
           if (
             byPath?.itemId &&
             byPath.itemId !== lastMpvHudItemId &&
@@ -2790,11 +3085,7 @@ async function main(): Promise<void> {
               items: resolved.resolved.items,
             })
           ) {
-            await showMpvHud({
-              ipcPath: mpvIpcPath,
-              launch: runtimeState.launch,
-              meta: byPath,
-            });
+            updateOverlayState(byPath);
             lastMpvHudItemId = byPath.itemId;
           }
         } else if (runtimeState.playback) {
@@ -2806,7 +3097,7 @@ async function main(): Promise<void> {
         }
       } else {
         runtimeState.playback = null;
-        lastMpvHudItemId = null;
+        clearOverlayState();
       }
 
       runtimeState.phase = "active";
