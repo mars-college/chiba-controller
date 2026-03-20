@@ -853,6 +853,8 @@ function App() {
         : runtimeTarget?.kind === "playlist"
           ? true
         : playlistEnabled;
+  const playlistModeActive =
+    viewMode === "guide" && galleryEnabledEffective && playlistEnabledEffective;
   const pinnedChannelKey =
     (runtimeTarget?.kind === "channel" ? runtimeTarget.id : syntheticTargetChannelId) ??
     kioskState?.channel ??
@@ -1306,7 +1308,7 @@ function App() {
   }, [playerUrl]);
 
   useEffect(() => {
-    if (!playerOpen || playerReady || !runtimeTarget) {
+    if (!playerOpen || playerReady || !runtimeTarget || playlistModeActive) {
       setCacheWarmStatus(null);
       return;
     }
@@ -1361,7 +1363,14 @@ function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [playerOpen, playerReady, playerUrl, runtimeTarget?.id, runtimeTarget?.kind]);
+  }, [
+    playerOpen,
+    playerReady,
+    playerUrl,
+    playlistModeActive,
+    runtimeTarget?.id,
+    runtimeTarget?.kind,
+  ]);
 
   useEffect(() => {
     // If a pinned channel was requested, wait briefly for the real index to load
@@ -1530,6 +1539,19 @@ function App() {
     () => decorateProgramUrl(selectedProgram?.url ?? null),
     [decorateProgramUrl, selectedProgram?.url]
   );
+  const galleryPlaylistUrls = useMemo(
+    () =>
+      playlistModeActive
+        ? Array.from(
+            new Set(
+              galleryPlaylist
+                .map((slot) => decorateProgramUrl(slot.url ?? null))
+                .filter((url): url is string => Boolean(url))
+            )
+          )
+        : [],
+    [decorateProgramUrl, galleryPlaylist, playlistModeActive]
+  );
   const activeAppId = useMemo(() => getAppIdFromUrl(playerUrl), [playerUrl]);
   const activeProgramRemoteControls = useMemo<RemoteRegistration[]>(() => {
     if (!playerOpen) return [];
@@ -1618,6 +1640,8 @@ function App() {
     previewContainerRef,
   } = usePreloadManager({
     viewMode,
+    playlistMode: playlistModeActive,
+    playlistUrls: galleryPlaylistUrls,
     selectedProgramUrl,
     selectedChannelPreviewUrl: selectedChannel?.previewUrl ?? null,
     playerOpen,
@@ -1710,17 +1734,21 @@ function App() {
       setPlayerOpen(true);
       if (playerUrl !== programUrl) {
         const previousUrl = playerUrlRef.current;
+        const preserveReadyForPlaylistTransition =
+          playlistModeActive &&
+          Boolean(previousUrl) &&
+          previousUrl !== programUrl;
         const previousKind = previousUrl ? getMediaKind(previousUrl) : null;
         const nextKind = getMediaKind(programUrl);
         const preserveReadyForCachedImageTransition =
-          viewMode === "guide" &&
-          galleryEnabledEffective &&
-          playlistEnabledEffective &&
           previousKind === "image" &&
           nextKind === "image" &&
           isLocalPlayableUrl(previousUrl) &&
           isLocalPlayableUrl(programUrl);
-        if (!preserveReadyForCachedImageTransition) {
+        if (
+          !preserveReadyForPlaylistTransition &&
+          !preserveReadyForCachedImageTransition
+        ) {
           setPlayerReady(false);
         }
         setPlayerUrl(programUrl);
@@ -1785,9 +1813,7 @@ function App() {
       infoArtistOverride,
       infoDescriptionOverride,
       infoTitleOverride,
-      viewMode,
-      galleryEnabledEffective,
-      playlistEnabledEffective,
+      playlistModeActive,
     ]
   );
 
@@ -2165,7 +2191,9 @@ function App() {
             // Force a reload attempt by mutating the URL (React ignores setState to same value).
             const joiner2 = urlKey.includes("?") ? "&" : "?";
             const retryUrl = `${urlKey}${joiner2}retry=${attempts}&ts=${Date.now()}`;
-            setPlayerReady(false);
+            if (!playlistModeActive) {
+              setPlayerReady(false);
+            }
             setPlayerUrl(retryUrl);
           }
         }, warmable ? 1500 : 1000);
@@ -2180,6 +2208,7 @@ function App() {
       playlistEnabledEffective,
       viewMode,
       advanceGalleryPlaylist,
+      playlistModeActive,
       setPlayerReady,
     ]
   );

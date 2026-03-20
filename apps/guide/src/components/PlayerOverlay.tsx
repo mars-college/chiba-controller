@@ -19,6 +19,7 @@ type PlayerOverlayProps = {
   playerKind: MediaKind | null;
   playerMeta: PlayerMeta | null;
   loadingStatus: CacheWarmStatus | null;
+  suppressLoadingUi?: boolean;
   selectedChannel?: GuideChannel;
   selectedProgram?: ProgramSlot | null;
   showPlayerHud: boolean;
@@ -47,6 +48,7 @@ export function PlayerOverlay({
   playerKind,
   playerMeta,
   loadingStatus,
+  suppressLoadingUi = false,
   selectedChannel,
   selectedProgram,
   showPlayerHud,
@@ -448,21 +450,23 @@ export function PlayerOverlay({
             muted={masterMuted || !playerOpen}
           />
         ) : null}
-        <div className={`player-loading ${playerReady ? "is-hidden" : ""}`}>
-          <div className="player-loading-content">
-            <span className="player-loading-label">
-              {loadingStatus?.label ?? "Tuning…"}
-            </span>
-            <span className="player-loading-sub">
-              {loadingStatus?.detail ?? "Signal lock"}
-            </span>
-            {loadingStatus?.total && typeof loadingStatus.cached === "number" ? (
-              <span className="player-loading-sub player-loading-progress">
-                {loadingStatus.cached}/{loadingStatus.total} ready
+        {!suppressLoadingUi ? (
+          <div className={`player-loading ${playerReady ? "is-hidden" : ""}`}>
+            <div className="player-loading-content">
+              <span className="player-loading-label">
+                {loadingStatus?.label ?? "Tuning…"}
               </span>
-            ) : null}
+              <span className="player-loading-sub">
+                {loadingStatus?.detail ?? "Signal lock"}
+              </span>
+              {loadingStatus?.total && typeof loadingStatus.cached === "number" ? (
+                <span className="player-loading-sub player-loading-progress">
+                  {loadingStatus.cached}/{loadingStatus.total} ready
+                </span>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
         {showPlayerHud ? (
           <div className="player-hud">
             {hudChannelLabel ? (

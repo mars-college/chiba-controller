@@ -6,6 +6,7 @@ type GuideHeaderProps = {
   selectedProgram?: ProgramSlot | null;
   playerOpen: boolean;
   playerReady: boolean;
+  suppressLoadingUi?: boolean;
   hasPreviewMedia: boolean;
   posterImageReady: boolean;
   setPosterImageReady: (ready: boolean) => void;
@@ -19,6 +20,7 @@ export function GuideHeader({
   selectedProgram,
   playerOpen,
   playerReady,
+  suppressLoadingUi = false,
   hasPreviewMedia,
   posterImageReady,
   setPosterImageReady,
@@ -46,7 +48,7 @@ export function GuideHeader({
               onError={() => setPosterImageReady(false)}
             />
           ) : null}
-          {playerOpen && !playerReady ? (
+          {playerOpen && !playerReady && !suppressLoadingUi ? (
             <div className="poster-loading is-active" aria-hidden="true">
               <div className="poster-loading-ring" />
               <div className="poster-loading-text">Tuning</div>

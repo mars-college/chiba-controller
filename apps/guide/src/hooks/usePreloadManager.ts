@@ -17,6 +17,8 @@ import type {
 
 type UsePreloadManagerArgs = {
   viewMode: ViewMode;
+  playlistMode: boolean;
+  playlistUrls: string[];
   selectedProgramUrl: string | null;
   selectedChannelPreviewUrl?: string | null;
   playerOpen: boolean;
@@ -38,6 +40,8 @@ export type PreloadManager = {
 
 export function usePreloadManager({
   viewMode,
+  playlistMode,
+  playlistUrls,
   selectedProgramUrl,
   selectedChannelPreviewUrl,
   playerOpen,
@@ -59,12 +63,16 @@ export function usePreloadManager({
   const preloadContainerRef = useRef<HTMLDivElement | null>(null);
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
   const previewAttachedRef = useRef<HTMLElement | null>(null);
+  const playlistPreloadLimit = playlistMode
+    ? Math.max(PRELOAD_CACHE_LIMIT, Math.min(8, playlistUrls.length))
+    : PRELOAD_CACHE_LIMIT;
 
   const shouldPreload = useCallback((kind: MediaKind) => {
+    if (playlistMode) return kind !== "iframe";
     if (PRELOAD_MODE === "all") return true;
     if (PRELOAD_MODE === "image") return kind === "image";
     return false;
-  }, []);
+  }, [playlistMode]);
 
   const ensurePreloadContainer = useCallback(() => {
     if (preloadContainerRef.current) return preloadContainerRef.current;
@@ -91,11 +99,11 @@ export function usePreloadManager({
         cache.delete(key);
       }
     }
-    if (cache.size <= PRELOAD_CACHE_LIMIT) return;
+    if (cache.size <= playlistPreloadLimit) return;
     const entries = Array.from(cache.values()).sort(
       (a, b) => a.lastUsed - b.lastUsed
     );
-    const overflow = cache.size - PRELOAD_CACHE_LIMIT;
+    const overflow = cache.size - playlistPreloadLimit;
     for (let i = 0; i < overflow; i += 1) {
       const entry = entries[i];
       entry?.element.remove();
@@ -103,7 +111,7 @@ export function usePreloadManager({
         cache.delete(entry.url);
       }
     }
-  }, []);
+  }, [playlistPreloadLimit]);
 
   const queuePreload = useCallback(
     (url: string) => {
@@ -365,6 +373,46 @@ export function usePreloadManager({
     activeRow,
     currentSlotIndex,
     queuePreload,
+  ]);
+
+  useEffect(() => {
+    if (viewMode !== "guide") return;
+    if (!playlistMode) return;
+    if (!playerOpen) return;
+    const uniqueUrls = Array.from(
+      new Set(playlistUrls.map((url) => url.trim()).filter((url) => url.length > 0))
+    );
+    if (!uniqueUrls.length) return;
+    const currentIndex = playerUrl ? uniqueUrls.indexOf(playerUrl) : -1;
+    const orderedUrls =
+      currentIndex >= 0
+        ? [
+            ...uniqueUrls.slice(currentIndex + 1),
+            ...uniqueUrls.slice(0, currentIndex),
+          ]
+        : uniqueUrls;
+    const targets = orderedUrls
+      .filter((url) => url !== playerUrl)
+      .slice(0, playlistPreloadLimit);
+    if (!targets.length) return;
+    const timers = targets.map((url, index) =>
+      window.setTimeout(() => {
+        queuePreload(url);
+      }, index * 250)
+    );
+    return () => {
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [
+    playerOpen,
+    playerUrl,
+    playlistMode,
+    playlistPreloadLimit,
+    playlistUrls,
+    queuePreload,
+    viewMode,
   ]);
 
   useEffect(() => {

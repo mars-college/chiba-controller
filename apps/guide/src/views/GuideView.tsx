@@ -59,6 +59,7 @@ export function GuideView() {
     dialOverlay,
     galleryMode,
   } = useGuideViewStore();
+  const suppressPlaylistLoadingUi = galleryMode && !loopVideo;
   return (
     <div
       className={`guide-shell ${playerOpen ? "player-open" : ""} ${
@@ -73,6 +74,7 @@ export function GuideView() {
         selectedProgram={selectedProgram}
         playerOpen={playerOpen}
         playerReady={playerReady}
+        suppressLoadingUi={suppressPlaylistLoadingUi}
         hasPreviewMedia={hasPreviewMedia}
         posterImageReady={posterImageReady}
         setPosterImageReady={setPosterImageReady}
@@ -122,6 +124,7 @@ export function GuideView() {
         playerKind={playerKind}
         playerMeta={playerMeta}
         loadingStatus={cacheWarmStatus}
+        suppressLoadingUi={suppressPlaylistLoadingUi}
         selectedChannel={selectedChannel}
         selectedProgram={selectedProgram}
         showPlayerHud={showPlayerHud}
