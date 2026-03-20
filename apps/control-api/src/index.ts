@@ -688,9 +688,11 @@ function buildMediaStreamUrl(args: {
 }): string {
   const version = mediaStreamVersion(args.media);
   const kind = inferStreamMediaKind(args.media);
+  const ext = getSourceExt(args.media.sourceValue);
   const params = new URLSearchParams();
   params.set("v", version);
   if (kind) params.set("k", kind);
+  if (ext) params.set("ext", ext);
   return `${args.streamBaseUrl}/api/v1/resources/media/${encodeURIComponent(args.media.id)}/stream?${params.toString()}`;
 }
 

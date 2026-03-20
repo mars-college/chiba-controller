@@ -1094,6 +1094,27 @@ function App() {
       fallbackWsUrl: runtimeWsUrl,
     });
     if (!programs.length) return null;
+    if (runtimeTarget.kind === "playlist") {
+      const schedule = programs.map((next, index) => ({
+        ...next,
+        start: index,
+        span: Math.max(1, next.span ?? 1),
+        end: index + Math.max(1, next.span ?? 1) - 1,
+        durationSec:
+          next.durationSec ??
+          Math.max(1, next.span ?? 1) * Math.max(1, indexData.slotMinutes) * 60,
+      }));
+      return {
+        id: syntheticTargetChannelId,
+        number: "000",
+        name: `${runtimeTarget.kind.toUpperCase()} ${runtimeTarget.id}`,
+        callSign: "TARGET",
+        description: `Resolved from ${runtimeTarget.kind}:${runtimeTarget.id}`,
+        accent: "#7ed7ff",
+        previewUrl: "",
+        schedule,
+      };
+    }
     const schedule: ProgramSlot[] = [];
     let cursor = 0;
     let index = 0;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createWriteStream, readdirSync } from "node:fs";
+import { createReadStream, createWriteStream, readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import http, { type ServerResponse } from "node:http";
 import net from "node:net";
@@ -40,6 +40,29 @@ type ResolvedPlaybackItem = {
   artist?: string;
   description?: string;
   renderer: "mpv" | "web";
+};
+
+type RuntimePlaylistMediaKind = "image" | "video" | "audio";
+
+type RuntimePlaylistItem = {
+  itemId: string;
+  mediaId: string;
+  src: string;
+  kind: RuntimePlaylistMediaKind;
+  durationSec?: number;
+  title?: string;
+  artist?: string;
+  description?: string;
+};
+
+type RuntimePlaylistManifest = {
+  revision: number | null;
+  rotate: 0 | 90 | 180 | 270 | null;
+  imageDurationSec: number;
+  hudMode?: "always" | "start" | "never";
+  hudSec?: number;
+  updatedAt: number;
+  items: RuntimePlaylistItem[];
 };
 
 type ResolveResponse = {
@@ -122,6 +145,36 @@ const MEDIA_URL_EXTENSIONS = new Set([
   ".aac",
   ".m4a",
   ".ogg",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".avif",
+  ".tif",
+  ".tiff",
+]);
+
+const VIDEO_URL_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".m4v",
+  ".webm",
+  ".mkv",
+  ".avi",
+]);
+
+const AUDIO_URL_EXTENSIONS = new Set([
+  ".mp3",
+  ".wav",
+  ".flac",
+  ".aac",
+  ".m4a",
+  ".ogg",
+]);
+
+const IMAGE_URL_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
   ".png",
@@ -508,6 +561,17 @@ function isExplicitGuideMode(launch: LaunchOptions): boolean {
   return launch.mode === "guide" || launch.mode === "gallery";
 }
 
+function shouldUseRuntimePlaylistSurface(args: {
+  launch: LaunchOptions;
+  items: ResolvedPlaybackItem[];
+  targetKind: DesiredTarget["kind"] | null;
+}): boolean {
+  if (args.targetKind === "channel") return false;
+  if (args.launch.qr === true || args.launch.remoteInput === true) return false;
+  if (!hasGuideInfoSurface(args.launch)) return false;
+  return args.items.length > 0 && args.items.every((item) => item.renderer === "mpv");
+}
+
 function shouldUseMpvHudOverlay(args: {
   launch: LaunchOptions;
   items: ResolvedPlaybackItem[];
@@ -686,6 +750,449 @@ function renderOverlayPage(args: { nodeId: string }): string {
 </html>`;
 }
 
+function renderRuntimePlaylistPage(args: { nodeId: string }): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chiba Runtime Playlist ${args.nodeId}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --hud-left: 24px;
+        --hud-bottom: 20px;
+      }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+        font-family: "Alegreya Sans", "Segoe UI", sans-serif;
+      }
+      body {
+        color: #eef4ff;
+      }
+      #app {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        background:
+          radial-gradient(circle at 20% 16%, rgba(110, 170, 255, 0.08), transparent 38%),
+          #000;
+        overflow: hidden;
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        background: #000;
+      }
+      .media-shell {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #000;
+        opacity: 0;
+        transition: opacity 180ms ease;
+      }
+      .media-shell.is-active {
+        opacity: 1;
+      }
+      .media-shell.is-exiting {
+        opacity: 0;
+      }
+      .media-shell[data-rotate="90"],
+      .media-shell[data-rotate="270"] {
+        inset: auto;
+        top: 50%;
+        left: 50%;
+        width: 100vh;
+        height: 100vw;
+        transform-origin: center center;
+      }
+      .media-shell[data-rotate="90"] {
+        transform: translate(-50%, -50%) rotate(90deg);
+      }
+      .media-shell[data-rotate="180"] {
+        transform: rotate(180deg);
+      }
+      .media-shell[data-rotate="270"] {
+        transform: translate(-50%, -50%) rotate(270deg);
+      }
+      .media-shell > img,
+      .media-shell > video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+      }
+      .audio-shell {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 24% 24%, rgba(126, 215, 255, 0.16), transparent 34%),
+          linear-gradient(180deg, rgba(18, 26, 44, 0.92), rgba(4, 8, 16, 0.98));
+      }
+      .audio-orb {
+        width: min(28vw, 280px);
+        height: min(28vw, 280px);
+        border-radius: 999px;
+        background:
+          radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.45), transparent 20%),
+          radial-gradient(circle at 50% 50%, rgba(126, 215, 255, 0.24), rgba(26, 38, 72, 0.9));
+        border: 1px solid rgba(126, 215, 255, 0.24);
+        box-shadow:
+          0 22px 48px rgba(0, 0, 0, 0.45),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      }
+      #hud {
+        position: absolute;
+        left: var(--hud-left);
+        bottom: var(--hud-bottom);
+        max-width: min(68vw, 36rem);
+        padding: 14px 18px;
+        border-radius: 14px;
+        background: rgba(6, 10, 18, 0.78);
+        border: 1px solid rgba(126, 215, 255, 0.3);
+        box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        opacity: 0;
+        transform: translateY(10px);
+        transition: opacity 180ms ease, transform 180ms ease;
+        pointer-events: none;
+      }
+      body.hud-visible #hud {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      #hud-title {
+        font-size: 1.6rem;
+        line-height: 1.02;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      #hud-artist {
+        font-size: 1.02rem;
+        line-height: 1.15;
+        font-weight: 600;
+        color: rgba(229, 239, 255, 0.82);
+      }
+      #hud-description {
+        font-size: 0.94rem;
+        line-height: 1.24;
+        color: rgba(204, 220, 244, 0.72);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      #hud.hidden,
+      #hud-artist.hidden,
+      #hud-description.hidden {
+        display: none;
+      }
+      #status {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-size: 1rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(220, 240, 255, 0.76);
+        background:
+          radial-gradient(circle at 24% 24%, rgba(126, 215, 255, 0.12), transparent 36%),
+          linear-gradient(160deg, rgba(6, 10, 18, 0.96), rgba(4, 8, 16, 0.98));
+      }
+      #status.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage"></div>
+      <div id="hud" class="hidden">
+        <div id="hud-title"></div>
+        <div id="hud-artist" class="hidden"></div>
+        <div id="hud-description" class="hidden"></div>
+      </div>
+      <div id="status">Preparing Playlist</div>
+    </div>
+    <script>
+      const stageEl = document.getElementById('stage');
+      const statusEl = document.getElementById('status');
+      const hudEl = document.getElementById('hud');
+      const hudTitleEl = document.getElementById('hud-title');
+      const hudArtistEl = document.getElementById('hud-artist');
+      const hudDescriptionEl = document.getElementById('hud-description');
+      const state = {
+        manifest: null,
+        index: 0,
+        token: 0,
+        advanceTimer: 0,
+        hudTimer: 0,
+      };
+
+      function clearAdvanceTimer() {
+        if (state.advanceTimer) {
+          window.clearTimeout(state.advanceTimer);
+          state.advanceTimer = 0;
+        }
+      }
+
+      function clearHudTimer() {
+        if (state.hudTimer) {
+          window.clearTimeout(state.hudTimer);
+          state.hudTimer = 0;
+        }
+      }
+
+      function items() {
+        const rows = state.manifest && Array.isArray(state.manifest.items)
+          ? state.manifest.items
+          : [];
+        return rows.filter((row) => row && typeof row.src === 'string' && row.src.trim().length > 0);
+      }
+
+      function normalizeRotate(value) {
+        return value === 90 || value === 180 || value === 270 ? value : 0;
+      }
+
+      function durationMsForItem(item) {
+        const explicit = Number(item && item.durationSec);
+        if (Number.isFinite(explicit) && explicit > 0) {
+          return Math.round(explicit * 1000);
+        }
+        if (item && item.kind === 'image') {
+          const fallback = Number(state.manifest && state.manifest.imageDurationSec);
+          if (Number.isFinite(fallback) && fallback > 0) {
+            return Math.round(fallback * 1000);
+          }
+          return 15000;
+        }
+        return null;
+      }
+
+      function hudDurationMs() {
+        if (!state.manifest) return 0;
+        if (state.manifest.hudMode === 'always') return -1;
+        const hudSec = Number(state.manifest.hudSec);
+        if (Number.isFinite(hudSec) && hudSec > 0) {
+          return Math.round(hudSec * 1000);
+        }
+        if (state.manifest.hudMode === 'start') return 5000;
+        return 0;
+      }
+
+      function showHud(item) {
+        clearHudTimer();
+        const title = String(item && item.title || '').trim();
+        const artist = String(item && item.artist || '').trim();
+        const description = String(item && item.description || '').trim();
+        if (!title && !artist && !description) {
+          document.body.classList.remove('hud-visible');
+          hudEl.classList.add('hidden');
+          return;
+        }
+        hudEl.classList.remove('hidden');
+        hudTitleEl.textContent = title;
+        hudArtistEl.textContent = artist;
+        hudDescriptionEl.textContent = description;
+        hudArtistEl.classList.toggle('hidden', !artist);
+        hudDescriptionEl.classList.toggle('hidden', !description);
+        const duration = hudDurationMs();
+        if (duration === 0) {
+          document.body.classList.remove('hud-visible');
+          hudEl.classList.add('hidden');
+          return;
+        }
+        document.body.classList.add('hud-visible');
+        if (duration > 0) {
+          state.hudTimer = window.setTimeout(() => {
+            document.body.classList.remove('hud-visible');
+          }, duration);
+        }
+      }
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+        statusEl.classList.remove('hidden');
+      }
+
+      function hideStatus() {
+        statusEl.classList.add('hidden');
+      }
+
+      function activateShell(shell, item, token) {
+        if (token !== state.token) return;
+        const previous = stageEl.querySelector('.media-shell.is-active');
+        shell.classList.add('is-active');
+        stageEl.appendChild(shell);
+        if (previous && previous !== shell) {
+          previous.classList.remove('is-active');
+          previous.classList.add('is-exiting');
+          window.setTimeout(() => {
+            if (previous.parentElement) previous.remove();
+          }, 220);
+        }
+        hideStatus();
+        showHud(item);
+        const duration = durationMsForItem(item);
+        clearAdvanceTimer();
+        if (typeof duration === 'number' && duration > 0) {
+          state.advanceTimer = window.setTimeout(() => {
+            playAt(state.index + 1);
+          }, Math.max(250, duration));
+        }
+      }
+
+      function skipToNext(token) {
+        if (token !== state.token) return;
+        playAt(state.index + 1);
+      }
+
+      function shellForItem(item) {
+        const shell = document.createElement('div');
+        shell.className = 'media-shell';
+        shell.dataset.rotate = String(normalizeRotate(state.manifest && state.manifest.rotate));
+        return shell;
+      }
+
+      function loadImage(item, token) {
+        const shell = shellForItem(item);
+        const img = document.createElement('img');
+        img.decoding = 'async';
+        img.alt = String(item && item.title || 'Playlist image');
+        img.addEventListener('load', () => activateShell(shell, item, token), { once: true });
+        img.addEventListener('error', () => skipToNext(token), { once: true });
+        img.src = item.src;
+        shell.appendChild(img);
+      }
+
+      function loadVideo(item, token) {
+        const shell = shellForItem(item);
+        const video = document.createElement('video');
+        let activated = false;
+        let watchdog = 0;
+        const ready = () => {
+          if (activated || token !== state.token) return;
+          activated = true;
+          if (watchdog) window.clearTimeout(watchdog);
+          activateShell(shell, item, token);
+          const playPromise = video.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {});
+          }
+        };
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        video.controls = false;
+        video.addEventListener('loadeddata', ready, { once: true });
+        video.addEventListener('canplay', ready, { once: true });
+        video.addEventListener('ended', () => skipToNext(token));
+        video.addEventListener('error', () => skipToNext(token));
+        watchdog = window.setTimeout(() => {
+          if (!activated) skipToNext(token);
+        }, 8000);
+        video.src = item.src;
+        video.load();
+        shell.appendChild(video);
+      }
+
+      function loadAudio(item, token) {
+        const shell = shellForItem(item);
+        const audioShell = document.createElement('div');
+        audioShell.className = 'audio-shell';
+        const orb = document.createElement('div');
+        orb.className = 'audio-orb';
+        audioShell.appendChild(orb);
+        const audio = document.createElement('audio');
+        let activated = false;
+        let watchdog = 0;
+        const ready = () => {
+          if (activated || token !== state.token) return;
+          activated = true;
+          if (watchdog) window.clearTimeout(watchdog);
+          activateShell(shell, item, token);
+          const playPromise = audio.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {});
+          }
+        };
+        audio.autoplay = true;
+        audio.preload = 'auto';
+        audio.addEventListener('canplay', ready, { once: true });
+        audio.addEventListener('canplaythrough', ready, { once: true });
+        audio.addEventListener('ended', () => skipToNext(token));
+        audio.addEventListener('error', () => skipToNext(token));
+        watchdog = window.setTimeout(() => {
+          if (!activated) skipToNext(token);
+        }, 8000);
+        audio.src = item.src;
+        audio.load();
+        shell.appendChild(audioShell);
+        shell.appendChild(audio);
+      }
+
+      function playAt(nextIndex) {
+        const rows = items();
+        if (!rows.length) {
+          setStatus('Playlist Empty');
+          return;
+        }
+        clearAdvanceTimer();
+        const normalized = ((nextIndex % rows.length) + rows.length) % rows.length;
+        state.index = normalized;
+        state.token += 1;
+        const token = state.token;
+        const item = rows[normalized];
+        if (!item) {
+          setStatus('Playlist Error');
+          return;
+        }
+        if (item.kind === 'image') {
+          loadImage(item, token);
+          return;
+        }
+        if (item.kind === 'audio') {
+          loadAudio(item, token);
+          return;
+        }
+        loadVideo(item, token);
+      }
+
+      async function boot() {
+        try {
+          const response = await fetch('/api/runtime-playlist?ts=' + Date.now(), { cache: 'no-store' });
+          if (!response.ok) throw new Error('manifest_' + response.status);
+          const payload = await response.json();
+          state.manifest = payload && payload.ok ? payload.manifest : null;
+          if (!state.manifest || !Array.isArray(state.manifest.items) || state.manifest.items.length === 0) {
+            setStatus('Playlist Empty');
+            return;
+          }
+          playAt(0);
+        } catch (error) {
+          setStatus('Playlist Unavailable');
+          console.error(error);
+        }
+      }
+
+      boot();
+    </script>
+  </body>
+</html>`;
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -716,8 +1223,90 @@ function sourceExt(sourceValue: string): string {
   }
 }
 
+function normalizeExtHint(value: string | null | undefined): string {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  const withoutDots = raw.replace(/^\.+/, "");
+  if (!withoutDots) return "";
+  return `.${withoutDots}`;
+}
+
+function sourceExtWithHints(sourceValue: string): string {
+  const direct = sourceExt(sourceValue);
+  if (direct) return direct;
+  const trimmed = sourceValue.trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("data:image/")) {
+    const mime = lower.slice("data:".length).split(";")[0] ?? "";
+    if (mime === "image/png") return ".png";
+    if (mime === "image/webp") return ".webp";
+    if (mime === "image/gif") return ".gif";
+    if (mime === "image/avif") return ".avif";
+    return ".jpg";
+  }
+  if (lower.startsWith("data:video/")) return ".mp4";
+  if (lower.startsWith("data:audio/")) return ".mp3";
+  try {
+    const parsed = new URL(trimmed, "http://localhost");
+    const extHint = normalizeExtHint(parsed.searchParams.get("ext"));
+    if (extHint) return extHint;
+    const kindHint = String(parsed.searchParams.get("k") ?? "").trim().toLowerCase();
+    if (kindHint === "image") return ".jpg";
+    if (kindHint === "audio") return ".mp3";
+    if (kindHint === "video") return ".mp4";
+  } catch {
+    // ignore malformed URL hints
+  }
+  return "";
+}
+
+function contentTypeForFilePath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".mp4" || ext === ".m4v") return "video/mp4";
+  if (ext === ".mov") return "video/quicktime";
+  if (ext === ".webm") return "video/webm";
+  if (ext === ".mkv") return "video/x-matroska";
+  if (ext === ".avi") return "video/x-msvideo";
+  if (ext === ".mp3") return "audio/mpeg";
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".flac") return "audio/flac";
+  if (ext === ".aac") return "audio/aac";
+  if (ext === ".m4a") return "audio/mp4";
+  if (ext === ".ogg") return "audio/ogg";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".bmp") return "image/bmp";
+  if (ext === ".avif") return "image/avif";
+  if (ext === ".tif" || ext === ".tiff") return "image/tiff";
+  return "application/octet-stream";
+}
+
+function runtimePlaylistKindForSource(sourceValue: string): RuntimePlaylistMediaKind {
+  const trimmed = sourceValue.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("data:image/")) return "image";
+  if (lower.startsWith("data:audio/")) return "audio";
+  if (lower.startsWith("data:video/")) return "video";
+  try {
+    const parsed = new URL(trimmed, "http://localhost");
+    const kindHint = String(parsed.searchParams.get("k") ?? "").trim().toLowerCase();
+    if (kindHint === "image" || kindHint === "audio" || kindHint === "video") {
+      return kindHint;
+    }
+  } catch {
+    // ignore malformed URL hints
+  }
+  const ext = sourceExtWithHints(trimmed);
+  if (IMAGE_URL_EXTENSIONS.has(ext)) return "image";
+  if (AUDIO_URL_EXTENSIONS.has(ext)) return "audio";
+  return "video";
+}
+
 function isLikelyMediaUrl(sourceValue: string): boolean {
-  const ext = sourceExt(sourceValue);
+  const ext = sourceExtWithHints(sourceValue);
   if (ext && MEDIA_URL_EXTENSIONS.has(ext)) return true;
   const lower = sourceValue.toLowerCase();
   if (lower.startsWith("data:image/") || lower.startsWith("data:video/")) return true;
@@ -1992,7 +2581,7 @@ function cacheableMediaItems(items: ResolvedPlaybackItem[]): ResolvedPlaybackIte
 }
 
 function cacheFileNameForItem(item: ResolvedPlaybackItem): string {
-  const ext = sourceExt(item.sourceValue);
+  const ext = sourceExtWithHints(item.sourceValue);
   return `${hashKey(`${item.mediaId}:${item.sourceValue}`)}${ext || ".bin"}`;
 }
 
@@ -2086,12 +2675,66 @@ async function buildCachedSources(args: {
   return out;
 }
 
+async function buildRuntimePlaylistEntries(args: {
+  items: ResolvedPlaybackItem[];
+  cacheDir: string;
+  onProgress: (progress: {
+    ready: number;
+    total: number;
+    currentItemId: string | null;
+  }) => Promise<void>;
+}): Promise<{ items: RuntimePlaylistItem[]; fileNames: string[] }> {
+  await ensureDir(args.cacheDir);
+  const mediaItems = args.items.filter((item) => item.renderer === "mpv");
+  const total = mediaItems.length;
+  let ready = 0;
+  const out: RuntimePlaylistItem[] = [];
+  const fileNames: string[] = [];
+
+  for (const item of mediaItems) {
+    const fileName = cacheFileNameForItem(item);
+    const cachePath = path.join(args.cacheDir, fileName);
+    if (item.sourceType === "path") {
+      await copyFileCached({
+        sourcePath: item.sourceValue,
+        destPath: cachePath,
+      });
+    } else {
+      await downloadFileCached({
+        url: item.sourceValue,
+        destPath: cachePath,
+      });
+    }
+    ready += 1;
+    await args.onProgress({
+      ready,
+      total,
+      currentItemId: item.itemId,
+    });
+    out.push({
+      itemId: item.itemId,
+      mediaId: item.mediaId,
+      src: `/api/runtime-media?file=${encodeURIComponent(fileName)}`,
+      kind: runtimePlaylistKindForSource(item.sourceValue),
+      ...(typeof item.durationSec === "number" ? { durationSec: item.durationSec } : {}),
+      ...(item.title ? { title: item.title } : {}),
+      ...(item.artist ? { artist: item.artist } : {}),
+      ...(item.description ? { description: item.description } : {}),
+    });
+    fileNames.push(fileName);
+  }
+
+  return { items: out, fileNames };
+}
+
 function createNodeApiServer(args: {
   nodeId: string;
   state: RuntimeState;
   cacheDir: string;
   getCacheSummary: () => Promise<CacheSummary>;
   getOverlayState: () => OverlayCardState;
+  getRuntimePlaylistManifest: () => RuntimePlaylistManifest | null;
+  isRuntimePlaylistFileAllowed: (fileName: string) => boolean;
   inputBinary: string;
   allowInputAnyPlatform: boolean;
 }): http.Server {
@@ -2108,7 +2751,7 @@ function createNodeApiServer(args: {
     return next;
   };
 
-  return http.createServer((req, res) => {
+  return http.createServer(async (req, res) => {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -2182,6 +2825,85 @@ function createNodeApiServer(args: {
 
     if (method === "GET" && url.pathname === "/api/overlay-state") {
       sendJson(res, 200, args.getOverlayState());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/runtime-playlist") {
+      sendHtml(res, 200, renderRuntimePlaylistPage({ nodeId: args.nodeId }));
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/runtime-playlist") {
+      const manifest = args.getRuntimePlaylistManifest();
+      if (!manifest) {
+        sendJson(res, 404, { ok: false, error: "runtime_playlist_not_ready" });
+        return;
+      }
+      sendJson(res, 200, { ok: true, manifest });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/runtime-media") {
+      const fileName = normalizeCacheFileName(url.searchParams.get("file") ?? "");
+      if (!fileName || !args.isRuntimePlaylistFileAllowed(fileName)) {
+        sendJson(res, 404, { ok: false, error: "runtime_media_not_found" });
+        return;
+      }
+      const filePath = path.join(args.cacheDir, fileName);
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(filePath);
+      } catch {
+        sendJson(res, 404, { ok: false, error: "runtime_media_not_found" });
+        return;
+      }
+      if (!stat.isFile()) {
+        sendJson(res, 404, { ok: false, error: "runtime_media_not_found" });
+        return;
+      }
+
+      const total = stat.size;
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Content-Type", contentTypeForFilePath(filePath));
+
+      const range = String(req.headers.range ?? "").trim();
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(range);
+        if (!match) {
+          res.statusCode = 416;
+          res.setHeader("Content-Range", `bytes */${total}`);
+          res.end();
+          return;
+        }
+        const startRaw = match[1];
+        const endRaw = match[2];
+        const start = startRaw ? Number(startRaw) : 0;
+        const end = endRaw ? Number(endRaw) : total - 1;
+        if (
+          !Number.isFinite(start) ||
+          !Number.isFinite(end) ||
+          start < 0 ||
+          end < 0 ||
+          start > end ||
+          start >= total
+        ) {
+          res.statusCode = 416;
+          res.setHeader("Content-Range", `bytes */${total}`);
+          res.end();
+          return;
+        }
+        const clampedEnd = Math.min(end, total - 1);
+        const chunkSize = clampedEnd - start + 1;
+        res.statusCode = 206;
+        res.setHeader("Content-Range", `bytes ${start}-${clampedEnd}/${total}`);
+        res.setHeader("Content-Length", String(chunkSize));
+        createReadStream(filePath, { start, end: clampedEnd }).pipe(res);
+        return;
+      }
+
+      res.statusCode = 200;
+      res.setHeader("Content-Length", String(total));
+      createReadStream(filePath).pipe(res);
       return;
     }
 
@@ -2530,10 +3252,17 @@ async function main(): Promise<void> {
   const mpvIpcPath = path.join(runtimeDir, "mpv.sock");
   let resolvedItemsSnapshot: ResolvedPlaybackItem[] = [];
   let playbackMetaBySource = new Map<string, ActivePlaybackMeta>();
+  let runtimePlaylistManifest: RuntimePlaylistManifest | null = null;
+  let runtimePlaylistFiles = new Set<string>();
   let lastMpvHudItemId: string | null = null;
   let overlayMeta: ActivePlaybackMeta | null = null;
   let overlayVisibleUntilMs = 0;
   let overlayEnabled = false;
+
+  const clearRuntimePlaylistState = () => {
+    runtimePlaylistManifest = null;
+    runtimePlaylistFiles = new Set<string>();
+  };
 
   const clearOverlayState = () => {
     overlayMeta = null;
@@ -2621,6 +3350,9 @@ async function main(): Promise<void> {
         updatedAt: Date.now(),
       } satisfies OverlayCardState;
     },
+    getRuntimePlaylistManifest: () => runtimePlaylistManifest,
+    isRuntimePlaylistFileAllowed: (fileName: string) =>
+      runtimePlaylistFiles.has(fileName),
     inputBinary,
     allowInputAnyPlatform,
   });
@@ -2669,6 +3401,7 @@ async function main(): Promise<void> {
     if (stopped) return;
     stopped = true;
     stopChromiumDiagnostics();
+    clearRuntimePlaylistState();
     await terminateChild(mpvChild, "mpv");
     await terminateChild(chromiumChild, "chromium");
     await terminateChild(overlayChromiumChild, "overlay_chromium");
@@ -2717,6 +3450,7 @@ async function main(): Promise<void> {
         runtimeState.currentItemId = null;
         runtimeState.playback = null;
         playbackMetaBySource = new Map();
+        clearRuntimePlaylistState();
         clearOverlayState();
         stopChromiumDiagnostics();
         await terminateChild(mpvChild, "mpv");
@@ -2748,6 +3482,16 @@ async function main(): Promise<void> {
           activeRevision: runtimeState.activeRevision,
         });
 
+        const useRuntimePlaylistSurface = shouldUseRuntimePlaylistSurface({
+          launch: runtimeState.launch,
+          items: resolved.resolved.items,
+          targetKind: runtimeState.currentTarget?.kind ?? null,
+        });
+        if (useRuntimePlaylistSurface) {
+          runtimeState.cacheTotal = resolved.resolved.items.filter(
+            (item) => item.renderer === "mpv"
+          ).length;
+        }
         const useMpvHudOverlay = shouldUseMpvHudOverlay({
           launch: runtimeState.launch,
           items: resolved.resolved.items,
@@ -2756,20 +3500,136 @@ async function main(): Promise<void> {
           isExplicitGuideMode(runtimeState.launch) ||
           runtimeState.launch.qr === true ||
           runtimeState.launch.remoteInput === true ||
-          (hasGuideInfoSurface(runtimeState.launch) && !useMpvHudOverlay);
+          (hasGuideInfoSurface(runtimeState.launch) &&
+            !useMpvHudOverlay &&
+            !useRuntimePlaylistSurface);
         const useGuideChromium =
           needsGuideSurface || resolved.resolved.items.length === 0;
         const hasWebOnlyItems =
           resolved.resolved.items.length > 0 &&
           resolved.resolved.items.every((item) => item.renderer === "web");
-        const wantsChromium = useGuideChromium || hasWebOnlyItems;
+        const wantsChromium =
+          useRuntimePlaylistSurface || useGuideChromium || hasWebOnlyItems;
         const previousMpv: ChildProcess | null = mpvChild;
         const previousChromium: ChildProcess | null = chromiumChild;
         const previousChromiumProfileDir = chromiumProfileDir;
         const previousOverlayChromium: ChildProcess | null = overlayChromiumChild;
         const previousOverlayChromiumProfileDir: string | null = overlayChromiumProfileDir;
 
-        if (wantsChromium) {
+        if (useRuntimePlaylistSurface) {
+          stopChromiumDiagnostics();
+          const preparedPlaylist = await buildRuntimePlaylistEntries({
+            items: resolved.resolved.items,
+            cacheDir,
+            onProgress: async ({ ready, total, currentItemId }) => {
+              runtimeState.cacheReady = ready;
+              runtimeState.cacheTotal = total;
+              runtimeState.currentItemId = currentItemId;
+              await emitRuntime({
+                phase: "warming",
+                cacheReady: ready,
+                cacheTotal: total,
+                currentItemId: currentItemId ?? undefined,
+              });
+            },
+          });
+          runtimePlaylistManifest = {
+            revision: runtimeState.desiredRevision,
+            rotate:
+              runtimeState.launch.displayRotate === 0 ||
+              runtimeState.launch.displayRotate === 90 ||
+              runtimeState.launch.displayRotate === 180 ||
+              runtimeState.launch.displayRotate === 270
+                ? runtimeState.launch.displayRotate
+                : null,
+            imageDurationSec,
+            ...(runtimeState.launch.hudMode ? { hudMode: runtimeState.launch.hudMode } : {}),
+            ...(typeof runtimeState.launch.hudSec === "number"
+              ? { hudSec: runtimeState.launch.hudSec }
+              : {}),
+            updatedAt: Date.now(),
+            items: preparedPlaylist.items,
+          };
+          runtimePlaylistFiles = new Set(preparedPlaylist.fileNames);
+          const chromiumUrl = `http://127.0.0.1:${nodePort}/runtime-playlist`;
+          const webReady = await waitForWebReady({
+            url: chromiumUrl,
+            timeoutMs: webReadyTimeoutMs,
+            pollMs: webReadyPollMs,
+          });
+          toLog("info", "runtime_playlist_switch_ready", {
+            ready: webReady.ready,
+            elapsedMs: webReady.elapsedMs,
+            status: webReady.status,
+            url: chromiumUrl,
+            ...(webReady.error ? { error: webReady.error } : {}),
+          });
+          const stagedChromiumProfileDir = allocateChromiumProfileDir();
+          const nextChromium = await spawnChromium({
+            binary: chromiumBin,
+            url: chromiumUrl,
+            explicitBinary: chromiumExplicit,
+            profileDir: stagedChromiumProfileDir,
+            diagnosticsEnabled:
+              chromiumDiagnosticsEnabled && Boolean(stagedChromiumProfileDir),
+          });
+          chromiumChild = nextChromium;
+          chromiumProfileDir = stagedChromiumProfileDir;
+          const hadVisibleFullscreen = Boolean(previousMpv || previousChromium);
+          if (switchOverlapMs > 0 && (hadVisibleFullscreen || !webReady.ready)) {
+            await sleep(switchOverlapMs);
+          }
+          if (previousMpv && previousMpv !== nextChromium) {
+            await terminateChild(previousMpv, "mpv");
+            if (mpvChild === previousMpv) mpvChild = null;
+          }
+          if (previousChromium && previousChromium !== nextChromium) {
+            await terminateChild(previousChromium, "chromium");
+            await cleanupProfileDir(previousChromiumProfileDir);
+          }
+          if (previousOverlayChromium) {
+            await terminateChild(previousOverlayChromium, "overlay_chromium");
+            await cleanupProfileDir(previousOverlayChromiumProfileDir);
+            if (overlayChromiumChild === previousOverlayChromium) overlayChromiumChild = null;
+            if (overlayChromiumProfileDir === previousOverlayChromiumProfileDir) {
+              overlayChromiumProfileDir = null;
+            }
+          }
+          if (chromiumDiagnosticsEnabled && stagedChromiumProfileDir) {
+            chromiumDiagnosticsStop = startChromiumDiagnostics({
+              nodeId,
+              profileDir: stagedChromiumProfileDir,
+              expectedUrl: chromiumUrl,
+            }).stop;
+          }
+          const firstItem = preparedPlaylist.items[0] ?? null;
+          runtimeState.backend = "chromium";
+          runtimeState.phase = "ready";
+          runtimeState.currentItemId = firstItem?.itemId ?? null;
+          runtimeState.playback = firstItem
+            ? {
+                state: "unknown",
+                itemId: firstItem.itemId,
+                mediaId: firstItem.mediaId,
+                ...(firstItem.title ? { title: firstItem.title } : {}),
+                ...(firstItem.artist ? { artist: firstItem.artist } : {}),
+                ...(firstItem.description ? { description: firstItem.description } : {}),
+                updatedAt: Date.now(),
+              }
+            : null;
+          playbackMetaBySource = new Map();
+          clearOverlayState();
+          await refreshCacheSummary();
+          await emitRuntime({
+            phase: "ready",
+            desiredRevision: runtimeState.desiredRevision,
+            cacheReady: runtimeState.cacheReady,
+            cacheTotal: runtimeState.cacheTotal,
+            currentItemId: runtimeState.currentItemId ?? undefined,
+          });
+          if (activateDelayMs > 0) await sleep(activateDelayMs);
+        } else if (wantsChromium) {
+          clearRuntimePlaylistState();
           const firstWebItem = useGuideChromium
             ? null
             : resolved.resolved.items.find((item) => item.renderer === "web") ?? null;
@@ -2879,6 +3739,7 @@ async function main(): Promise<void> {
             });
           }
         } else {
+          clearRuntimePlaylistState();
           stopChromiumDiagnostics();
           const playableEntries = await buildCachedSources({
             items: resolved.resolved.items,
