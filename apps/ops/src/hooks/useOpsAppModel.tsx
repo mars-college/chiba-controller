@@ -1559,6 +1559,7 @@ export function useOpsAppModel() {
                   title: playlist.title || undefined,
                   artist: playlist.artist || undefined,
                   description: playlist.description || undefined,
+                  infoTitleSource: playlist.infoTitleSource,
                   items: playlist.mediaIds.map((mediaId, index) => ({
                     index,
                     mediaId,
@@ -1822,6 +1823,7 @@ export function useOpsAppModel() {
                 title: playlist.title || undefined,
                 artist: playlist.artist || undefined,
                 description: playlist.description || undefined,
+                infoTitleSource: playlist.infoTitleSource,
                 items: playlist.mediaIds.map((mediaId, index) => ({
                   index,
                   mediaId,
@@ -3769,6 +3771,7 @@ export function useOpsAppModel() {
         title: row.title,
         artist: row.artist,
         description: row.description,
+        infoTitleSource: row.infoTitleSource,
         mediaIds: [...row.mediaIds],
       });
       return true;

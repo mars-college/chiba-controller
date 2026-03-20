@@ -211,12 +211,16 @@ export const PlaylistItemSchema = z
   .strict();
 export type PlaylistItem = z.infer<typeof PlaylistItemSchema>;
 
+export const PlaylistInfoTitleSourceSchema = z.enum(["media", "playlist"]);
+export type PlaylistInfoTitleSource = z.infer<typeof PlaylistInfoTitleSourceSchema>;
+
 export const PlaylistResourceSchema = z
   .object({
     id: z.string().min(1),
     title: z.string().optional(),
     artist: z.string().optional(),
     description: z.string().optional(),
+    infoTitleSource: PlaylistInfoTitleSourceSchema.optional(),
     items: z.array(PlaylistItemSchema),
   })
   .strict();

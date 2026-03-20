@@ -151,6 +151,7 @@ export const playlistResources = pgTable("playlist_resources", {
   title: text("title"),
   artist: text("artist"),
   description: text("description"),
+  infoTitleSource: text("info_title_source").$type<"media" | "playlist" | null>(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });

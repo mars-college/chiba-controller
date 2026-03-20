@@ -33,6 +33,7 @@ export type DraftPlaylist = {
   title: string;
   artist: string;
   description: string;
+  infoTitleSource: "media" | "playlist";
   mediaIds: string[];
 };
 
@@ -133,6 +134,7 @@ export const EMPTY_PLAYLIST_DRAFT: DraftPlaylist = {
   title: "",
   artist: "",
   description: "",
+  infoTitleSource: "media",
   mediaIds: [],
 };
 
@@ -586,6 +588,7 @@ export function playlistDraftToResource(
     title: playlist.title.trim() || undefined,
     artist: playlist.artist.trim() || undefined,
     description: playlist.description.trim() || undefined,
+    infoTitleSource: playlist.infoTitleSource,
     items: mediaIds.map((mediaId, index) => ({
       index,
       mediaId,
@@ -798,6 +801,7 @@ export function fromResourcePayload(payload: ResourcePayload): DraftStore {
       title: p.title || "",
       artist: p.artist || "",
       description: p.description || "",
+      infoTitleSource: p.infoTitleSource === "playlist" ? "playlist" : "media",
       mediaIds: p.items
         .map((item) => item.mediaId || "")
         .filter((id) => id.length > 0),

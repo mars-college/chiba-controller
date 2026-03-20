@@ -57,6 +57,7 @@ export async function importResources(args: {
           title: playlist.title ?? null,
           artist: playlist.artist ?? null,
           description: playlist.description ?? null,
+          infoTitleSource: playlist.infoTitleSource ?? null,
           createdAt: now,
           updatedAt: now,
         })
@@ -66,6 +67,7 @@ export async function importResources(args: {
             title: playlist.title ?? null,
             artist: playlist.artist ?? null,
             description: playlist.description ?? null,
+            infoTitleSource: playlist.infoTitleSource ?? null,
             updatedAt: now,
           },
         });
@@ -1216,6 +1218,10 @@ export async function getResourceSnapshot(args: {
       title: row.title ?? undefined,
       artist: row.artist ?? undefined,
       description: row.description ?? undefined,
+      infoTitleSource:
+        row.infoTitleSource === "media" || row.infoTitleSource === "playlist"
+          ? row.infoTitleSource
+          : undefined,
       items: (playlistItemMap.get(row.id) ?? []).map((item) => ({
         index: item.itemIndex,
         mediaId: item.mediaId ?? undefined,

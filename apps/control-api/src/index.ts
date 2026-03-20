@@ -1703,6 +1703,7 @@ function buildLegacyCatalog(args: {
     ...(playlist.title ? { title: playlist.title } : {}),
     ...(playlist.artist ? { artist: playlist.artist } : {}),
     ...(playlist.description ? { description: playlist.description } : {}),
+    ...(playlist.infoTitleSource ? { infoTitleSource: playlist.infoTitleSource } : {}),
     items: [...playlist.items]
       .sort((a, b) => a.index - b.index)
       .map((item, index) => ({
@@ -3929,6 +3930,7 @@ async function main(): Promise<void> {
         title: row.title,
         artist: row.artist,
         description: row.description,
+        infoTitleSource: row.infoTitleSource,
       })),
       media: snapshot.media.map((row) => ({
         id: row.id,
@@ -5108,11 +5110,7 @@ async function main(): Promise<void> {
       }
 
       let target: DesiredTarget | null = null;
-      let launch: LaunchOptions = normalizeOpsApplyLaunch({
-        target: parsed.data.target,
-        launch: requestLaunch,
-        modeExplicit,
-      });
+      let launch: LaunchOptions = requestLaunch;
       if (parsed.data.target === "profile") {
         if (!profile) {
           results.push({
@@ -5145,6 +5143,17 @@ async function main(): Promise<void> {
           id: parsed.data.id,
         };
       }
+      launch = normalizeOpsApplyLaunch({
+        target:
+          target?.kind === "media" ||
+          target?.kind === "playlist" ||
+          target?.kind === "block" ||
+          target?.kind === "channel"
+            ? target.kind
+            : parsed.data.target,
+        launch,
+        modeExplicit,
+      });
       launch = withNodeLaunchDefaults({ node, launch });
 
       if (!target) {

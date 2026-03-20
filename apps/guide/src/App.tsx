@@ -509,8 +509,16 @@ function buildTargetPrograms(args: {
   const playlistInfoOverrideFor = (playlistId: string): PlaylistInfoOverride => {
     const row = playlistById.get(playlistId.trim());
     if (!row) return {};
+    const infoTitleSource =
+      String((row as any)?.infoTitleSource ?? "").trim().toLowerCase() ===
+      "playlist"
+        ? "playlist"
+        : "media";
     return {
-      infoTitle: readOptionalString((row as any)?.title),
+      infoTitle:
+        infoTitleSource === "playlist"
+          ? readOptionalString((row as any)?.title)
+          : undefined,
       subtitle: readOptionalString((row as any)?.subtitle),
       artist: readOptionalString((row as any)?.artist),
       description: readOptionalString((row as any)?.description),
@@ -775,16 +783,6 @@ function App() {
     };
   }, [screenId]);
 
-  const galleryEnabledEffective =
-    galleryParamParsed !== null
-      ? galleryParamParsed
-      : modeGalleryParsed !== null
-        ? modeGalleryParsed
-      : kioskState?.mode === "gallery"
-        ? true
-        : kioskState?.mode === "guide"
-          ? false
-          : galleryEnabled;
   const runtimeTarget = useMemo<RuntimeTarget | null>(() => {
     const paramKind = parseRuntimeTargetKind(targetKindParam);
     const paramId = normalizeTargetId(targetIdParam);
@@ -806,6 +804,18 @@ function App() {
 
     return null;
   }, [kioskState?.targetKind, kioskState?.targetId, screenParam, targetKindParam, targetIdParam]);
+  const galleryEnabledEffective =
+    galleryParamParsed !== null
+      ? galleryParamParsed
+      : modeGalleryParsed !== null
+        ? modeGalleryParsed
+      : kioskState?.mode === "gallery"
+        ? true
+        : kioskState?.mode === "guide"
+          ? false
+          : runtimeTarget?.kind === "playlist"
+            ? true
+            : galleryEnabled;
   const syntheticTargetChannelId =
     runtimeTarget && runtimeTarget.kind !== "channel"
       ? `target-${runtimeTarget.kind}-${runtimeTarget.id}`
@@ -815,6 +825,8 @@ function App() {
       ? playlistParamParsed
       : typeof kioskState?.playlist === "boolean"
         ? kioskState.playlist
+        : runtimeTarget?.kind === "playlist"
+          ? true
         : playlistEnabled;
   const pinnedChannelKey =
     (runtimeTarget?.kind === "channel" ? runtimeTarget.id : syntheticTargetChannelId) ??

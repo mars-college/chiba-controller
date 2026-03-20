@@ -5,6 +5,7 @@ import {
   Image,
   Paper,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -132,6 +133,22 @@ export function PlaylistEditorView({ vm }: { vm: PlaylistEditorViewVm }) {
             setPlaylistDraft((draft) => ({
               ...draft,
               description: value,
+            }));
+          }}
+        />
+        <Select
+          label="HUD Title"
+          description="Choose whether the guide info box title follows the active item or the playlist title."
+          value={playlistDraft.infoTitleSource}
+          data={[
+            { value: "media", label: "Current media item" },
+            { value: "playlist", label: "Playlist title" },
+          ]}
+          allowDeselect={false}
+          onChange={(value) => {
+            setPlaylistDraft((draft) => ({
+              ...draft,
+              infoTitleSource: value === "playlist" ? "playlist" : "media",
             }));
           }}
         />
