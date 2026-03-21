@@ -1149,9 +1149,16 @@ function renderRuntimePlaylistPage(args: { nodeId: string }): string {
           activated = true;
           if (watchdog) window.clearTimeout(watchdog);
           activateShell(shell, item, token);
+          video.muted = true;
           const playPromise = video.play();
-          if (playPromise && typeof playPromise.catch === 'function') {
-            playPromise.catch(() => {});
+          if (playPromise && typeof playPromise.then === 'function') {
+            playPromise
+              .then(() => {
+                if (token === state.token) {
+                  video.muted = false;
+                }
+              })
+              .catch(() => {});
           }
         };
         video.autoplay = true;

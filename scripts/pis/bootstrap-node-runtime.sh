@@ -701,6 +701,11 @@ PROFILE_DIR="${HOME}/.config/chiba-cable3/chromium-kiosk"
 mkdir -p "${PROFILE_DIR}"
 COMMON_FLAGS=(
   --ozone-platform=x11
+  --autoplay-policy=no-user-gesture-required
+  --disable-gpu
+  --disable-gpu-rasterization
+  --disable-accelerated-video-decode
+  --disable-accelerated-2d-canvas
   --disable-infobars
   --no-first-run
   --no-default-browser-check
